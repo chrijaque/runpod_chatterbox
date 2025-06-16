@@ -1,1 +1,4 @@
-runpod==1.7.7
+chatterbox-tts
+torchvision==0.21.0  
+yt_dlp
+ffmpeg-python
