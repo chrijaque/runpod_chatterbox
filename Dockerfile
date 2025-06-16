@@ -1,10 +1,7 @@
-FROM nvidia/cuda:12.6.0-cudnn-runtime-ubuntu22.04
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
-    python3-pip \
     git \
     wget \
     curl \
@@ -19,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3.10 /usr/bin/python \
     && python -m pip install --upgrade pip
+
+RUN python -m pip install --no-deps chatterbox-tts
 
 WORKDIR /
 COPY requirements.txt /requirements.txt

@@ -1,4 +1,13 @@
-chatterbox-tts
-torchvision==0.21.0  
+conformer
+s3tokenizer
+librosa
+resemble-perth
+huggingface_hub 
+safetensors
+transformers
+diffusers 
+torchaudio 
+torchvision 
+einops
 yt_dlp
 ffmpeg-python
