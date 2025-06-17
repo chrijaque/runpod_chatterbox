@@ -21,8 +21,6 @@ def handler(event, responseFormat="base64"):
     
     try:
         dl_info, wav_file = download_youtube_audio(yt_url, output_path="./my_audio", audio_format="wav")
-        # wav_file = "./my_audio/" + dl_info["title"] + ".wav"
-        # wav_file, os.path.exists(wav_file)
 
         audio_tensor = model.generate(
             prompt,
@@ -35,7 +33,6 @@ def handler(event, responseFormat="base64"):
         return f"{e}" 
 
     audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
-
 
     if responseFormat == "base64":
         # Return base64
@@ -57,8 +54,7 @@ def handler(event, responseFormat="base64"):
         response = audio_data  # Just return the base64 string
 
     # Clean up temporary files
-    # os.unlink(wav_file)
-    # os.unlink(output_filename)
+    os.remove(wav_file)
 
     return response 
 
@@ -95,7 +91,7 @@ def initialize_model():
     model = ChatterboxTTS.from_pretrained(device="cuda")
     print("Model initialized")
 
-def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
+def download_youtube_audio(url, output_path="./downloads", audio_format="mp3", duration_limit=60):
     """
     Download audio from a YouTube video
     
@@ -114,7 +110,6 @@ def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
     # Configure yt-dlp options
     ydl_opts = {
         'format': 'bestaudio/best',  # Download best quality audio
-        # 'outtmpl': f'{output_path}/%(title)s.%(ext)s',  # Output filename template
         'outtmpl': f'{output_path}/output.%(ext)s',  # Output filename template
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -126,26 +121,35 @@ def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
         ],
         'prefer_ffmpeg': True,
     }
+    if duration_limit:
+        ydl_opts['postprocessors'].append({
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': audio_format,
+        })
+        # Add FFmpeg arguments for trimming
+        ydl_opts['postprocessor_args'].extend([
+            '-t', str(duration_limit)  # Trim to specified duration
+        ])
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             # Get video info first
             info = ydl.extract_info(url, download=False)
+            video_duration = info.get('duration', 0)
             print(f"Title: {info.get('title', 'Unknown')}")
             print(f"Duration: {info.get('duration', 'Unknown')} seconds")
             print(f"Uploader: {info.get('uploader', 'Unknown')}")
-            
-            # Construct the expected output filename
-            title = info.get('title', 'Unknown')
-            # Clean the title for filename (remove invalid characters)
-            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            # expected_filepath = os.path.join(output_path, f"{safe_title}.{audio_format}")
-            expected_filepath = os.path.join(output_path, f"output.{audio_format}")
+        
+            if duration_limit:
+                actual_duration = min(duration_limit, video_duration)
+                print(f"Downloading first {actual_duration} seconds")
             
             # Download the audio
             print("Downloading audio...")
             ydl.download([url])
             print("Download completed successfully!")
+
+            expected_filepath = os.path.join(output_path, f"output.{audio_format}")
             
             return info, expected_filepath
             
