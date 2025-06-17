@@ -20,9 +20,9 @@ def handler(event, responseFormat="base64"):
     print(f"New request. Prompt: {prompt}")
     
     try:
-        dl_info = download_youtube_audio(yt_url, output_path="./my_audio", audio_format="wav")
-        wav_file = "./my_audio/" + dl_info["title"] + ".wav"
-        wav_file, os.path.exists(wav_file)
+        dl_info, wav_file = download_youtube_audio(yt_url, output_path="./my_audio", audio_format="wav")
+        # wav_file = "./my_audio/" + dl_info["title"] + ".wav"
+        # wav_file, os.path.exists(wav_file)
 
         audio_tensor = model.generate(
             prompt,
@@ -145,7 +145,7 @@ def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
             ydl.download([url])
             print("Download completed successfully!")
             
-            return info
+            return info, expected_filepath
             
     except Exception as e:
         print(f"An error occurred: {str(e)}")
