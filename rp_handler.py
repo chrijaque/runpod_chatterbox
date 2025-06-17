@@ -114,7 +114,8 @@ def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
     # Configure yt-dlp options
     ydl_opts = {
         'format': 'bestaudio/best',  # Download best quality audio
-        'outtmpl': f'{output_path}/%(title)s.%(ext)s',  # Output filename template
+        # 'outtmpl': f'{output_path}/%(title)s.%(ext)s',  # Output filename template
+        'outtmpl': f'{output_path}/output.%(ext)s',  # Output filename template
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': audio_format,
@@ -138,7 +139,8 @@ def download_youtube_audio(url, output_path="./downloads", audio_format="mp3"):
             title = info.get('title', 'Unknown')
             # Clean the title for filename (remove invalid characters)
             safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-            expected_filepath = os.path.join(output_path, f"{safe_title}.{audio_format}")
+            # expected_filepath = os.path.join(output_path, f"{safe_title}.{audio_format}")
+            expected_filepath = os.path.join(output_path, f"output.{audio_format}")
             
             # Download the audio
             print("Downloading audio...")
