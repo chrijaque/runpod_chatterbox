@@ -38,9 +38,11 @@ const requestConfig = {
 };
 const url = "https://api.runpod.ai/v2/" + RP_ENDPOINT + "/runsync";
 const response = await fetch(url, requestConfig);
-let data = await response.json();   
+let data = await response.json();
 data = data.output
-
 
 // audio data in data.audio_base64
 ```
+
+## Issues
+* Takes 3-4 Minutes to init worker
