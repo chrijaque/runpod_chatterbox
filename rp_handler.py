@@ -20,18 +20,23 @@ def handler(event, responseFormat="base64"):
     print(f"New request. Prompt: {prompt}")
     
     try:
+        # Download audio from YT, cut at 60s by default
         dl_info, wav_file = download_youtube_audio(yt_url, output_path="./my_audio", audio_format="wav")
 
+        # Prompt Chatterbox
         audio_tensor = model.generate(
             prompt,
             audio_prompt_path=wav_file
         )
+
+        # Save as WAV
         torchaudio.save(output_filename, audio_tensor, model.sr)
 
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         return f"{e}" 
 
+    # Convert to base64 string
     audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
 
     if responseFormat == "base64":
