@@ -10,7 +10,8 @@
 ## Deploy 
 
 * Get a RunPod account, maybe use my [referral link](https://runpod.io?ref=3lyngjfm)
-Deploy endpoint ([docs](https://docs.runpod.io/serverless/overview#runpod-hub))
+
+Deploy endpoint ([docs](https://docs.runpod.io/serverless/overview#runpod-hub)):
 * Go to https://console.runpod.io/serverless
 * -> New Endpoint
 * -> GitHub Repo, choose https://github.com/geronimi73/runpod_chatterbox
