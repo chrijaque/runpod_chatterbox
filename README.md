@@ -1,35 +1,45 @@
-# Worker Basic
+# RunPod Serverless Endpoint for Voice Cloning 
 
-This is a minimal serverless worker example. You can use the provided code to build a Docker image and deploy it as a serverless endpoint. When a request is sent to the endpoint, a worker spins up and executes the rp_handler.py script. You can replace the sleep function with any machine learning task, such as image generation, text generation, or speech-to-text conversion.
+## Overview
+* REST API
+* Call Endpoint API with YouTube link and prompt
+* Downloads first 60 seconds of provided YouTube audio
+* Invokes [Chatterbox TTS model](https://github.com/resemble-ai/chatterbox) 
+* Returns base64 encoded WAV audio
 
-## To test this code locally:
+## Deploy 
 
-```
-# 1. Create a Python virtual environment
-python3 -m venv venv
+* Get a RunPod account, maybe use my [referral link](https://runpod.io?ref=3lyngjfm)
+Deploy endpoint ([docs](https://docs.runpod.io/serverless/overview#runpod-hub))
+* Go to https://console.runpod.io/serverless
+* -> New Endpoint
+* -> GitHub Repo, choose https://github.com/geronimi73/runpod_chatterbox
+* Check `Endpoint ID` of your deployed endpoint at https://console.runpod.io/serverless
+* Create an `API key` at https://console.runpod.io/user/settings
 
-# 2. Activate the virtual environment
-# On macOS/Linux:
+## Usage 
 
-source venv/bin/activate
+### JavaScript 
 
-# On Windows:
-venv\Scripts\activate
+```js
+const requestConfig = {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer " + RP_API_KEY
+  },
+  body: JSON.stringify({
+    "input": {
+      "prompt": "Hello world",
+      "yt_url": "https://www.youtube.com/shorts/jcNzoONhrmE",
+    }
+  })
+};
+const url = "https://api.runpod.ai/v2/" + RP_ENDPOINT + "/runsync";
+const response = await fetch(url, requestConfig);
+let data = await response.json();   
+data = data.output
 
-# 3. Install the RunPod SDK
-pip install runpod
 
-# 4. Run your script locally, the script will automatically read test_input.json as input, passing it to the handler function as an event
-python3 rp_handler.py
-
-```
-
-## Build and Push Docker Image to a Container Registry (e.g., Docker Hub)
-
-```
-# Build docker image
-docker build -t your-dockerhub-username/your-image-name:v1.0.0 --platform linux/amd64 .
-
-# Push docker image to docker hub
-docker push your-dockerhub-username/your-image-name:v1.0.0
+// audio data in data.audio_base64
 ```
