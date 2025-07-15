@@ -1,5 +1,6 @@
-name = "chatterbox-tts"
 version = "1.0.0"
+title = "ChatterBox TTS"
+description = "Voice cloning using ChatterBox TTS"
 
 [build]
 gpu = true
