@@ -16,6 +16,7 @@ RUN git config --global --add safe.directory '*'
 
 # Setup environment for huggingface
 ENV HF_HOME=/root/.cache/huggingface
+ENV PYTHONUNBUFFERED=1
 
 # Install Python dependencies
 COPY requirements.txt /requirements.txt
@@ -25,8 +26,21 @@ RUN pip install --no-deps chatterbox-tts
 # Copy handler
 COPY rp_handler.py /
 
-# Download and verify model
-RUN python -c "from chatterbox.tts import ChatterboxTTS; print('Downloading model...'); model = ChatterboxTTS.from_pretrained(device='cuda'); print('Model downloaded successfully')"
+# Download and verify model with detailed error reporting
+RUN python -c "import sys; \
+    import traceback; \
+    try: \
+        print('Python version:', sys.version); \
+        print('Importing ChatterboxTTS...'); \
+        from chatterbox.tts import ChatterboxTTS; \
+        print('Import successful. Downloading model...'); \
+        model = ChatterboxTTS.from_pretrained(device='cuda'); \
+        print('Model downloaded and loaded successfully') \
+    except Exception as e: \
+        print('Error occurred:'); \
+        print(str(e)); \
+        traceback.print_exc(); \
+        sys.exit(1)"
 
 # Start the container
 CMD ["python3", "-u", "rp_handler.py"]
