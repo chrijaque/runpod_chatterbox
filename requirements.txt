@@ -1,3 +1,4 @@
+torch>=2.0.0
 conformer
 s3tokenizer
 librosa
@@ -11,3 +12,4 @@ torchvision
 einops
 ffmpeg-python
 runpod>=1.7.7
+numpy

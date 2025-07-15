@@ -23,24 +23,12 @@ COPY requirements.txt /requirements.txt
 RUN pip install -r requirements.txt
 RUN pip install --no-deps chatterbox-tts
 
-# Copy handler
+# Copy files
 COPY rp_handler.py /
+COPY download_model.py /
 
 # Download and verify model with detailed error reporting
-RUN python -c "import sys; \
-    import traceback; \
-    try: \
-        print('Python version:', sys.version); \
-        print('Importing ChatterboxTTS...'); \
-        from chatterbox.tts import ChatterboxTTS; \
-        print('Import successful. Downloading model...'); \
-        model = ChatterboxTTS.from_pretrained(device='cuda'); \
-        print('Model downloaded and loaded successfully') \
-    except Exception as e: \
-        print('Error occurred:'); \
-        print(str(e)); \
-        traceback.print_exc(); \
-        sys.exit(1)"
+RUN python download_model.py
 
 # Start the container
 CMD ["python3", "-u", "rp_handler.py"]
