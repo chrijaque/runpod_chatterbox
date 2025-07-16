@@ -15,7 +15,7 @@ export default function Home() {
 
     const handleSubmit = async () => {
         if (!prompt || !audioData) {
-            setError('Please provide both a prompt and audio input');
+            setError('Please provide both audio input');
             return;
         }
 
