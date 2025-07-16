@@ -3,13 +3,26 @@ import traceback
 import torch
 import os
 import logging
+from datetime import datetime
 
-# Configure logging
+# Create logs directory if it doesn't exist
+os.makedirs('logs', exist_ok=True)
+
+# Configure logging to write to both file and stdout
+log_file = f'logs/model_download_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Log the start of the script immediately
+print(f"Script started. Logging to {log_file}", flush=True)
+sys.stdout.flush()
 
 def check_environment():
     """Check and log system environment details"""
@@ -33,32 +46,42 @@ def check_environment():
     for key, value in os.environ.items():
         if any(pattern in key.lower() for pattern in ['cuda', 'python', 'path', 'lib', 'hf_']):
             logger.info(f"{key}: {value}")
+    
+    # Flush stdout
+    sys.stdout.flush()
 
 def main():
     try:
+        print("Starting main execution...", flush=True)
         logger.info("Starting model download and verification process")
+        sys.stdout.flush()
         
         # Check environment
         check_environment()
         
         # Import ChatterboxTTS
+        print("Attempting to import ChatterboxTTS...", flush=True)
         logger.info("Attempting to import ChatterboxTTS...")
         try:
             from chatterbox.tts import ChatterboxTTS
             logger.info("Successfully imported ChatterboxTTS")
+            print("Successfully imported ChatterboxTTS", flush=True)
         except Exception as e:
-            logger.error("Failed to import ChatterboxTTS")
-            logger.error(f"Import error: {str(e)}")
+            error_msg = f"Failed to import ChatterboxTTS: {str(e)}"
+            print(error_msg, flush=True)
+            logger.error(error_msg)
             logger.error("Python path:")
             for path in sys.path:
                 logger.info(f"  {path}")
             raise
         
         # Download model
+        print("Attempting to download and load model...", flush=True)
         logger.info("Attempting to download and load model...")
         try:
             model = ChatterboxTTS.from_pretrained(device='cuda')
             logger.info("Successfully downloaded and loaded model")
+            print("Successfully downloaded and loaded model", flush=True)
             
             # Verify model
             logger.info("Verifying model properties...")
@@ -66,15 +89,15 @@ def main():
             logger.info("Model verification complete")
             
         except Exception as e:
-            logger.error("Failed to download/load model")
-            logger.error(f"Model error: {str(e)}")
+            error_msg = f"Failed to download/load model: {str(e)}"
+            print(error_msg, flush=True)
+            logger.error(error_msg)
             raise
         
     except Exception as e:
-        logger.error("=== Error Details ===")
-        logger.error(str(e))
-        logger.error("=== Full Traceback ===")
-        traceback.print_exc()
+        error_msg = f"=== Error Details ===\n{str(e)}\n=== Full Traceback ===\n{traceback.format_exc()}"
+        print(error_msg, flush=True)
+        logger.error(error_msg)
         sys.exit(1)
 
 if __name__ == '__main__':
