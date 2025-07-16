@@ -4,11 +4,40 @@ import torchaudio
 import os
 import tempfile
 import base64
+import torch
+import logging
 from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 model = None
 output_filename = "output.wav"
+
+def initialize_model():
+    global model
+    
+    if model is not None:
+        logger.info("Model already initialized")
+        return model
+    
+    logger.info("Initializing ChatterboxTTS model...")
+    
+    # Check CUDA availability
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required but not available")
+    
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+    
+    try:
+        model = ChatterboxTTS.from_pretrained(device='cuda')
+        logger.info("Model initialized successfully on CUDA device")
+    except Exception as e:
+        logger.error(f"Failed to initialize model: {str(e)}")
+        raise
 
 def handler(event, responseFormat="base64"):
     input = event['input']    
@@ -19,7 +48,7 @@ def handler(event, responseFormat="base64"):
     if not prompt or not audio_data:
         return {"status": "error", "message": "Both prompt and audio_data are required"}
 
-    print(f"New request. Prompt: {prompt}")
+    logger.info(f"New request. Prompt: {prompt}")
     
     try:
         # Save the uploaded audio to a temporary file
@@ -47,7 +76,7 @@ def handler(event, responseFormat="base64"):
         os.unlink(audio_file_path)
 
     except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        logger.error(f"An unexpected error occurred: {e}")
         if 'audio_file_path' in locals():
             try:
                 os.unlink(audio_file_path)
@@ -97,19 +126,8 @@ def audio_tensor_to_base64(audio_tensor, sample_rate):
             return base64.b64encode(audio_data).decode('utf-8')
             
     except Exception as e:
-        print(f"Error converting audio to base64: {e}")
+        logger.error(f"Error converting audio to base64: {e}")
         raise
-
-def initialize_model():
-    global model
-    
-    if model is not None:
-        print("Model already initialized")
-        return model
-    
-    print("Initializing ChatterboxTTS model...")
-    model = ChatterboxTTS.from_pretrained(device="cuda")
-    print("Model initialized")
 
 if __name__ == '__main__':
     initialize_model()

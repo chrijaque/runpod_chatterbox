@@ -75,21 +75,20 @@ def main():
                 logger.info(f"  {path}")
             raise
         
-        # Download model
-        print("Attempting to download and load model...", flush=True)
-        logger.info("Attempting to download and load model...")
+        # Download model - use CPU during build
+        print("Attempting to download and load model (CPU mode)...", flush=True)
+        logger.info("Attempting to download and load model (CPU mode)...")
         try:
-            model = ChatterboxTTS.from_pretrained(device='cuda')
-            logger.info("Successfully downloaded and loaded model")
-            print("Successfully downloaded and loaded model", flush=True)
+            # Download model files without loading to GPU
+            model = ChatterboxTTS.from_pretrained(device='cpu')
+            logger.info("Successfully downloaded model files")
+            print("Successfully downloaded model files", flush=True)
             
-            # Verify model
-            logger.info("Verifying model properties...")
-            logger.info(f"Model device: {next(model.parameters()).device}")
-            logger.info("Model verification complete")
+            # Don't verify model parameters since we're not loading to GPU
+            logger.info("Model files downloaded and ready for runtime GPU usage")
             
         except Exception as e:
-            error_msg = f"Failed to download/load model: {str(e)}"
+            error_msg = f"Failed to download model: {str(e)}"
             print(error_msg, flush=True)
             logger.error(error_msg)
             raise
