@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
 import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
@@ -19,36 +19,80 @@ export default function Home() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
+    const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
-    const pollJobStatus = async (jobId: string) => {
-        const statusEndpoint = API_ENDPOINT.replace('/run', `/status/${jobId}`);
-        
-        while (true) {
-            const response = await fetch(statusEndpoint, {
+    const stopJob = async () => {
+        if (!currentJobId) return;
+
+        try {
+            const cancelEndpoint = API_ENDPOINT.replace('/run', `/cancel/${currentJobId}`);
+            const response = await fetch(cancelEndpoint, {
+                method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${RUNPOD_API_KEY}`
                 }
             });
-            
+
             const data = await response.json();
-            console.log('Status check response:', data);
-            
-            if (data.status === 'COMPLETED') {
-                if (data.output?.status === 'error') {
-                    throw new Error(data.output.message);
-                }
-                if (data.output?.audio_base64) {
-                    return data.output.audio_base64;
-                }
-                throw new Error('No audio data in response');
-            } else if (data.status === 'FAILED') {
-                throw new Error(data.error || 'Job failed');
-            } else if (data.status === 'IN_QUEUE' || data.status === 'IN_PROGRESS') {
-                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before polling again
-                continue;
-            } else {
-                throw new Error(`Unexpected status: ${data.status}`);
+            console.log('Cancel response:', data);
+
+            // Abort the polling
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
             }
+
+            // Cleanup
+            setIsLoading(false);
+            setCurrentJobId(null);
+            setError('Job cancelled by user');
+        } catch (err) {
+            console.error('Error cancelling job:', err);
+            setError('Failed to cancel job');
+        }
+    };
+
+    const pollJobStatus = async (jobId: string) => {
+        const statusEndpoint = API_ENDPOINT.replace('/run', `/status/${jobId}`);
+        abortControllerRef.current = new AbortController();
+        
+        try {
+            while (true) {
+                // Check if polling should be stopped
+                if (abortControllerRef.current.signal.aborted) {
+                    throw new Error('Polling aborted');
+                }
+
+                const response = await fetch(statusEndpoint, {
+                    headers: {
+                        'Authorization': `Bearer ${RUNPOD_API_KEY}`
+                    },
+                    signal: abortControllerRef.current.signal
+                });
+                
+                const data = await response.json();
+                console.log('Status check response:', data);
+                
+                if (data.status === 'COMPLETED') {
+                    if (data.output?.status === 'error') {
+                        throw new Error(data.output.message);
+                    }
+                    if (data.output?.audio_base64) {
+                        return data.output.audio_base64;
+                    }
+                    throw new Error('No audio data in response');
+                } else if (data.status === 'FAILED') {
+                    throw new Error(data.error || 'Job failed');
+                } else if (data.status === 'IN_QUEUE' || data.status === 'IN_PROGRESS') {
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before polling again
+                    continue;
+                } else {
+                    throw new Error(`Unexpected status: ${data.status}`);
+                }
+            }
+        } finally {
+            // Cleanup
+            abortControllerRef.current = null;
         }
     };
 
@@ -68,6 +112,7 @@ export default function Home() {
         setIsLoading(true);
         setError(null);
         setResult(null);
+        setCurrentJobId(null);
 
         try {
             console.log('Making API request...');
@@ -90,19 +135,34 @@ export default function Home() {
             console.log('API response:', data);
 
             if (data.id) {
+                setCurrentJobId(data.id);
                 // Job was accepted, start polling for status
                 const result = await pollJobStatus(data.id);
                 setResult(result);
             } else {
                 throw new Error('No job ID in response');
             }
-        } catch (err) {
+        } catch (err: unknown) {
             console.error('API error:', err);
-            setError(err instanceof Error ? err.message : 'An error occurred');
+            if (err instanceof Error && err.name === 'AbortError') {
+                setError('Operation cancelled');
+            } else {
+                setError(err instanceof Error ? err.message : 'An error occurred');
+            }
         } finally {
             setIsLoading(false);
+            setCurrentJobId(null);
         }
     };
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
+    }, []);
 
     const handleAudioReady = (base64Audio: string) => {
         console.log('Audio recording ready');
@@ -162,13 +222,24 @@ export default function Home() {
                             </div>
                         </div>
 
-                        <button
-                            onClick={handleSubmit}
-                            disabled={isLoading || !prompt || !audioData}
-                            className="btn-primary w-full"
-                        >
-                            {isLoading ? 'Processing...' : 'Generate Voice Clone'}
-                        </button>
+                        <div className="flex gap-4">
+                            <button
+                                onClick={handleSubmit}
+                                disabled={isLoading || !prompt || !audioData}
+                                className="btn-primary flex-1"
+                            >
+                                {isLoading ? 'Processing...' : 'Generate Voice Clone'}
+                            </button>
+
+                            {isLoading && currentJobId && (
+                                <button
+                                    onClick={stopJob}
+                                    className="btn-secondary"
+                                >
+                                    Stop
+                                </button>
+                            )}
+                        </div>
 
                         {error && (
                             <div className="rounded-md bg-red-50 p-4">
