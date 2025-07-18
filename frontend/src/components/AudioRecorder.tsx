@@ -1,7 +1,12 @@
+'use client';
+
 import { useEffect, useRef } from 'react';
 import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid';
-import WaveSurfer from 'wavesurfer.js';
+import dynamic from 'next/dynamic';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
+
+// Dynamically import WaveSurfer with no SSR
+const WaveSurfer = dynamic(() => import('wavesurfer.js'), { ssr: false });
 
 interface AudioRecorderProps {
     onAudioReady: (base64Audio: string) => void;
@@ -9,7 +14,7 @@ interface AudioRecorderProps {
 
 export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
     const waveformRef = useRef<HTMLDivElement>(null);
-    const wavesurferRef = useRef<WaveSurfer | null>(null);
+    const wavesurferRef = useRef<any>(null);
     const {
         isRecording,
         status,
@@ -20,20 +25,21 @@ export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
     } = useAudioRecorder();
 
     useEffect(() => {
-        if (waveformRef.current && mediaBlobUrl) {
+        if (typeof window !== 'undefined' && waveformRef.current && mediaBlobUrl) {
             if (wavesurferRef.current) {
                 wavesurferRef.current.destroy();
             }
 
             wavesurferRef.current = WaveSurfer.create({
                 container: waveformRef.current,
-                waveColor: '#4F46E5',
-                progressColor: '#818CF8',
-                cursorColor: '#C7D2FE',
+                waveColor: '#6366F1',
+                progressColor: '#4F46E5',
+                cursorColor: 'transparent',
                 barWidth: 2,
-                barGap: 3,
-                height: 60,
+                barGap: 2,
+                height: 40,
                 normalize: true,
+                responsive: true,
             });
 
             wavesurferRef.current.load(mediaBlobUrl);
@@ -54,37 +60,42 @@ export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
     }, [mediaBlobUrl, isRecording, getBase64Audio, onAudioReady]);
 
     return (
-        <div className="w-full max-w-2xl mx-auto p-4 bg-white rounded-lg shadow-md">
-            <div className="flex flex-col items-center gap-4">
-                <div className="flex items-center gap-4">
-                    <button
-                        onClick={isRecording ? stopRecording : startRecording}
-                        className={`p-4 rounded-full transition-colors ${
-                            isRecording
-                                ? 'bg-red-500 hover:bg-red-600'
-                                : 'bg-indigo-500 hover:bg-indigo-600'
-                        }`}
-                    >
-                        {isRecording ? (
-                            <StopIcon className="h-6 w-6 text-white" />
-                        ) : (
-                            <MicrophoneIcon className="h-6 w-6 text-white" />
-                        )}
-                    </button>
-                    <span className="text-sm text-gray-500 capitalize">
-                        {status}
-                    </span>
-                </div>
-
-                <div
-                    ref={waveformRef}
-                    className="w-full h-16 bg-gray-50 rounded-lg"
-                />
-
-                {mediaBlobUrl && !isRecording && (
-                    <audio src={mediaBlobUrl} controls className="w-full" />
-                )}
+        <div className="bg-gray-50 rounded-lg p-4">
+            <div className="flex items-center space-x-4 mb-3">
+                <button
+                    onClick={isRecording ? stopRecording : startRecording}
+                    className={`flex items-center justify-center p-2 rounded-full transition-colors ${
+                        isRecording
+                            ? 'bg-red-500 hover:bg-red-600 text-white'
+                            : 'bg-indigo-500 hover:bg-indigo-600 text-white'
+                    }`}
+                    title={isRecording ? 'Stop Recording' : 'Start Recording'}
+                >
+                    {isRecording ? (
+                        <StopIcon className="h-5 w-5" />
+                    ) : (
+                        <MicrophoneIcon className="h-5 w-5" />
+                    )}
+                </button>
+                <span className="text-sm text-gray-600 capitalize">
+                    {status === 'recording' ? 'Recording...' : status}
+                </span>
             </div>
+
+            <div 
+                ref={waveformRef}
+                className={`bg-white rounded border border-gray-200 ${!mediaBlobUrl ? 'h-10' : ''}`}
+            />
+
+            {mediaBlobUrl && !isRecording && (
+                <div className="mt-3">
+                    <audio
+                        src={mediaBlobUrl}
+                        controls
+                        className="w-full h-8"
+                    />
+                </div>
+            )}
         </div>
     );
 }; 

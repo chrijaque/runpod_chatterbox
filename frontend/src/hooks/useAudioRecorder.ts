@@ -1,57 +1,82 @@
-import { useState, useCallback } from 'react';
-import { useReactMediaRecorder } from 'react-media-recorder';
+'use client';
+
+import { useState, useCallback, useEffect } from 'react';
 
 export const useAudioRecorder = () => {
     const [isRecording, setIsRecording] = useState(false);
-    const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+    const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
+    const [audioUrl, setAudioUrl] = useState<string | null>(null);
+    const [status, setStatus] = useState<string>('idle');
 
-    const { status, startRecording, stopRecording, mediaBlobUrl } = useReactMediaRecorder({
-        audio: true,
-        video: false,
-        blobPropertyBag: { type: "audio/wav" }
-    });
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
 
-    const handleStartRecording = useCallback(() => {
+        const initMediaRecorder = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                const recorder = new MediaRecorder(stream);
+                const chunks: BlobPart[] = [];
+
+                recorder.ondataavailable = (e) => {
+                    chunks.push(e.data);
+                };
+
+                recorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'audio/wav' });
+                    const url = URL.createObjectURL(blob);
+                    setAudioUrl(url);
+                    setStatus('stopped');
+                };
+
+                setMediaRecorder(recorder);
+            } catch (error) {
+                console.error('Error initializing media recorder:', error);
+                setStatus('failed');
+            }
+        };
+
+        initMediaRecorder();
+    }, []);
+
+    const startRecording = useCallback(() => {
+        if (!mediaRecorder) return;
+        mediaRecorder.start();
         setIsRecording(true);
-        setAudioBlob(null);
-        startRecording();
-    }, [startRecording]);
+        setStatus('recording');
+    }, [mediaRecorder]);
 
-    const handleStopRecording = useCallback(() => {
+    const stopRecording = useCallback(() => {
+        if (!mediaRecorder) return;
+        mediaRecorder.stop();
         setIsRecording(false);
-        stopRecording();
-    }, [stopRecording]);
+    }, [mediaRecorder]);
 
-    const getBase64Audio = useCallback(async (): Promise<string | null> => {
-        if (!mediaBlobUrl) return null;
+    const getBase64Audio = useCallback(async () => {
+        if (!audioUrl) return null;
 
         try {
-            const response = await fetch(mediaBlobUrl);
+            const response = await fetch(audioUrl);
             const blob = await response.blob();
-            setAudioBlob(blob);
-
-            return new Promise((resolve, reject) => {
+            return new Promise((resolve) => {
                 const reader = new FileReader();
                 reader.onloadend = () => {
                     const base64data = reader.result as string;
-                    resolve(base64data.split(',')[1]); // Remove data URL prefix
+                    resolve(base64data.split(',')[1]);
                 };
-                reader.onerror = reject;
                 reader.readAsDataURL(blob);
             });
         } catch (error) {
             console.error('Error converting audio to base64:', error);
             return null;
         }
-    }, [mediaBlobUrl]);
+    }, [audioUrl]);
 
     return {
         isRecording,
         status,
-        audioBlob,
-        mediaBlobUrl,
-        startRecording: handleStartRecording,
-        stopRecording: handleStopRecording,
+        mediaBlobUrl: audioUrl,
+        startRecording,
+        stopRecording,
         getBase64Audio
     };
 }; 
