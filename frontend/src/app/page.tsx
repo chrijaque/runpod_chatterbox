@@ -5,6 +5,13 @@ import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
 import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
 
+interface FileMetadata {
+    voice_file: string;
+    output_file: string;
+    sample_rate: number;
+    audio_shape: number[];
+}
+
 export default function Home() {
     useEffect(() => {
         console.log('Environment variables check:', {
@@ -20,6 +27,7 @@ export default function Home() {
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+    const [metadata, setMetadata] = useState<FileMetadata | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const stopJob = async () => {
@@ -113,6 +121,7 @@ export default function Home() {
         setError(null);
         setResult(null);
         setCurrentJobId(null);
+        setMetadata(null); // Clear previous metadata
 
         try {
             console.log('Making API request...');
@@ -139,6 +148,10 @@ export default function Home() {
                 // Job was accepted, start polling for status
                 const result = await pollJobStatus(data.id);
                 setResult(result);
+                // Save metadata if available
+                if (data.metadata) {
+                    setMetadata(data.metadata);
+                }
             } else {
                 throw new Error('No job ID in response');
             }
@@ -255,13 +268,27 @@ export default function Home() {
                         )}
 
                         {result && (
-                            <div>
-                                <h3 className="form-label mb-2">Generated Audio</h3>
-                                <audio
-                                    src={`data:audio/wav;base64,${result}`}
-                                    controls
-                                    className="w-full"
-                                />
+                            <div className="space-y-4">
+                                <div>
+                                    <h3 className="form-label mb-2">Generated Audio</h3>
+                                    <audio
+                                        src={`data:audio/wav;base64,${result}`}
+                                        controls
+                                        className="w-full"
+                                    />
+                                </div>
+
+                                {metadata && (
+                                    <div className="bg-white p-4 rounded-lg border border-gray-200">
+                                        <h4 className="text-sm font-medium text-gray-900 mb-2">File Information</h4>
+                                        <div className="space-y-2 text-sm text-gray-600">
+                                            <p>Voice File: {metadata.voice_file}</p>
+                                            <p>Output File: {metadata.output_file}</p>
+                                            <p>Sample Rate: {metadata.sample_rate} Hz</p>
+                                            <p>Audio Shape: [{metadata.audio_shape.join(', ')}]</p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

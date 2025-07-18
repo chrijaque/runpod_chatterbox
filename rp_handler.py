@@ -8,13 +8,19 @@ import torch
 import logging
 from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 model = None
-output_filename = "output.wav"
+
+# Create output directories if they don't exist
+OUTPUT_DIR = Path("output")
+VOICE_DIR = Path("voice")
+OUTPUT_DIR.mkdir(exist_ok=True)
+VOICE_DIR.mkdir(exist_ok=True)
 
 def initialize_model():
     global model
@@ -51,14 +57,16 @@ def handler(event, responseFormat="base64"):
     logger.info(f"New request. Prompt: {prompt}")
     
     try:
-        # Save the uploaded audio to a temporary file
-        with tempfile.NamedTemporaryFile(suffix=f'.{audio_format}', delete=False) as tmp_file:
-            audio_bytes = base64.b64decode(audio_data)
-            tmp_file.write(audio_bytes)
-            audio_file_path = tmp_file.name
+        # Save the uploaded audio to voice directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        voice_file = VOICE_DIR / f"voice_{timestamp}.{audio_format}"
+        audio_bytes = base64.b64decode(audio_data)
+        with open(voice_file, 'wb') as f:
+            f.write(audio_bytes)
+        logger.info(f"Saved voice file to {voice_file}")
 
         # Load and resample the audio if needed
-        audio_input, sr = torchaudio.load(audio_file_path)
+        audio_input, sr = torchaudio.load(voice_file)
         if sr != 44100:  # Ensure consistent sample rate
             resampler = torchaudio.transforms.Resample(sr, 44100)
             audio_input = resampler(audio_input)
@@ -66,20 +74,21 @@ def handler(event, responseFormat="base64"):
         # Prompt Chatterbox
         audio_tensor = model.generate(
             prompt,
-            audio_prompt_path=audio_file_path
+            audio_prompt_path=str(voice_file)
         )
 
+        # Generate output filename with timestamp
+        output_filename = OUTPUT_DIR / f"output_{timestamp}.wav"
+        
         # Save as WAV
         torchaudio.save(output_filename, audio_tensor, model.sr)
-
-        # Clean up the temporary input file
-        os.unlink(audio_file_path)
+        logger.info(f"Saved output file to {output_filename}")
 
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
-        if 'audio_file_path' in locals():
+        if 'voice_file' in locals():
             try:
-                os.unlink(audio_file_path)
+                os.unlink(voice_file)
             except:
                 pass
         return {"status": "error", "message": str(e)}
@@ -94,16 +103,14 @@ def handler(event, responseFormat="base64"):
             "audio_base64": audio_base64,
             "metadata": {
                 "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape)
+                "audio_shape": list(audio_tensor.shape),
+                "voice_file": str(voice_file),
+                "output_file": str(output_filename)
             }
         }
     elif responseFormat == "binary":
         with open(output_filename, 'rb') as f:
             audio_data = base64.b64encode(f.read()).decode('utf-8')
-        
-        # Clean up the file
-        os.remove(output_filename)
-        
         response = audio_data  # Just return the base64 string
 
     return response 
