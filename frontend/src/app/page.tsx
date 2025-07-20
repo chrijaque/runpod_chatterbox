@@ -18,6 +18,14 @@ interface FileMetadata {
     audio_shape: number[];
 }
 
+interface Voice {
+    voice_id: string;
+    name: string;
+    sample_file: string;
+    embedding_file: string;
+    created_date: number;
+}
+
 export default function Home() {
     useEffect(() => {
         console.log('Environment variables check:', {
@@ -34,7 +42,105 @@ export default function Home() {
     const [result, setResult] = useState<string | null>(null);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [metadata, setMetadata] = useState<FileMetadata | null>(null);
+    const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
+    const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+    const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    // Load voice library on component mount
+    useEffect(() => {
+        loadVoiceLibrary();
+    }, []);
+
+    const loadVoiceLibrary = async () => {
+        if (!RUNPOD_API_KEY) return;
+
+        setIsLoadingLibrary(true);
+        try {
+            const response = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
+                },
+                body: JSON.stringify({
+                    input: {
+                        request_type: 'get_library'
+                    },
+                }),
+            });
+
+            const data = await response.json();
+            console.log('Library API response:', data);
+
+            if (data.id) {
+                // Job was queued, poll for result
+                const result = await pollJobStatus(data.id);
+                if (result && result.status === 'success' && result.voices) {
+                    setVoiceLibrary(result.voices);
+                }
+            } else if (data.output && data.output.status === 'success') {
+                // Direct response
+                setVoiceLibrary(data.output.voices || []);
+            }
+        } catch (err) {
+            console.error('Error loading voice library:', err);
+        } finally {
+            setIsLoadingLibrary(false);
+        }
+    };
+
+    const playVoiceSample = async (voiceId: string) => {
+        if (!RUNPOD_API_KEY) return;
+
+        setPlayingVoice(voiceId);
+        try {
+            const response = await fetch(API_ENDPOINT, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
+                },
+                body: JSON.stringify({
+                    input: {
+                        request_type: 'get_sample',
+                        voice_id: voiceId
+                    },
+                }),
+            });
+
+            const data = await response.json();
+            console.log('Sample API response:', data);
+
+            let audioPlayed = false;
+            
+            if (data.id) {
+                // Job was queued, poll for result
+                const result = await pollJobStatus(data.id);
+                if (result && result.audio_base64) {
+                    // Play the audio
+                    const audio = new Audio(`data:audio/wav;base64,${result.audio_base64}`);
+                    audio.play();
+                    audio.onended = () => setPlayingVoice(null);
+                    audioPlayed = true;
+                }
+            } else if (data.output && data.output.audio_base64) {
+                // Direct response
+                const audio = new Audio(`data:audio/wav;base64,${data.output.audio_base64}`);
+                audio.play();
+                audio.onended = () => setPlayingVoice(null);
+                audioPlayed = true;
+            }
+            
+            // Only clear playing state if no audio was played (error case)
+            if (!audioPlayed) {
+                setPlayingVoice(null);
+            }
+        } catch (err) {
+            console.error('Error playing voice sample:', err);
+            setPlayingVoice(null);
+        }
+    };
 
     const stopJob = async () => {
         if (!currentJobId) return;
@@ -158,6 +264,8 @@ export default function Home() {
                 if (data.metadata) {
                     setMetadata(data.metadata);
                 }
+                // Refresh voice library after successful creation
+                await loadVoiceLibrary();
             } else {
                 throw new Error('No job ID in response');
             }
@@ -203,7 +311,7 @@ export default function Home() {
                         Voice Cloning Studio
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
-                        Enter a name, record or upload audio, then create your personalized voice clone
+                        Enter a name, record or upload audio, then create your personalized voice clone. Browse your voice library below.
                     </p>
                 </div>
 
@@ -299,6 +407,69 @@ export default function Home() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Voice Library Section */}
+                <div className="card">
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-xl font-semibold text-gray-900">
+                                Voice Library
+                            </h2>
+                            <button
+                                onClick={loadVoiceLibrary}
+                                disabled={isLoadingLibrary}
+                                className="btn-secondary"
+                            >
+                                {isLoadingLibrary ? 'Loading...' : 'Refresh'}
+                            </button>
+                        </div>
+
+                        {isLoadingLibrary ? (
+                            <div className="text-center py-8">
+                                <div className="text-gray-500">Loading voice library...</div>
+                            </div>
+                        ) : voiceLibrary.length === 0 ? (
+                            <div className="text-center py-8">
+                                <div className="text-gray-500">No voices created yet. Create your first voice above!</div>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {voiceLibrary.map((voice) => (
+                                    <div key={voice.voice_id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <h3 className="font-medium text-gray-900">{voice.name}</h3>
+                                            <span className="text-xs text-gray-500">
+                                                {new Date(voice.created_date * 1000).toLocaleDateString()}
+                                            </span>
+                                        </div>
+                                        
+                                        <div className="flex items-center space-x-2">
+                                            <button
+                                                onClick={() => playVoiceSample(voice.voice_id)}
+                                                disabled={playingVoice === voice.voice_id}
+                                                className="btn-primary flex-1 text-sm py-2"
+                                            >
+                                                {playingVoice === voice.voice_id ? (
+                                                    <>
+                                                        <span className="animate-pulse">Playing...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        ▶ Play Sample
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="mt-2 text-xs text-gray-400">
+                                            ID: {voice.voice_id}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
