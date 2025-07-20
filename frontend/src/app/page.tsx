@@ -6,8 +6,12 @@ import { FileUploader } from '@/components/FileUploader';
 import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
 
 interface FileMetadata {
-    voice_file: string;
-    output_file: string;
+    voice_id: string;
+    voice_name: string;
+    embedding_path: string;
+    embedding_exists: boolean;
+    sample_file: string;
+    template_message: string;
     sample_rate: number;
     audio_shape: number[];
 }
@@ -20,7 +24,7 @@ export default function Home() {
         });
     }, []);
 
-    const [prompt, setPrompt] = useState('');
+    const [name, setName] = useState('');
     const [audioData, setAudioData] = useState<string | null>(null);
     const [audioFormat, setAudioFormat] = useState<string>('wav');
     const [isLoading, setIsLoading] = useState(false);
@@ -105,10 +109,10 @@ export default function Home() {
     };
 
     const handleSubmit = async () => {
-        console.log('Submitting with:', { prompt, audioFormat, hasAudioData: !!audioData });
+        console.log('Submitting with:', { name, audioFormat, hasAudioData: !!audioData });
         
-        if (!prompt || !audioData) {
-            setError('Please provide both a prompt and audio input');
+        if (!name || !audioData) {
+            setError('Please provide both a name and audio input');
             return;
         }
 
@@ -133,7 +137,7 @@ export default function Home() {
                 },
                 body: JSON.stringify({
                     input: {
-                        prompt,
+                        name,
                         audio_data: audioData,
                         audio_format: audioFormat,
                     },
@@ -197,23 +201,23 @@ export default function Home() {
                         Voice Cloning Studio
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
-                        Record or upload audio, then enter text to generate speech in your voice
+                        Enter a name, record or upload audio, then create your personalized voice clone
                     </p>
                 </div>
 
                 <div className="card">
                     <div className="space-y-6">
                         <div>
-                            <label htmlFor="prompt" className="form-label">
-                                Text to Convert
+                            <label htmlFor="name" className="form-label">
+                                Voice Clone Name
                             </label>
-                            <textarea
-                                id="prompt"
-                                value={prompt}
-                                onChange={(e) => setPrompt(e.target.value)}
+                            <input
+                                id="name"
+                                type="text"
+                                value={name}
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
                                 className="form-input"
-                                rows={3}
-                                placeholder="Enter the text you want to convert to speech..."
+                                placeholder="Enter a name for this voice clone (e.g., John, Sarah, etc.)"
                             />
                         </div>
 
@@ -238,10 +242,10 @@ export default function Home() {
                         <div className="flex gap-4">
                             <button
                                 onClick={handleSubmit}
-                                disabled={isLoading || !prompt || !audioData}
+                                disabled={isLoading || !name || !audioData}
                                 className="btn-primary flex-1"
                             >
-                                {isLoading ? 'Processing...' : 'Generate Voice Clone'}
+                                {isLoading ? 'Creating Clone...' : 'Clone Voice'}
                             </button>
 
                             {isLoading && currentJobId && (
@@ -270,7 +274,7 @@ export default function Home() {
                         {result && (
                             <div className="space-y-4">
                                 <div>
-                                    <h3 className="form-label mb-2">Generated Audio</h3>
+                                    <h3 className="form-label mb-2">Voice Clone Sample</h3>
                                     <audio
                                         src={`data:audio/wav;base64,${result}`}
                                         controls
@@ -282,10 +286,12 @@ export default function Home() {
                                     <div className="bg-white p-4 rounded-lg border border-gray-200">
                                         <h4 className="text-sm font-medium text-gray-900 mb-2">File Information</h4>
                                         <div className="space-y-2 text-sm text-gray-600">
-                                            <p>Voice File: {metadata.voice_file}</p>
-                                            <p>Output File: {metadata.output_file}</p>
+                                            <p>Voice Name: {metadata.voice_name}</p>
+                                            <p>Voice ID: {metadata.voice_id}</p>
+                                            <p>Embedding: {metadata.embedding_exists ? '✅ Cached' : '🆕 Created'}</p>
+                                            <p>Sample File: {metadata.sample_file}</p>
+                                            <p>Generated Message: "{metadata.template_message}"</p>
                                             <p>Sample Rate: {metadata.sample_rate} Hz</p>
-                                            <p>Audio Shape: [{metadata.audio_shape.join(', ')}]</p>
                                         </div>
                                     </div>
                                 )}

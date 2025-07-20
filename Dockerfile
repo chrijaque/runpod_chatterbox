@@ -26,7 +26,6 @@ ENV HF_HOME=/root/.cache/huggingface
 # Install Python dependencies with verbose pip output
 COPY requirements.txt /requirements.txt
 RUN pip install -v -r requirements.txt
-RUN pip install -v --no-deps chatterbox-tts
 
 # Copy files
 COPY rp_handler.py /
