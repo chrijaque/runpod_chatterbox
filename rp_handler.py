@@ -21,9 +21,26 @@ model = None
 TEMP_VOICE_DIR = Path("temp_voice")  # Temporary storage for processing
 VOICE_CLONES_DIR = Path("voice_clones")  # Persistent .npy embeddings
 VOICE_SAMPLES_DIR = Path("voice_samples")  # Generated audio samples
+
+# Create directories with detailed logging
+logger.info(f"Creating directory: {TEMP_VOICE_DIR}")
 TEMP_VOICE_DIR.mkdir(exist_ok=True)
+logger.info(f"✅ Created directory: {TEMP_VOICE_DIR.absolute()}")
+
+logger.info(f"Creating directory: {VOICE_CLONES_DIR}")
 VOICE_CLONES_DIR.mkdir(exist_ok=True)
+logger.info(f"✅ Created directory: {VOICE_CLONES_DIR.absolute()}")
+
+logger.info(f"Creating directory: {VOICE_SAMPLES_DIR}")
 VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
+logger.info(f"✅ Created directory: {VOICE_SAMPLES_DIR.absolute()}")
+
+# Log current working directory and check if directories exist
+import os
+logger.info(f"Current working directory: {os.getcwd()}")
+logger.info(f"TEMP_VOICE_DIR exists: {TEMP_VOICE_DIR.exists()}")
+logger.info(f"VOICE_CLONES_DIR exists: {VOICE_CLONES_DIR.exists()}")  
+logger.info(f"VOICE_SAMPLES_DIR exists: {VOICE_SAMPLES_DIR.exists()}")
 
 def initialize_model():
     global model
@@ -68,6 +85,7 @@ def save_voice_embedding(voice_file_path, voice_id):
     global model
     
     embedding_path = get_embedding_path(voice_id)
+    logger.info(f"🔍 Attempting to save embedding to: {embedding_path.absolute()}")
     
     # Check if embedding already exists
     if embedding_path.exists():
@@ -76,23 +94,45 @@ def save_voice_embedding(voice_file_path, voice_id):
     
     try:
         if hasattr(model, 'save_voice_clone'):
+            logger.info(f"📁 Model has save_voice_clone method, proceeding with enhanced embedding")
             # Try different method signatures for the forked repository
             try:
                 # First try: audio tensor and path (without sample rate)
+                logger.info(f"🎵 Loading audio from: {voice_file_path}")
                 audio_input, sr = torchaudio.load(voice_file_path)
+                logger.info(f"🎵 Audio loaded: shape={audio_input.shape}, sr={sr}")
+                
+                logger.info(f"💾 Calling model.save_voice_clone with tensor and path")
                 model.save_voice_clone(audio_input, str(embedding_path))
-                logger.info(f"Saved voice embedding to {embedding_path} using enhanced method (tensor)")
+                logger.info(f"✅ Successfully saved voice embedding to {embedding_path.absolute()}")
+                
+                # Verify the file was actually created
+                if embedding_path.exists():
+                    file_size = embedding_path.stat().st_size
+                    logger.info(f"✅ Verified embedding file created: {embedding_path.absolute()} ({file_size} bytes)")
+                else:
+                    logger.error(f"❌ Embedding file was NOT created: {embedding_path.absolute()}")
+                    
             except Exception as tensor_error:
                 logger.warning(f"Tensor method failed: {tensor_error}, trying file path method")
                 # Second try: file path directly
+                logger.info(f"💾 Calling model.save_voice_clone with file paths")
                 model.save_voice_clone(str(voice_file_path), str(embedding_path))
-                logger.info(f"Saved voice embedding to {embedding_path} using enhanced method (file path)")
+                logger.info(f"✅ Successfully saved voice embedding to {embedding_path.absolute()} using file path method")
+                
+                # Verify the file was actually created
+                if embedding_path.exists():
+                    file_size = embedding_path.stat().st_size
+                    logger.info(f"✅ Verified embedding file created: {embedding_path.absolute()} ({file_size} bytes)")
+                else:
+                    logger.error(f"❌ Embedding file was NOT created: {embedding_path.absolute()}")
         else:
             # Fallback: create a placeholder file to indicate voice was processed
             logger.warning(f"Enhanced embedding method not available, creating placeholder for {voice_id}")
             # Save voice file path as a simple reference for fallback
             with open(embedding_path, 'w') as f:
                 f.write(str(voice_file_path))
+            logger.info(f"📝 Created placeholder embedding file: {embedding_path.absolute()}")
                 
         return embedding_path
         
@@ -192,9 +232,28 @@ def handler(event, responseFormat="base64"):
 
         # Generate output filename in voice_samples directory
         sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
+        logger.info(f"🔍 Preparing to save audio sample to: {sample_filename.absolute()}")
         
         # Save as WAV
+        logger.info(f"💾 Saving audio tensor to WAV file...")
+        logger.info(f"🎵 Audio tensor shape: {audio_tensor.shape}, Sample rate: {model.sr}")
         torchaudio.save(sample_filename, audio_tensor, model.sr)
+        logger.info(f"✅ Audio saved to {sample_filename.absolute()}")
+        
+        # Verify the file was actually created
+        if sample_filename.exists():
+            file_size = sample_filename.stat().st_size
+            logger.info(f"✅ Verified sample file created: {sample_filename.absolute()} ({file_size} bytes)")
+        else:
+            logger.error(f"❌ Sample file was NOT created: {sample_filename.absolute()}")
+        
+        # List files in both directories for debugging
+        logger.info("📂 Current directory contents:")
+        import glob
+        for pattern in ["voice_clones/*", "voice_samples/*", "temp_voice/*"]:
+            files = glob.glob(pattern)
+            logger.info(f"  {pattern}: {files}")
+        
         logger.info(f"Saved voice sample to {sample_filename}")
         
         # Clean up temporary voice file if embedding was created successfully
