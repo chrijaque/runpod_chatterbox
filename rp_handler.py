@@ -76,13 +76,17 @@ def save_voice_embedding(voice_file_path, voice_id):
     
     try:
         if hasattr(model, 'save_voice_clone'):
-            # Use enhanced method from forked repository
-            # Load audio for embedding extraction
-            audio_input, sr = torchaudio.load(voice_file_path)
-            
-            # Save voice clone embedding using the enhanced method
-            model.save_voice_clone(audio_input, sr, str(embedding_path))
-            logger.info(f"Saved voice embedding to {embedding_path} using enhanced method")
+            # Try different method signatures for the forked repository
+            try:
+                # First try: audio tensor and path (without sample rate)
+                audio_input, sr = torchaudio.load(voice_file_path)
+                model.save_voice_clone(audio_input, str(embedding_path))
+                logger.info(f"Saved voice embedding to {embedding_path} using enhanced method (tensor)")
+            except Exception as tensor_error:
+                logger.warning(f"Tensor method failed: {tensor_error}, trying file path method")
+                # Second try: file path directly
+                model.save_voice_clone(str(voice_file_path), str(embedding_path))
+                logger.info(f"Saved voice embedding to {embedding_path} using enhanced method (file path)")
         else:
             # Fallback: create a placeholder file to indicate voice was processed
             logger.warning(f"Enhanced embedding method not available, creating placeholder for {voice_id}")
