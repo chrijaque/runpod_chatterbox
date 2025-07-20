@@ -7,7 +7,7 @@ import base64
 import torch
 import logging
 import hashlib
-from chatterbox.tts import S3Token2Wav
+from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
 from datetime import datetime
 
@@ -42,7 +42,7 @@ def initialize_model():
     logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
-        model = S3Token2Wav.from_pretrained(device='cuda')
+        model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("Model initialized successfully on CUDA device")
     except Exception as e:
         logger.error(f"Failed to initialize model: {str(e)}")
@@ -75,12 +75,21 @@ def save_voice_embedding(voice_file_path, voice_id):
         return embedding_path
     
     try:
-        # Load audio for embedding extraction
-        audio_input, sr = torchaudio.load(voice_file_path)
-        
-        # Save voice clone embedding
-        model.save_voice_clone(audio_input, sr, str(embedding_path))
-        logger.info(f"Saved voice embedding to {embedding_path}")
+        if hasattr(model, 'save_voice_clone'):
+            # Use enhanced method from forked repository
+            # Load audio for embedding extraction
+            audio_input, sr = torchaudio.load(voice_file_path)
+            
+            # Save voice clone embedding using the enhanced method
+            model.save_voice_clone(audio_input, sr, str(embedding_path))
+            logger.info(f"Saved voice embedding to {embedding_path} using enhanced method")
+        else:
+            # Fallback: create a placeholder file to indicate voice was processed
+            logger.warning(f"Enhanced embedding method not available, creating placeholder for {voice_id}")
+            # Save voice file path as a simple reference for fallback
+            with open(embedding_path, 'w') as f:
+                f.write(str(voice_file_path))
+                
         return embedding_path
         
     except Exception as e:
@@ -97,9 +106,15 @@ def load_voice_embedding(voice_id):
         raise FileNotFoundError(f"No voice embedding found for {voice_id}")
     
     try:
-        embedding = model.load_voice_clone(str(embedding_path))
-        logger.info(f"Loaded voice embedding from {embedding_path}")
-        return embedding
+        if hasattr(model, 'load_voice_clone'):
+            # Use enhanced method from forked repository
+            embedding = model.load_voice_clone(str(embedding_path))
+            logger.info(f"Loaded voice embedding from {embedding_path} using enhanced method")
+            return embedding
+        else:
+            # Fallback: return None to indicate we should use the original audio file method
+            logger.warning(f"Enhanced embedding method not available, will use original audio file method for {voice_id}")
+            return None
         
     except Exception as e:
         logger.error(f"Failed to load voice embedding: {e}")
@@ -143,22 +158,32 @@ def handler(event, responseFormat="base64"):
             save_voice_embedding(temp_voice_file, voice_id)
             embedding = load_voice_embedding(voice_id)
         
-        # Create reference dictionary for inference
-        ref_dict = {
-            "embedding": embedding,
-            "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
-            "prompt_token_len": torch.tensor([1]).to(model.device),
-            "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
-            "prompt_feat_len": None,
-        }
-        
         # Generate speech with the template message
-        try:
-            # Use the inference method with embeddings
-            audio_tensor = model.inference(template_message, ref_dict=ref_dict)
-        except AttributeError:
-            # Fallback to generate method if inference doesn't exist
-            logger.warning("Using fallback generate method - embeddings may not be properly utilized")
+        generation_method = "audio-file-based"  # default
+        if embedding is not None:
+            # Use embedding-based generation (forked repository method)
+            logger.info("Using embedding-based generation")
+            generation_method = "embedding-based"
+            
+            # Create reference dictionary for inference
+            ref_dict = {
+                "embedding": embedding,
+                "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
+                "prompt_token_len": torch.tensor([1]).to(model.device),
+                "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
+                "prompt_feat_len": None,
+            }
+            
+            try:
+                # Use the inference method with embeddings
+                audio_tensor = model.inference(template_message, ref_dict=ref_dict)
+            except AttributeError:
+                # Fallback to generate method if inference doesn't exist
+                logger.warning("inference method not available, using generate method")
+                audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
+        else:
+            # Use original audio file method (fallback)
+            logger.info("Using original audio file method (fallback)")
             audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
 
         # Generate output filename in voice_samples directory
@@ -202,6 +227,8 @@ def handler(event, responseFormat="base64"):
                 "voice_name": name,
                 "embedding_path": str(embedding_path),
                 "embedding_exists": embedding_path.exists(),
+                "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+                "generation_method": generation_method,
                 "sample_file": str(sample_filename),
                 "template_message": template_message
             }

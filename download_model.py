@@ -59,15 +59,15 @@ def main():
         # Check environment
         check_environment()
         
-        # Import S3Token2Wav from chatterbox_embed
-        print("Attempting to import S3Token2Wav...", flush=True)
-        logger.info("Attempting to import S3Token2Wav...")
+        # Import ChatterboxTTS (enhanced version from forked repo)
+        print("Attempting to import ChatterboxTTS...", flush=True)
+        logger.info("Attempting to import ChatterboxTTS...")
         try:
-            from chatterbox.tts import S3Token2Wav
-            logger.info("Successfully imported S3Token2Wav")
-            print("Successfully imported S3Token2Wav", flush=True)
+            from chatterbox.tts import ChatterboxTTS
+            logger.info("Successfully imported ChatterboxTTS")
+            print("Successfully imported ChatterboxTTS", flush=True)
         except Exception as e:
-            error_msg = f"Failed to import S3Token2Wav: {str(e)}"
+            error_msg = f"Failed to import ChatterboxTTS: {str(e)}"
             print(error_msg, flush=True)
             logger.error(error_msg)
             logger.error("Python path:")
@@ -80,7 +80,7 @@ def main():
         logger.info("Attempting to download and load model (CPU mode)...")
         try:
             # Download model files without loading to GPU
-            model = S3Token2Wav.from_pretrained(device='cpu')
+            model = ChatterboxTTS.from_pretrained(device='cpu')
             logger.info("Successfully downloaded model files")
             print("Successfully downloaded model files", flush=True)
             

@@ -10,6 +10,8 @@ interface FileMetadata {
     voice_name: string;
     embedding_path: string;
     embedding_exists: boolean;
+    has_embedding_support: boolean;
+    generation_method: string;
     sample_file: string;
     template_message: string;
     sample_rate: number;
@@ -289,6 +291,8 @@ export default function Home() {
                                             <p>Voice Name: {metadata.voice_name}</p>
                                             <p>Voice ID: {metadata.voice_id}</p>
                                             <p>Embedding: {metadata.embedding_exists ? '✅ Cached' : '🆕 Created'}</p>
+                                            <p>Generation Method: {metadata.generation_method === 'embedding-based' ? '🚀 Advanced (Embedding)' : '📁 Standard (Audio File)'}</p>
+                                            <p>Repository Support: {metadata.has_embedding_support ? '✅ Forked (Enhanced)' : '⚠️ Standard'}</p>
                                             <p>Sample File: {metadata.sample_file}</p>
                                             <p>Generated Message: "{metadata.template_message}"</p>
                                             <p>Sample Rate: {metadata.sample_rate} Hz</p>
