@@ -63,52 +63,6 @@ def get_voice_id(name):
     clean_name = re.sub(r'[^a-zA-Z0-9_-]', '', name.lower().replace(' ', '_'))
     return f"voice_{clean_name}"
 
-def get_voice_library():
-    """Get list of all created voices with their sample files"""
-    voices = []
-    
-    try:
-        # Check if directories exist
-        if not VOICE_CLONES_DIR.exists() or not VOICE_SAMPLES_DIR.exists():
-            logger.info("Voice directories don't exist yet")
-            return voices
-        
-        # Get all .npy files (voice embeddings)
-        embedding_files = list(VOICE_CLONES_DIR.glob("*.npy"))
-        
-        for embedding_file in embedding_files:
-            # Extract voice_id from filename (remove .npy extension)
-            voice_id = embedding_file.stem
-            
-            # Find corresponding sample files
-            sample_files = list(VOICE_SAMPLES_DIR.glob(f"{voice_id}_sample_*.wav"))
-            
-            if sample_files:
-                # Get the most recent sample file
-                latest_sample = max(sample_files, key=lambda f: f.stat().st_mtime)
-                
-                # Extract name from voice_id (remove voice_ prefix)
-                display_name = voice_id.replace("voice_", "").replace("_", " ").title()
-                
-                voice_info = {
-                    "voice_id": voice_id,
-                    "name": display_name,
-                    "sample_file": str(latest_sample),
-                    "embedding_file": str(embedding_file),
-                    "created_date": latest_sample.stat().st_mtime
-                }
-                voices.append(voice_info)
-                
-        # Sort by creation date (newest first)
-        voices.sort(key=lambda x: x["created_date"], reverse=True)
-        
-        logger.info(f"Found {len(voices)} voices in library")
-        
-    except Exception as e:
-        logger.error(f"Error getting voice library: {e}")
-    
-    return voices
-
 def list_files_for_debug():
     """List files in our directories for debugging"""
     logger.info("📂 Directory contents:")
@@ -198,64 +152,7 @@ def load_voice_embedding(voice_id):
 def handler(event, responseFormat="base64"):
     input = event['input']
     
-    # Check if this is a library request
-    request_type = input.get('request_type', 'generate')
-    
-    if request_type == 'get_library':
-        logger.info("Handling voice library request")
-        try:
-            voices = get_voice_library()
-            return {
-                "status": "success",
-                "request_type": "get_library",
-                "voices": voices,
-                "total_voices": len(voices)
-            }
-        except Exception as e:
-            logger.error(f"Error handling library request: {e}")
-            return {
-                "status": "error", 
-                "request_type": "get_library",
-                "message": str(e)
-            }
-    
-    elif request_type == 'get_sample':
-        logger.info("Handling voice sample request")
-        voice_id = input.get('voice_id')
-        if not voice_id:
-            return {"status": "error", "message": "voice_id is required for sample request"}
-        
-        try:
-            # Find the sample file
-            sample_files = list(VOICE_SAMPLES_DIR.glob(f"{voice_id}_sample_*.wav"))
-            if not sample_files:
-                return {"status": "error", "message": f"No sample found for voice_id: {voice_id}"}
-            
-            # Get the most recent sample
-            latest_sample = max(sample_files, key=lambda f: f.stat().st_mtime)
-            
-            # Read and encode the audio file
-            with open(latest_sample, 'rb') as f:
-                audio_data = base64.b64encode(f.read()).decode('utf-8')
-            
-            logger.info(f"Returning sample for voice_id: {voice_id}")
-            return {
-                "status": "success",
-                "request_type": "get_sample",
-                "voice_id": voice_id,
-                "audio_base64": audio_data,
-                "sample_file": str(latest_sample)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting voice sample: {e}")
-            return {
-                "status": "error", 
-                "request_type": "get_sample",
-                "message": str(e)
-            }
-    
-    # Handle voice generation request (existing logic)
+    # Handle voice generation request only
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
     audio_format = input.get('audio_format', 'wav')  # Format of the input audio

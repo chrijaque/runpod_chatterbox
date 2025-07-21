@@ -14,3 +14,5 @@ ffmpeg-python
 runpod>=1.7.7
 numpy
 git+https://github.com/chrijaque/chatterbox_embed.git
+flask
+flask-cors

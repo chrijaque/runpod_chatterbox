@@ -47,41 +47,21 @@ export default function Home() {
     const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Load voice library on component mount
-    useEffect(() => {
-        loadVoiceLibrary();
-    }, []);
-
     const loadVoiceLibrary = async () => {
-        if (!RUNPOD_API_KEY) return;
-
         setIsLoadingLibrary(true);
         try {
-            const response = await fetch(API_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                },
-                body: JSON.stringify({
-                    input: {
-                        request_type: 'get_library'
-                    },
-                }),
+            // Use local API server instead of RunPod
+            const response = await fetch('http://localhost:5001/api/voices', {
+                method: 'GET',
             });
 
             const data = await response.json();
             console.log('Library API response:', data);
 
-            if (data.id) {
-                // Job was queued, poll for result
-                const result = await pollJobStatus(data.id);
-                if (result && result.status === 'success' && result.voices) {
-                    setVoiceLibrary(result.voices);
-                }
-            } else if (data.output && data.output.status === 'success') {
-                // Direct response
-                setVoiceLibrary(data.output.voices || []);
+            if (data.status === 'success') {
+                setVoiceLibrary(data.voices || []);
+            } else {
+                throw new Error(data.message || 'Failed to load voice library');
             }
         } catch (err) {
             console.error('Error loading voice library:', err);
@@ -91,51 +71,20 @@ export default function Home() {
     };
 
     const playVoiceSample = async (voiceId: string) => {
-        if (!RUNPOD_API_KEY) return;
-
         setPlayingVoice(voiceId);
         try {
-            const response = await fetch(API_ENDPOINT, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                },
-                body: JSON.stringify({
-                    input: {
-                        request_type: 'get_sample',
-                        voice_id: voiceId
-                    },
-                }),
-            });
-
-            const data = await response.json();
-            console.log('Sample API response:', data);
-
-            let audioPlayed = false;
+            // Use local API server to get audio file directly
+            const audioUrl = `http://localhost:5001/api/voices/${voiceId}/sample`;
             
-            if (data.id) {
-                // Job was queued, poll for result
-                const result = await pollJobStatus(data.id);
-                if (result && result.audio_base64) {
-                    // Play the audio
-                    const audio = new Audio(`data:audio/wav;base64,${result.audio_base64}`);
-                    audio.play();
-                    audio.onended = () => setPlayingVoice(null);
-                    audioPlayed = true;
-                }
-            } else if (data.output && data.output.audio_base64) {
-                // Direct response
-                const audio = new Audio(`data:audio/wav;base64,${data.output.audio_base64}`);
-                audio.play();
-                audio.onended = () => setPlayingVoice(null);
-                audioPlayed = true;
-            }
-            
-            // Only clear playing state if no audio was played (error case)
-            if (!audioPlayed) {
+            // Create audio element and play
+            const audio = new Audio(audioUrl);
+            audio.onended = () => setPlayingVoice(null);
+            audio.onerror = () => {
+                console.error('Error playing audio');
                 setPlayingVoice(null);
-            }
+            };
+            
+            await audio.play();
         } catch (err) {
             console.error('Error playing voice sample:', err);
             setPlayingVoice(null);
@@ -434,7 +383,8 @@ export default function Home() {
                             </div>
                         ) : voiceLibrary.length === 0 ? (
                             <div className="text-center py-8">
-                                <div className="text-gray-500">No voices created yet. Create your first voice above!</div>
+                                <div className="text-gray-500 mb-4">Your voice library is empty.</div>
+                                <div className="text-sm text-gray-400">Create your first voice above or click "Refresh" to load existing voices.</div>
                             </div>
                         ) : (
                             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
