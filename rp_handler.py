@@ -17,21 +17,16 @@ logger = logging.getLogger(__name__)
 
 model = None
 
-# Local directory paths (created at startup)
-VOICE_CLONES_DIR = Path("./voice_clones")
-VOICE_SAMPLES_DIR = Path("./voice_samples") 
-TEMP_VOICE_DIR = Path("./temp_voice")
+# Local directory paths (use absolute paths for RunPod deployment)
+VOICE_CLONES_DIR = Path("/voice_clones")
+VOICE_SAMPLES_DIR = Path("/voice_samples") 
+TEMP_VOICE_DIR = Path("/temp_voice")
 
-# Create directories at startup
-logger.info("Creating local directories for testing...")
-VOICE_CLONES_DIR.mkdir(exist_ok=True)
-VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
-TEMP_VOICE_DIR.mkdir(exist_ok=True)
-
-logger.info(f"✅ Directories created:")
-logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR.absolute()}")
-logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR.absolute()}")
-logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR.absolute()}")
+# Log directory status (don't create them as they already exist in RunPod)
+logger.info(f"Using existing directories:")
+logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR}")
+logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
+logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 def initialize_model():
     global model
@@ -94,13 +89,11 @@ def save_voice_embedding(temp_voice_file, voice_id):
         if hasattr(model, 'save_voice_clone'):
             logger.info(f"📁 Using enhanced save_voice_clone method")
             
-            # Load audio from temp file
-            logger.info(f"🎵 Loading audio from: {temp_voice_file}")
-            audio_input, sr = torchaudio.load(temp_voice_file)
-            logger.info(f"🎵 Audio loaded: shape={audio_input.shape}, sr={sr}")
+            # Pass the audio file path directly (not the loaded tensor)
+            logger.info(f"🎵 Using audio file: {temp_voice_file}")
             
-            # Save embedding directly to final location
-            model.save_voice_clone(audio_input, str(embedding_path))
+            # Save embedding using file path
+            model.save_voice_clone(str(temp_voice_file), str(embedding_path))
             logger.info(f"✅ Embedding saved directly to: {embedding_path}")
             
             # Verify the file was created

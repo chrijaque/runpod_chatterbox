@@ -19,15 +19,21 @@ Exception = builtins.Exception
 app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
-# Local directory paths (same as in rp_handler.py)
+# Local directory paths (same as in rp_handler.py but for local development)
 VOICE_CLONES_DIR = Path("./voice_clones")
 VOICE_SAMPLES_DIR = Path("./voice_samples")
 TEMP_VOICE_DIR = Path("./temp_voice")
 
-# Create directories if they don't exist
+# Create directories if they don't exist (local development only)
+print(f"🔍 Checking local directories...")
 VOICE_CLONES_DIR.mkdir(exist_ok=True)
 VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
 TEMP_VOICE_DIR.mkdir(exist_ok=True)
+
+print(f"✅ Local directories ready:")
+print(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR.absolute()}")
+print(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR.absolute()}")
+print(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR.absolute()}")
 
 def get_voice_library() -> List[Dict[str, Any]]:
     """Get list of all created voices with their sample files"""

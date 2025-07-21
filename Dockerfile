@@ -31,6 +31,9 @@ RUN pip install -v -r requirements.txt
 COPY rp_handler.py /
 COPY download_model.py /
 
+# Create required directories
+RUN mkdir -p /voice_clones /voice_samples /temp_voice
+
 # Download and verify model with detailed error reporting
 RUN python -u download_model.py 2>&1
 
