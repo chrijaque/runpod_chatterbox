@@ -47,6 +47,58 @@ export default function Home() {
     const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
+    const saveVoiceFilesLocally = async (result: any, voiceName: string) => {
+        if (!result || !result.audio_base64 || !result.metadata) {
+            console.log('⚠️ Cannot save voice files locally - missing data:', {
+                hasResult: !!result,
+                hasAudio: !!(result && result.audio_base64),
+                hasMetadata: !!(result && result.metadata)
+            });
+            return;
+        }
+        
+        console.log('💾 Starting to save voice files locally...', { voiceName });
+        
+        try {
+            const metadata = result.metadata;
+            const voiceId = metadata.voice_id;
+            
+            console.log('📝 Voice metadata:', { voiceId, voiceName, hasEmbeddingSupport: metadata.has_embedding_support });
+            
+            // Save the audio sample locally via our local API
+            const audioBlob = new Blob([
+                Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0))
+            ], { type: 'audio/wav' });
+            
+            console.log('🎵 Created audio blob:', { size: audioBlob.size, type: audioBlob.type });
+            
+            const formData = new FormData();
+            formData.append('voice_id', voiceId);
+            formData.append('voice_name', voiceName);
+            formData.append('audio_file', audioBlob, `${voiceId}_sample.wav`);
+            formData.append('template_message', metadata.template_message || '');
+            
+            console.log('📤 Sending to local API...');
+            
+            // Send to local API to save
+            const response = await fetch('http://localhost:5001/api/voices/save', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const responseData = await response.json();
+            console.log('📥 Local API response:', responseData);
+            
+            if (response.ok) {
+                console.log(`✅ Successfully saved voice files locally for: ${voiceName}`);
+            } else {
+                console.error(`❌ Failed to save voice files: ${responseData.message}`);
+            }
+        } catch (error) {
+            console.error('❌ Error saving voice files locally:', error);
+        }
+    };
+
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
         try {
@@ -212,6 +264,10 @@ export default function Home() {
                 // Save metadata if available
                 if (data.metadata) {
                     setMetadata(data.metadata);
+                }
+                // Save voice files locally after successful generation
+                if (result && result.audio_base64) {
+                    await saveVoiceFilesLocally(result, name);
                 }
                 // Refresh voice library after successful creation
                 await loadVoiceLibrary();

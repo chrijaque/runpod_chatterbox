@@ -45,13 +45,18 @@ def get_voice_library() -> List[Dict[str, Any]]:
             print("Voice directories don't exist yet")
             return voices
         
-        # Get all .npy files (voice embeddings)
+        # Get all voice files (.npy embeddings or .json metadata)
         embedding_files = list(VOICE_CLONES_DIR.glob("*.npy"))
+        metadata_files = list(VOICE_CLONES_DIR.glob("*.json"))
         
-        for embedding_file in embedding_files:
-            # Extract voice_id from filename (remove .npy extension)
-            voice_id: str = embedding_file.stem
-            
+        # Combine and deduplicate voice IDs
+        voice_ids = set()
+        for file in embedding_files:
+            voice_ids.add(file.stem)
+        for file in metadata_files:
+            voice_ids.add(file.stem)
+        
+        for voice_id in voice_ids:
             # Find corresponding sample files
             sample_files = list(VOICE_SAMPLES_DIR.glob(f"{voice_id}_sample_*.wav"))
             
@@ -62,12 +67,20 @@ def get_voice_library() -> List[Dict[str, Any]]:
                 # Extract name from voice_id (remove voice_ prefix)
                 display_name: str = voice_id.replace("voice_", "").replace("_", " ").title()
                 
+                # Check if we have embedding or metadata file
+                embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
+                metadata_file = VOICE_CLONES_DIR / f"{voice_id}.json"
+                
+                embedding_path = str(embedding_file) if embedding_file.exists() else str(metadata_file) if metadata_file.exists() else ""
+                
                 voice_info: Dict[str, Any] = {
                     "voice_id": voice_id,
                     "name": display_name,
                     "sample_file": str(latest_sample),
-                    "embedding_file": str(embedding_file),
-                    "created_date": latest_sample.stat().st_mtime
+                    "embedding_file": embedding_path,
+                    "created_date": latest_sample.stat().st_mtime,
+                    "has_embedding": embedding_file.exists(),
+                    "has_metadata": metadata_file.exists()
                 }
                 voices.append(voice_info)
                 
@@ -148,6 +161,64 @@ def get_voice_sample_base64(voice_id: str) -> Dict[str, Any]:
         })
         
     except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/voices/save', methods=['POST'])
+def save_voice_locally() -> Dict[str, Any]:
+    """Save voice files locally from RunPod generation"""
+    try:
+        voice_id = request.form.get('voice_id')
+        voice_name = request.form.get('voice_name')
+        audio_file = request.files.get('audio_file')
+        template_message = request.form.get('template_message', '')
+        
+        if not all([voice_id, voice_name, audio_file]):
+            return jsonify({
+                "status": "error",
+                "message": "Missing required fields: voice_id, voice_name, audio_file"
+            }), 400
+            
+        # Generate timestamp for filename
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save audio sample
+        sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
+        audio_file.save(sample_filename)
+        
+        # Create a placeholder embedding file (since we can't get the actual embedding from RunPod)
+        embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.npy"
+        if not embedding_filename.exists():
+            # Create a metadata file instead of trying to recreate the embedding
+            metadata = {
+                "voice_id": voice_id,
+                "voice_name": voice_name,
+                "template_message": template_message,
+                "created_timestamp": timestamp,
+                "source": "runpod_generation"
+            }
+            
+            import json
+            with open(embedding_filename.with_suffix('.json'), 'w') as f:
+                json.dump(metadata, f, indent=2)
+        
+        print(f"✅ Saved voice files locally:")
+        print(f"   Audio: {sample_filename}")
+        print(f"   Metadata: {embedding_filename.with_suffix('.json')}")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Voice files saved locally for {voice_name}",
+            "voice_id": voice_id,
+            "sample_file": str(sample_filename),
+            "metadata_file": str(embedding_filename.with_suffix('.json'))
+        })
+        
+    except Exception as e:
+        print(f"Error saving voice files locally: {e}")
         return jsonify({
             "status": "error",
             "message": str(e)
