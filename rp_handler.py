@@ -246,12 +246,24 @@ def handler(event, responseFormat="base64"):
 
     # Convert to base64 string
     audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
+    
+    # Read the embedding file to include in response
+    embedding_base64 = None
+    if embedding_path.exists():
+        try:
+            with open(embedding_path, 'rb') as f:
+                embedding_data = f.read()
+            embedding_base64 = base64.b64encode(embedding_data).decode('utf-8')
+            logger.info(f"📦 Embedding file encoded for transfer: {len(embedding_base64)} chars")
+        except Exception as e:
+            logger.error(f"Failed to read embedding file for transfer: {e}")
 
     if responseFormat == "base64":
         # Return base64
         response = {
             "status": "success",
             "audio_base64": audio_base64,
+            "embedding_base64": embedding_base64,  # Include embedding file
             "metadata": {
                 "sample_rate": model.sr,
                 "audio_shape": list(audio_tensor.shape),

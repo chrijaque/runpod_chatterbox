@@ -5,6 +5,7 @@ import base64
 import json
 import os
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 
 # Import builtins explicitly to satisfy strict linter
 import builtins
@@ -173,6 +174,7 @@ def save_voice_locally() -> Dict[str, Any]:
         voice_id = request.form.get('voice_id')
         voice_name = request.form.get('voice_name')
         audio_file = request.files.get('audio_file')
+        embedding_file = request.files.get('embedding_file')  # New: embedding file
         template_message = request.form.get('template_message', '')
         
         if not all([voice_id, voice_name, audio_file]):
@@ -185,14 +187,23 @@ def save_voice_locally() -> Dict[str, Any]:
         from datetime import datetime
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
+        saved_files = []
+        
         # Save audio sample
         sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
         audio_file.save(sample_filename)
+        saved_files.append(f"Audio: {sample_filename}")
+        print(f"✅ Saved audio sample: {sample_filename}")
         
-        # Create a placeholder embedding file (since we can't get the actual embedding from RunPod)
-        embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.npy"
-        if not embedding_filename.exists():
-            # Create a metadata file instead of trying to recreate the embedding
+        # Save embedding file if provided
+        if embedding_file:
+            embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.npy"
+            embedding_file.save(embedding_filename)
+            saved_files.append(f"Embedding: {embedding_filename}")
+            print(f"✅ Saved embedding file: {embedding_filename}")
+        else:
+            # Create a metadata file if no embedding provided
+            embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.json"
             metadata = {
                 "voice_id": voice_id,
                 "voice_name": voice_name,
@@ -202,25 +213,127 @@ def save_voice_locally() -> Dict[str, Any]:
             }
             
             import json
-            with open(embedding_filename.with_suffix('.json'), 'w') as f:
+            with open(embedding_filename, 'w') as f:
                 json.dump(metadata, f, indent=2)
+            saved_files.append(f"Metadata: {embedding_filename}")
+            print(f"✅ Created metadata file: {embedding_filename}")
         
-        print(f"✅ Saved voice files locally:")
-        print(f"   Audio: {sample_filename}")
-        print(f"   Metadata: {embedding_filename.with_suffix('.json')}")
+        print(f"🎉 Successfully saved voice files locally:")
+        for file_info in saved_files:
+            print(f"   {file_info}")
         
         return jsonify({
             "status": "success",
             "message": f"Voice files saved locally for {voice_name}",
             "voice_id": voice_id,
-            "sample_file": str(sample_filename),
-            "metadata_file": str(embedding_filename.with_suffix('.json'))
+            "saved_files": saved_files
         })
         
     except Exception as e:
-        print(f"Error saving voice files locally: {e}")
+        print(f"❌ Error saving voice files locally: {e}")
         return jsonify({
             "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/test/save-dummy-files', methods=['POST'])
+def test_save_dummy_files() -> Dict[str, Any]:
+    """Test endpoint to create dummy files and verify saving works"""
+    try:
+        # Create dummy audio data (small WAV header)
+        dummy_audio = b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+        
+        # Create dummy embedding data
+        dummy_embedding = b'\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09' * 10  # 100 bytes of dummy data
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        voice_id = "test_voice"
+        
+        # Save dummy audio file
+        audio_file = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
+        with open(audio_file, 'wb') as f:
+            f.write(dummy_audio)
+            
+        # Save dummy embedding file
+        embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
+        with open(embedding_file, 'wb') as f:
+            f.write(dummy_embedding)
+            
+        # Verify files exist
+        audio_exists = audio_file.exists()
+        embedding_exists = embedding_file.exists()
+        
+        result = {
+            "status": "success",
+            "message": "Dummy files created for testing",
+            "files_created": {
+                "audio": {
+                    "path": str(audio_file),
+                    "exists": audio_exists,
+                    "size": audio_file.stat().st_size if audio_exists else 0
+                },
+                "embedding": {
+                    "path": str(embedding_file),
+                    "exists": embedding_exists, 
+                    "size": embedding_file.stat().st_size if embedding_exists else 0
+                }
+            },
+            "timestamp": timestamp
+        }
+        
+        print("🧪 Test files created:")
+        print(f"   Audio: {audio_file} ({audio_file.stat().st_size} bytes)")
+        print(f"   Embedding: {embedding_file} ({embedding_file.stat().st_size} bytes)")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"❌ Test file creation failed: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/debug/directories', methods=['GET'])
+def debug_directories() -> Dict[str, Any]:
+    """Debug endpoint to check directory status and contents"""
+    try:
+        debug_info = {
+            "directories": {},
+            "current_working_directory": str(Path.cwd()),
+            "timestamp": str(datetime.now())
+        }
+        
+        for name, directory in [
+            ("voice_clones", VOICE_CLONES_DIR),
+            ("voice_samples", VOICE_SAMPLES_DIR), 
+            ("temp_voice", TEMP_VOICE_DIR)
+        ]:
+            debug_info["directories"][name] = {
+                "path": str(directory.absolute()),
+                "exists": directory.exists(),
+                "is_directory": directory.is_dir() if directory.exists() else False,
+                "files": []
+            }
+            
+            if directory.exists() and directory.is_dir():
+                files = list(directory.glob("*"))
+                debug_info["directories"][name]["files"] = [
+                    {
+                        "name": f.name,
+                        "size": f.stat().st_size if f.is_file() else 0,
+                        "is_file": f.is_file(),
+                        "modified": f.stat().st_mtime if f.exists() else 0
+                    }
+                    for f in files
+                ]
+                debug_info["directories"][name]["file_count"] = len(files)
+        
+        return jsonify(debug_info)
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error", 
             "message": str(e)
         }), 500
 

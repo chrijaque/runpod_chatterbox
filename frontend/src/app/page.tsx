@@ -63,20 +63,40 @@ export default function Home() {
             const metadata = result.metadata;
             const voiceId = metadata.voice_id;
             
-            console.log('📝 Voice metadata:', { voiceId, voiceName, hasEmbeddingSupport: metadata.has_embedding_support });
+            console.log('📝 Voice metadata:', { 
+                voiceId, 
+                voiceName, 
+                hasEmbeddingSupport: metadata.has_embedding_support,
+                hasEmbeddingData: !!result.embedding_base64
+            });
             
-            // Save the audio sample locally via our local API
+            // Create audio blob
             const audioBlob = new Blob([
                 Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0))
             ], { type: 'audio/wav' });
             
             console.log('🎵 Created audio blob:', { size: audioBlob.size, type: audioBlob.type });
             
+            // Create embedding blob if available
+            let embeddingBlob = null;
+            if (result.embedding_base64) {
+                embeddingBlob = new Blob([
+                    Uint8Array.from(atob(result.embedding_base64), c => c.charCodeAt(0))
+                ], { type: 'application/octet-stream' });
+                console.log('🧠 Created embedding blob:', { size: embeddingBlob.size });
+            }
+            
             const formData = new FormData();
             formData.append('voice_id', voiceId);
             formData.append('voice_name', voiceName);
             formData.append('audio_file', audioBlob, `${voiceId}_sample.wav`);
             formData.append('template_message', metadata.template_message || '');
+            
+            // Add embedding file if available
+            if (embeddingBlob) {
+                formData.append('embedding_file', embeddingBlob, `${voiceId}.npy`);
+                console.log('📎 Added embedding file to form data');
+            }
             
             console.log('📤 Sending to local API...');
             
