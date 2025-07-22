@@ -8,7 +8,7 @@ interface Voice {
     voice_id: string;
     name: string;
     sample_file: string;
-    embedding_file: string;
+    profile_file: string;
     created_date: number;
 }
 
@@ -201,20 +201,20 @@ export default function TTSPage() {
                 selectedVoice 
             });
 
-            // Fetch the voice embedding from local API
-            console.log('📥 Fetching voice embedding from local API...');
-            const embeddingResponse = await fetch(`http://localhost:5001/api/voices/${selectedVoice}/embedding`);
-            
-            if (!embeddingResponse.ok) {
-                const errorData = await embeddingResponse.json().catch(() => ({}));
-                throw new Error(`Failed to fetch voice embedding: ${errorData.message || embeddingResponse.statusText}`);
-            }
-            
-            const embeddingData = await embeddingResponse.json();
-            console.log('✅ Voice embedding fetched:', { 
-                hasEmbedding: !!embeddingData.embedding_base64,
-                embeddingSize: embeddingData.embedding_base64 ? embeddingData.embedding_base64.length : 0
-            });
+                    // Fetch the voice profile from local API
+        console.log('📥 Fetching voice profile from local API...');
+        const profileResponse = await fetch(`http://localhost:5001/api/voices/${selectedVoice}/profile`);
+        
+        if (!profileResponse.ok) {
+            const errorData = await profileResponse.json().catch(() => ({}));
+            throw new Error(`Failed to fetch voice profile: ${errorData.message || profileResponse.statusText}`);
+        }
+        
+        const profileData = await profileResponse.json();
+        console.log('✅ Voice profile fetched:', {
+            hasProfile: !!profileData.profile_base64,
+            profileSize: profileData.profile_base64 ? profileData.profile_base64.length : 0
+        });
 
             const response = await fetch(TTS_API_ENDPOINT, {
                 method: 'POST',
@@ -226,7 +226,7 @@ export default function TTSPage() {
                     input: {
                         text: text,
                         voice_id: selectedVoice,
-                        embedding_base64: embeddingData.embedding_base64,
+                        profile_base64: profileData.profile_base64,
                         responseFormat: "base64",
                     },
                 }),

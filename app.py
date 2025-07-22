@@ -21,20 +21,20 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for frontend
 
 # Local directory paths (same as in rp_handler.py but for local development)
-VOICE_CLONES_DIR = Path("./voice_clones")
+VOICE_PROFILES_DIR = Path("./voice_profiles")
 VOICE_SAMPLES_DIR = Path("./voice_samples")
 TEMP_VOICE_DIR = Path("./temp_voice")
 TTS_GENERATED_DIR = Path("./tts_generated")
 
 # Create directories if they don't exist (local development only)
 print(f"🔍 Checking local directories...")
-VOICE_CLONES_DIR.mkdir(exist_ok=True)
+VOICE_PROFILES_DIR.mkdir(exist_ok=True)
 VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
 TEMP_VOICE_DIR.mkdir(exist_ok=True)
 TTS_GENERATED_DIR.mkdir(exist_ok=True)
 
 print(f"✅ Local directories ready:")
-print(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR.absolute()}")
+print(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR.absolute()}")
 print(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR.absolute()}")
 print(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR.absolute()}")
 print(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR.absolute()}")
@@ -45,17 +45,17 @@ def get_voice_library() -> List[Dict[str, Any]]:
     
     try:
         # Check if directories exist
-        if not VOICE_CLONES_DIR.exists() or not VOICE_SAMPLES_DIR.exists():
+        if not VOICE_PROFILES_DIR.exists() or not VOICE_SAMPLES_DIR.exists():
             print("Voice directories don't exist yet")
             return voices
         
-        # Get all voice files (.npy embeddings or .json metadata)
-        embedding_files = list(VOICE_CLONES_DIR.glob("*.npy"))
-        metadata_files = list(VOICE_CLONES_DIR.glob("*.json"))
+        # Get all voice files (.npy profiles or .json metadata)
+        profile_files = list(VOICE_PROFILES_DIR.glob("*.npy"))
+        metadata_files = list(VOICE_PROFILES_DIR.glob("*.json"))
         
         # Combine and deduplicate voice IDs
         voice_ids = set()
-        for file in embedding_files:
+        for file in profile_files:
             voice_ids.add(file.stem)
         for file in metadata_files:
             voice_ids.add(file.stem)
@@ -71,19 +71,19 @@ def get_voice_library() -> List[Dict[str, Any]]:
                 # Extract name from voice_id (remove voice_ prefix)
                 display_name: str = voice_id.replace("voice_", "").replace("_", " ").title()
                 
-                # Check if we have embedding or metadata file
-                embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
-                metadata_file = VOICE_CLONES_DIR / f"{voice_id}.json"
+                # Check if we have profile or metadata file
+                profile_file = VOICE_PROFILES_DIR / f"{voice_id}.npy"
+                metadata_file = VOICE_PROFILES_DIR / f"{voice_id}.json"
                 
-                embedding_path = str(embedding_file) if embedding_file.exists() else str(metadata_file) if metadata_file.exists() else ""
+                profile_path = str(profile_file) if profile_file.exists() else str(metadata_file) if metadata_file.exists() else ""
                 
                 voice_info: Dict[str, Any] = {
                     "voice_id": voice_id,
                     "name": display_name,
                     "sample_file": str(latest_sample),
-                    "embedding_file": embedding_path,
+                    "profile_file": profile_path,
                     "created_date": latest_sample.stat().st_mtime,
-                    "has_embedding": embedding_file.exists(),
+                    "has_profile": profile_file.exists(),
                     "has_metadata": metadata_file.exists()
                 }
                 voices.append(voice_info)
@@ -264,28 +264,28 @@ def get_voice_sample_base64(voice_id: str) -> Dict[str, Any]:
             "message": str(e)
         }), 500
 
-@app.route('/api/voices/<voice_id>/embedding', methods=['GET'])
-def get_voice_embedding(voice_id: str) -> Dict[str, Any]:
-    """Get voice embedding as base64"""
+@app.route('/api/voices/<voice_id>/profile', methods=['GET'])
+def get_voice_profile(voice_id: str) -> Dict[str, Any]:
+    """Get voice profile as base64"""
     try:
-        # Find the embedding file
-        embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
-        if not embedding_file.exists():
+        # Find the profile file
+        profile_file = VOICE_PROFILES_DIR / f"{voice_id}.npy"
+        if not profile_file.exists():
             return jsonify({
                 "status": "error",
-                "message": f"No embedding found for voice_id: {voice_id}"
+                "message": f"No profile found for voice_id: {voice_id}"
             }), 404
         
-        # Read and encode the embedding file
-        with open(embedding_file, 'rb') as f:
-            embedding_data = base64.b64encode(f.read()).decode('utf-8')
+        # Read and encode the profile file
+        with open(profile_file, 'rb') as f:
+            profile_data = base64.b64encode(f.read()).decode('utf-8')
         
         return jsonify({
             "status": "success",
             "voice_id": voice_id,
-            "embedding_base64": embedding_data,
-            "embedding_file": str(embedding_file),
-            "file_size": embedding_file.stat().st_size
+            "profile_base64": profile_data,
+            "profile_file": str(profile_file),
+            "file_size": profile_file.stat().st_size
         })
         
     except Exception as e:
@@ -301,7 +301,7 @@ def save_voice_locally() -> Dict[str, Any]:
         voice_id = request.form.get('voice_id')
         voice_name = request.form.get('voice_name')
         audio_file = request.files.get('audio_file')
-        embedding_file = request.files.get('embedding_file')  # New: embedding file
+        profile_file = request.files.get('profile_file')  # New: profile file
         template_message = request.form.get('template_message', '')
         
         if not all([voice_id, voice_name, audio_file]):
@@ -322,15 +322,15 @@ def save_voice_locally() -> Dict[str, Any]:
         saved_files.append(f"Audio: {sample_filename}")
         print(f"✅ Saved audio sample: {sample_filename}")
         
-        # Save embedding file if provided
-        if embedding_file:
-            embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.npy"
-            embedding_file.save(embedding_filename)
-            saved_files.append(f"Embedding: {embedding_filename}")
-            print(f"✅ Saved embedding file: {embedding_filename}")
+        # Save profile file if provided
+        if profile_file:
+            profile_filename = VOICE_PROFILES_DIR / f"{voice_id}.npy"
+            profile_file.save(profile_filename)
+            saved_files.append(f"Profile: {profile_filename}")
+            print(f"✅ Saved profile file: {profile_filename}")
         else:
-            # Create a metadata file if no embedding provided
-            embedding_filename = VOICE_CLONES_DIR / f"{voice_id}.json"
+            # Create a metadata file if no profile provided
+            profile_filename = VOICE_PROFILES_DIR / f"{voice_id}.json"
             metadata = {
                 "voice_id": voice_id,
                 "voice_name": voice_name,
@@ -340,10 +340,10 @@ def save_voice_locally() -> Dict[str, Any]:
             }
             
             import json
-            with open(embedding_filename, 'w') as f:
+            with open(profile_filename, 'w') as f:
                 json.dump(metadata, f, indent=2)
-            saved_files.append(f"Metadata: {embedding_filename}")
-            print(f"✅ Created metadata file: {embedding_filename}")
+            saved_files.append(f"Metadata: {profile_filename}")
+            print(f"✅ Created metadata file: {profile_filename}")
         
         print(f"🎉 Successfully saved voice files locally:")
         for file_info in saved_files:
@@ -381,14 +381,14 @@ def test_save_dummy_files() -> Dict[str, Any]:
         with open(audio_file, 'wb') as f:
             f.write(dummy_audio)
             
-        # Save dummy embedding file
-        embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
-        with open(embedding_file, 'wb') as f:
+        # Save dummy profile file
+        profile_file = VOICE_PROFILES_DIR / f"{voice_id}.npy"
+        with open(profile_file, 'wb') as f:
             f.write(dummy_embedding)
             
         # Verify files exist
         audio_exists = audio_file.exists()
-        embedding_exists = embedding_file.exists()
+        profile_exists = profile_file.exists()
         
         result = {
             "status": "success",
@@ -399,10 +399,10 @@ def test_save_dummy_files() -> Dict[str, Any]:
                     "exists": audio_exists,
                     "size": audio_file.stat().st_size if audio_exists else 0
                 },
-                "embedding": {
-                    "path": str(embedding_file),
-                    "exists": embedding_exists, 
-                    "size": embedding_file.stat().st_size if embedding_exists else 0
+                "profile": {
+                    "path": str(profile_file),
+                    "exists": profile_exists, 
+                    "size": profile_file.stat().st_size if profile_exists else 0
                 }
             },
             "timestamp": timestamp
@@ -410,7 +410,7 @@ def test_save_dummy_files() -> Dict[str, Any]:
         
         print("🧪 Test files created:")
         print(f"   Audio: {audio_file} ({audio_file.stat().st_size} bytes)")
-        print(f"   Embedding: {embedding_file} ({embedding_file.stat().st_size} bytes)")
+        print(f"   Profile: {profile_file} ({profile_file.stat().st_size} bytes)")
         
         return jsonify(result)
         
@@ -432,7 +432,7 @@ def debug_directories() -> Dict[str, Any]:
         }
         
         for name, directory in [
-            ("voice_clones", VOICE_CLONES_DIR),
+            ("voice_profiles", VOICE_PROFILES_DIR),
             ("voice_samples", VOICE_SAMPLES_DIR), 
             ("temp_voice", TEMP_VOICE_DIR)
         ]:
@@ -471,7 +471,7 @@ def health_check() -> Dict[str, str]:
 
 if __name__ == '__main__':
     print("🎵 Voice Library API Server Starting...")
-    print(f"📂 Voice Clones Directory: {VOICE_CLONES_DIR.absolute()}")
+    print(f"📂 Voice Profiles Directory: {VOICE_PROFILES_DIR.absolute()}")
     print(f"📂 Voice Samples Directory: {VOICE_SAMPLES_DIR.absolute()}")
     print(f"📂 Temp Voice Directory: {TEMP_VOICE_DIR.absolute()}")
     print("🌐 API will be available at: http://localhost:5001")

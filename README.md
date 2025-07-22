@@ -1,19 +1,19 @@
 # RunPod Chatterbox Voice Cloning
 
-A voice cloning application using Chatterbox TTS with persistent voice embeddings, featuring a local voice library.
+A voice cloning application using Chatterbox TTS with persistent voice profiles, featuring a local voice library.
 
 ## Architecture
 
 - **Frontend**: Next.js/React app for voice recording, library management, and TTS generation
 - **Local API**: Flask server for voice library, TTS library, and audio file serving  
-- **Voice Cloning Handler**: RunPod serverless handler for creating voice embeddings
+- **Voice Cloning Handler**: RunPod serverless handler for creating voice profiles
 - **TTS Generation Handler**: RunPod serverless handler for text-to-speech generation
-- **Local Storage**: Voice embeddings (`.npy`), audio samples (`.wav`), and TTS generations (`.wav`)
+- **Local Storage**: Voice profiles (`.npy`), audio samples (`.wav`), and TTS generations (`.wav`)
 
 ### Handler Separation
 
-- **Voice Cloning** (`rp_handler.py`): Creates voice embeddings from audio samples
-- **TTS Generation** (`tts_handler.py`): Uses saved embeddings to generate speech
+- **Voice Cloning** (`rp_handler.py`): Creates voice profiles from audio samples
+- **TTS Generation** (`tts_handler.py`): Uses saved profiles to generate speech
 - **Separate Endpoints**: Each handler has its own RunPod endpoint for easier debugging
 
 ## Setup
@@ -38,7 +38,7 @@ python app.py
 ```
 
 This will start the Flask server at `http://localhost:5001` and create the local directories:
-- `./voice_clones/` - Voice embedding files (`.npy`)
+- `./voice_profiles/` - Voice profile files (`.npy`)
 - `./voice_samples/` - Generated audio samples (`.wav`) 
 - `./temp_voice/` - Temporary audio files
 
@@ -88,6 +88,7 @@ Visit `http://localhost:3000`
 GET  /api/voices                    # List voice library
 GET  /api/voices/{id}/sample        # Get audio file
 GET  /api/voices/{id}/sample/base64 # Get base64 audio
+GET  /api/voices/{id}/profile       # Get voice profile file
 GET  /health                        # Health check
 ```
 
@@ -104,7 +105,7 @@ POST /run  # Generate TTS with saved voice
 ## File Structure
 
 ```
-voice_clones/           # Voice embeddings
+voice_profiles/         # Voice profiles
 ├── voice_emma.npy
 └── voice_christian.npy
 

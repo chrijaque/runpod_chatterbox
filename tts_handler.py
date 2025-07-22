@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 model = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
-VOICE_CLONES_DIR = Path("/voice_clones")
+VOICE_PROFILES_DIR = Path("/voice_profiles")
 TTS_GENERATED_DIR = Path("/tts_generated")
 TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
 logger.info(f"Using existing directories:")
-logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR}")
+logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
@@ -108,22 +108,22 @@ def handler(event, responseFormat="base64"):
     # Extract TTS parameters
     text = input.get('text')
     voice_id = input.get('voice_id')
-    embedding_base64 = input.get('embedding_base64')  # New: embedded voice data
+    profile_base64 = input.get('profile_base64')  # New: voice profile data
     responseFormat = input.get('responseFormat', 'base64')
     
     logger.info(f"📋 Extracted parameters:")
     logger.info(f"  - text: {text[:50]}{'...' if text and len(text) > 50 else ''} (length: {len(text) if text else 0})")
     logger.info(f"  - voice_id: {voice_id}")
-    logger.info(f"  - has_embedding_base64: {bool(embedding_base64)}")
-    logger.info(f"  - embedding_size: {len(embedding_base64) if embedding_base64 else 0}")
+    logger.info(f"  - has_profile_base64: {bool(profile_base64)}")
+    logger.info(f"  - profile_size: {len(profile_base64) if profile_base64 else 0}")
     logger.info(f"  - responseFormat: {responseFormat}")
     
-    if not text or not voice_id or not embedding_base64:
+    if not text or not voice_id or not profile_base64:
         logger.error("❌ Missing required parameters")
         logger.error(f"  - text provided: {bool(text)}")
         logger.error(f"  - voice_id provided: {bool(voice_id)}")
-        logger.error(f"  - embedding_base64 provided: {bool(embedding_base64)}")
-        return {"status": "error", "message": "text, voice_id, and embedding_base64 are required"}
+        logger.error(f"  - profile_base64 provided: {bool(profile_base64)}")
+        return {"status": "error", "message": "text, voice_id, and profile_base64 are required"}
     
     logger.info(f"🎤 TTS request validated: voice_id={voice_id}, text_length={len(text)}")
     
@@ -139,27 +139,27 @@ def handler(event, responseFormat="base64"):
         logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
         
-        # Decode the embedded voice data
-        logger.info("🔄 Decoding embedded voice data...")
+        # Decode the voice profile data
+        logger.info("🔄 Decoding voice profile data...")
         try:
-            embedding_data = base64.b64decode(embedding_base64)
-            logger.info(f"✅ Embedded voice data decoded: {len(embedding_data)} bytes")
+            profile_data = base64.b64decode(profile_base64)
+            logger.info(f"✅ Voice profile data decoded: {len(profile_data)} bytes")
         except Exception as e:
-            logger.error(f"❌ Failed to decode embedded voice data: {e}")
-            return {"status": "error", "message": f"Failed to decode embedded voice data: {e}"}
+            logger.error(f"❌ Failed to decode voice profile data: {e}")
+            return {"status": "error", "message": f"Failed to decode voice profile data: {e}"}
         
-        # Save the embedded voice data to a temporary file
-        logger.info("🔄 Saving embedded voice data to temporary file...")
-        temp_embedding_path = TEMP_VOICE_DIR / f"{voice_id}_temp.npy"
+        # Save the voice profile data to a temporary file
+        logger.info("🔄 Saving voice profile data to temporary file...")
+        temp_profile_path = TEMP_VOICE_DIR / f"{voice_id}_temp.npy"
         
         try:
-            with open(temp_embedding_path, 'wb') as f:
-                f.write(embedding_data)
-            logger.info(f"✅ Temporary embedding file created: {temp_embedding_path}")
-            logger.info(f"✅ File size: {temp_embedding_path.stat().st_size} bytes")
+            with open(temp_profile_path, 'wb') as f:
+                f.write(profile_data)
+            logger.info(f"✅ Temporary profile file created: {temp_profile_path}")
+            logger.info(f"✅ File size: {temp_profile_path.stat().st_size} bytes")
         except Exception as e:
-            logger.error(f"❌ Failed to save temporary embedding file: {e}")
-            return {"status": "error", "message": f"Failed to save temporary embedding file: {e}"}
+            logger.error(f"❌ Failed to save temporary profile file: {e}")
+            return {"status": "error", "message": f"Failed to save temporary profile file: {e}"}
         
         # Check if model has the required method
         logger.info(f"🔍 Checking model capabilities:")
@@ -167,26 +167,26 @@ def handler(event, responseFormat="base64"):
         logger.info(f"  - has generate: {hasattr(model, 'generate')}")
         logger.info(f"  - has save_voice_profile: {hasattr(model, 'save_voice_profile')}")
         
-        # Load the embedding using the forked repository method
+        # Load the profile using the forked repository method
         if hasattr(model, 'load_voice_profile'):
-            logger.info("🔄 Loading embedding using load_voice_profile method...")
-            embedding = model.load_voice_profile(str(temp_embedding_path))
-            logger.info(f"✅ Voice embedding loaded successfully")
-            logger.info(f"✅ Embedding type: {type(embedding)}")
-            if hasattr(embedding, 'shape'):
-                logger.info(f"✅ Embedding shape: {embedding.shape}")
-            if hasattr(embedding, 'dtype'):
-                logger.info(f"✅ Embedding dtype: {embedding.dtype}")
+            logger.info("🔄 Loading profile using load_voice_profile method...")
+            profile = model.load_voice_profile(str(temp_profile_path))
+            logger.info(f"✅ Voice profile loaded successfully")
+            logger.info(f"✅ Profile type: {type(profile)}")
+            if hasattr(profile, 'shape'):
+                logger.info(f"✅ Profile shape: {profile.shape}")
+            if hasattr(profile, 'dtype'):
+                logger.info(f"✅ Profile dtype: {profile.dtype}")
         else:
             logger.error("❌ Model doesn't have load_voice_profile method")
             logger.error("❌ This suggests the forked repository features are not available")
-            return {"status": "error", "message": "Voice embedding support not available"}
+            return {"status": "error", "message": "Voice profile support not available"}
         
-        # Generate speech using the embedding
+        # Generate speech using the profile
         logger.info("🎵 ===== TTS GENERATION =====")
         logger.info(f"🎵 Input text: {text}")
         logger.info(f"🎵 Using voice: {voice_id}")
-        logger.info(f"🎵 Embedding path: {embedding_path}")
+        logger.info(f"🎵 Profile path: {temp_profile_path}")
         
         start_time = time.time()
         
@@ -194,14 +194,14 @@ def handler(event, responseFormat="base64"):
             logger.info("🔄 Starting TTS generation...")
             logger.info(f"🔄 Generation parameters:")
             logger.info(f"  - text length: {len(text)}")
-            logger.info(f"  - saved_voice_path: {embedding_path}")
+            logger.info(f"  - saved_voice_path: {temp_profile_path}")
             logger.info(f"  - temperature: 0.7")
             logger.info(f"  - exaggeration: 0.6")
             
             # Use the generate method with saved_voice_path
             audio_tensor = model.generate(
                 text,
-                saved_voice_path=str(embedding_path),
+                saved_voice_path=str(temp_profile_path),
                 temperature=0.7,
                 exaggeration=0.6
             )
@@ -283,13 +283,13 @@ def handler(event, responseFormat="base64"):
         logger.info(f"📤 Generation time: {generation_time:.2f}s")
         logger.info(f"📤 TTS file: {tts_filename}")
         
-        # Clean up temporary embedding file
+        # Clean up temporary profile file
         try:
-            if temp_embedding_path.exists():
-                os.unlink(temp_embedding_path)
-                logger.info(f"🗑️ Cleaned up temporary embedding file: {temp_embedding_path}")
+            if temp_profile_path.exists():
+                os.unlink(temp_profile_path)
+                logger.info(f"🗑️ Cleaned up temporary profile file: {temp_profile_path}")
         except Exception as cleanup_error:
-            logger.warning(f"⚠️ Failed to clean up temporary embedding file: {cleanup_error}")
+            logger.warning(f"⚠️ Failed to clean up temporary profile file: {cleanup_error}")
         
         # List final directory contents for debugging
         logger.info("📂 ===== FINAL DIRECTORY CONTENTS =====")

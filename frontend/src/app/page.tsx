@@ -53,7 +53,7 @@ export default function Home() {
             resultType: typeof result,
             resultKeys: result ? Object.keys(result) : 'NO RESULT',
             hasAudioBase64: !!(result && result.audio_base64),
-            hasEmbeddingBase64: !!(result && result.embedding_base64),
+            hasProfileBase64: !!(result && result.profile_base64),
             hasMetadata: !!(result && result.metadata),
             voiceName
         });
@@ -76,8 +76,8 @@ export default function Home() {
             console.log('📝 Voice metadata:', { 
                 voiceId, 
                 voiceName, 
-                hasEmbeddingSupport: metadata.has_embedding_support,
-                hasEmbeddingData: !!result.embedding_base64
+                hasProfileSupport: metadata.has_profile_support,
+                hasProfileData: !!result.profile_base64
             });
             
             // Create audio blob
@@ -87,13 +87,13 @@ export default function Home() {
             
             console.log('🎵 Created audio blob:', { size: audioBlob.size, type: audioBlob.type });
             
-            // Create embedding blob if available
-            let embeddingBlob = null;
-            if (result.embedding_base64) {
-                embeddingBlob = new Blob([
-                    Uint8Array.from(atob(result.embedding_base64), c => c.charCodeAt(0))
+            // Create profile blob if available
+            let profileBlob = null;
+            if (result.profile_base64) {
+                profileBlob = new Blob([
+                    Uint8Array.from(atob(result.profile_base64), c => c.charCodeAt(0))
                 ], { type: 'application/octet-stream' });
-                console.log('🧠 Created embedding blob:', { size: embeddingBlob.size });
+                console.log('🧠 Created profile blob:', { size: profileBlob.size });
             }
             
             const formData = new FormData();
@@ -102,10 +102,10 @@ export default function Home() {
             formData.append('audio_file', audioBlob, `${voiceId}_sample.wav`);
             formData.append('template_message', metadata.template_message || '');
             
-            // Add embedding file if available
-            if (embeddingBlob) {
-                formData.append('embedding_file', embeddingBlob, `${voiceId}.npy`);
-                console.log('📎 Added embedding file to form data');
+            // Add profile file if available
+            if (profileBlob) {
+                formData.append('profile_file', profileBlob, `${voiceId}.npy`);
+                console.log('📎 Added profile file to form data');
             }
             
             console.log('📤 Sending to local API...');
