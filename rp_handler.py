@@ -21,12 +21,14 @@ model = None
 VOICE_CLONES_DIR = Path("/voice_clones")
 VOICE_SAMPLES_DIR = Path("/voice_samples") 
 TEMP_VOICE_DIR = Path("/temp_voice")
+TTS_GENERATED_DIR = Path("/tts_generated")
 
 # Log directory status (don't create them as they already exist in RunPod)
 logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR}")
 logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
+logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 
 def initialize_model():
     global model
@@ -402,6 +404,17 @@ def handle_tts_request(input, responseFormat):
             logger.error(f"❌ Failed to generate TTS: {e}")
             return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
+        # Save the generated TTS to file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+        
+        try:
+            torchaudio.save(str(tts_filename), audio_tensor, model.sr)
+            logger.info(f"💾 TTS saved to: {tts_filename} ({tts_filename.stat().st_size} bytes)")
+        except Exception as e:
+            logger.error(f"❌ Failed to save TTS file: {e}")
+            # Continue anyway, don't fail the request
+        
         # Convert to base64
         audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
         
@@ -415,11 +428,13 @@ def handle_tts_request(input, responseFormat):
                 "text_input": text,
                 "generation_time": generation_time,
                 "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape)
+                "audio_shape": list(audio_tensor.shape),
+                "tts_file": str(tts_filename),
+                "timestamp": timestamp
             }
         }
         
-        logger.info(f"📤 TTS Response: audio_base64 length={len(audio_base64)}, generation_time={generation_time:.2f}s")
+        logger.info(f"📤 TTS Response: audio_base64 length={len(audio_base64)}, generation_time={generation_time:.2f}s, saved_to={tts_filename}")
         return response
         
     except Exception as e:

@@ -32,7 +32,7 @@ COPY rp_handler.py /
 COPY download_model.py /
 
 # Create required directories
-RUN mkdir -p /voice_clones /voice_samples /temp_voice
+RUN mkdir -p /voice_clones /voice_samples /temp_voice /tts_generated
 
 # Download and verify model with detailed error reporting
 RUN python -u download_model.py 2>&1

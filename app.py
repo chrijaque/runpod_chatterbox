@@ -24,17 +24,20 @@ CORS(app)  # Enable CORS for frontend
 VOICE_CLONES_DIR = Path("./voice_clones")
 VOICE_SAMPLES_DIR = Path("./voice_samples")
 TEMP_VOICE_DIR = Path("./temp_voice")
+TTS_GENERATED_DIR = Path("./tts_generated")
 
 # Create directories if they don't exist (local development only)
 print(f"🔍 Checking local directories...")
 VOICE_CLONES_DIR.mkdir(exist_ok=True)
 VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
 TEMP_VOICE_DIR.mkdir(exist_ok=True)
+TTS_GENERATED_DIR.mkdir(exist_ok=True)
 
 print(f"✅ Local directories ready:")
 print(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR.absolute()}")
 print(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR.absolute()}")
 print(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR.absolute()}")
+print(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR.absolute()}")
 
 def get_voice_library() -> List[Dict[str, Any]]:
     """Get list of all created voices with their sample files"""
@@ -95,6 +98,54 @@ def get_voice_library() -> List[Dict[str, Any]]:
     
     return voices
 
+def get_tts_generations() -> List[Dict[str, Any]]:
+    """Get list of all TTS generations"""
+    generations: List[Dict[str, Any]] = []
+    
+    try:
+        if not TTS_GENERATED_DIR.exists():
+            print("TTS generated directory doesn't exist yet")
+            return generations
+        
+        # Get all TTS files
+        tts_files = list(TTS_GENERATED_DIR.glob("tts_*.wav"))
+        
+        for tts_file in tts_files:
+            try:
+                # Parse filename: tts_voice_christian_20250722_063814.wav
+                filename_parts = tts_file.stem.split('_')
+                if len(filename_parts) >= 4:
+                    voice_id = '_'.join(filename_parts[1:-1])  # voice_christian
+                    timestamp = filename_parts[-1]  # 20250722_063814
+                    
+                    # Extract display name
+                    display_name = voice_id.replace("voice_", "").replace("_", " ").title()
+                    
+                    generation_info: Dict[str, Any] = {
+                        "file_id": tts_file.stem,
+                        "voice_id": voice_id,
+                        "voice_name": display_name,
+                        "file_path": str(tts_file),
+                        "created_date": tts_file.stat().st_mtime,
+                        "timestamp": timestamp,
+                        "file_size": tts_file.stat().st_size
+                    }
+                    generations.append(generation_info)
+                    
+            except Exception as e:
+                print(f"Error parsing TTS file {tts_file}: {e}")
+                continue
+        
+        # Sort by creation date (newest first)
+        generations.sort(key=lambda x: x["created_date"], reverse=True)
+        
+        print(f"Found {len(generations)} TTS generations")
+        
+    except Exception as e:
+        print(f"Error getting TTS generations: {e}")
+    
+    return generations
+
 @app.route('/api/voices', methods=['GET'])
 def list_voices() -> Dict[str, Any]:
     """Get voice library"""
@@ -106,6 +157,52 @@ def list_voices() -> Dict[str, Any]:
             "total_voices": len(voices)
         })
     except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/tts/generations', methods=['GET'])
+def list_tts_generations() -> Dict[str, Any]:
+    """Get TTS generations library"""
+    try:
+        generations = get_tts_generations()
+        
+        return jsonify({
+            "status": "success",
+            "total_generations": len(generations),
+            "generations": generations
+        })
+        
+    except Exception as e:
+        print(f"Error listing TTS generations: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/tts/generations/<file_id>/audio', methods=['GET'])
+def get_tts_audio(file_id: str) -> Any:
+    """Get TTS audio file by file_id"""
+    try:
+        # Find the file
+        tts_file = TTS_GENERATED_DIR / f"{file_id}.wav"
+        
+        if not tts_file.exists():
+            return jsonify({
+                "status": "error",
+                "message": f"TTS file not found: {file_id}"
+            }), 404
+        
+        # Return the audio file
+        return send_file(
+            tts_file,
+            mimetype='audio/wav',
+            as_attachment=False
+        )
+        
+    except Exception as e:
+        print(f"Error serving TTS audio: {e}")
         return jsonify({
             "status": "error",
             "message": str(e)

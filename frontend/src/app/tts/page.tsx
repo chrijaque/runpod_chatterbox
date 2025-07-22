@@ -19,23 +19,39 @@ interface TTSResult {
         voice_name: string;
         text_input: string;
         generation_time: number;
+        tts_file: string;
+        timestamp: string;
     };
+}
+
+interface TTSGeneration {
+    file_id: string;
+    voice_id: string;
+    voice_name: string;
+    file_path: string;
+    created_date: number;
+    timestamp: string;
+    file_size: number;
 }
 
 export default function TTSPage() {
     const [text, setText] = useState('');
     const [selectedVoice, setSelectedVoice] = useState<string>('');
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
+    const [ttsGenerations, setTtsGenerations] = useState<TTSGeneration[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
+    const [isLoadingGenerations, setIsLoadingGenerations] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<TTSResult | null>(null);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+    const [playingGeneration, setPlayingGeneration] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Load voice library on component mount
+    // Load voice library and TTS generations on component mount
     useEffect(() => {
         loadVoiceLibrary();
+        loadTTSGenerations();
     }, []);
 
     const loadVoiceLibrary = async () => {
@@ -62,6 +78,48 @@ export default function TTSPage() {
             setError('Failed to load voice library');
         } finally {
             setIsLoadingLibrary(false);
+        }
+    };
+
+    const loadTTSGenerations = async () => {
+        setIsLoadingGenerations(true);
+        try {
+            const response = await fetch('http://localhost:5001/api/tts/generations', {
+                method: 'GET',
+            });
+
+            const data = await response.json();
+            console.log('TTS Generations API response:', data);
+
+            if (data.status === 'success') {
+                setTtsGenerations(data.generations || []);
+            } else {
+                throw new Error(data.message || 'Failed to load TTS generations');
+            }
+        } catch (err) {
+            console.error('Error loading TTS generations:', err);
+            setError('Failed to load TTS generations');
+        } finally {
+            setIsLoadingGenerations(false);
+        }
+    };
+
+    const playTTSGeneration = async (fileId: string) => {
+        setPlayingGeneration(fileId);
+        try {
+            const audioUrl = `http://localhost:5001/api/tts/generations/${fileId}/audio`;
+            
+            const audio = new Audio(audioUrl);
+            audio.onended = () => setPlayingGeneration(null);
+            audio.onerror = () => {
+                console.error('Error playing TTS generation');
+                setPlayingGeneration(null);
+            };
+            
+            await audio.play();
+        } catch (err) {
+            console.error('Error playing TTS generation:', err);
+            setPlayingGeneration(null);
         }
     };
 
@@ -184,6 +242,9 @@ export default function TTSPage() {
                 });
                 
                 setResult(result);
+                
+                // Refresh TTS generations after successful generation
+                await loadTTSGenerations();
                 
             } else {
                 throw new Error('No job ID in response');
@@ -356,6 +417,72 @@ export default function TTSPage() {
                                         </div>
                                     </div>
                                 )}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* TTS Generations Library Section */}
+                <div className="card">
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h2 className="text-xl font-semibold text-gray-900">
+                                TTS Generations Library
+                            </h2>
+                            <button
+                                onClick={loadTTSGenerations}
+                                disabled={isLoadingGenerations}
+                                className="btn-secondary"
+                            >
+                                {isLoadingGenerations ? 'Loading...' : 'Refresh'}
+                            </button>
+                        </div>
+
+                        {isLoadingGenerations ? (
+                            <div className="text-center py-8">
+                                <div className="text-gray-500">Loading TTS generations...</div>
+                            </div>
+                        ) : ttsGenerations.length === 0 ? (
+                            <div className="text-center py-8">
+                                <div className="text-gray-500 mb-4">No TTS generations yet.</div>
+                                <div className="text-sm text-gray-400">Generate some speech above to see your creations here.</div>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                                {ttsGenerations.map((generation) => (
+                                    <div key={generation.file_id} className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <h3 className="font-medium text-gray-900">{generation.voice_name}</h3>
+                                            <span className="text-xs text-gray-500">
+                                                {new Date(generation.created_date * 1000).toLocaleDateString()}
+                                            </span>
+                                        </div>
+                                        
+                                        <div className="flex items-center space-x-2">
+                                            <button
+                                                onClick={() => playTTSGeneration(generation.file_id)}
+                                                disabled={playingGeneration === generation.file_id}
+                                                className="btn-primary flex-1 text-sm py-2"
+                                            >
+                                                {playingGeneration === generation.file_id ? (
+                                                    <>
+                                                        <span className="animate-pulse">Playing...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        ▶ Play
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="mt-2 text-xs text-gray-400">
+                                            <div>ID: {generation.voice_id}</div>
+                                            <div>Size: {(generation.file_size / 1024).toFixed(1)} KB</div>
+                                            <div>Time: {generation.timestamp}</div>
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>
