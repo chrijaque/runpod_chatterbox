@@ -317,8 +317,9 @@ export default function Home() {
                 
                 console.log('🔍 DEBUGGING: Raw result from RunPod:', result);
                 console.log('🔍 DEBUGGING: Result type:', typeof result);
-                console.log('🔍 DEBUGGING: Result length:', result ? result.length : 'N/A');
-                console.log('🔍 DEBUGGING: First 100 chars:', result ? result.substring(0, 100) : 'N/A');
+                console.log('🔍 DEBUGGING: Result keys:', result ? Object.keys(result) : 'N/A');
+                console.log('🔍 DEBUGGING: Has audio_base64:', !!(result && result.audio_base64));
+                console.log('🔍 DEBUGGING: Has embedding_base64:', !!(result && result.embedding_base64));
                 
                 console.log('🏁 Final result received:', {
                     hasResult: !!result,
