@@ -1,13 +1,17 @@
 // Log environment variables to help debug
 console.log('Environment variables:', {
     hasApiKey: !!process.env.NEXT_PUBLIC_RUNPOD_API_KEY,
-    hasEndpointId: !!process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID,
-    apiEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID}/run`
+    hasVoiceCloneEndpointId: !!process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID,
+    hasTtsEndpointId: !!process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID,
+    voiceCloneEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID}/run`,
+    ttsEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID}/run`
 });
 
 export const RUNPOD_API_KEY = process.env.NEXT_PUBLIC_RUNPOD_API_KEY || '';
 export const RUNPOD_ENDPOINT_ID = process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID || '';
+export const TTS_ENDPOINT_ID = process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID || '';
 export const API_ENDPOINT = `https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}/run`;
+export const TTS_API_ENDPOINT = `https://api.runpod.ai/v2/${TTS_ENDPOINT_ID}/run`;
 
 export interface ChatterboxRequest {
     prompt: string;

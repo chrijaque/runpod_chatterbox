@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
+import { RUNPOD_API_KEY, TTS_API_ENDPOINT } from '@/config/api';
 import Link from 'next/link';
 
 interface Voice {
@@ -124,7 +124,7 @@ export default function TTSPage() {
     };
 
     const pollJobStatus = async (jobId: string) => {
-        const statusEndpoint = API_ENDPOINT.replace('/run', `/status/${jobId}`);
+        const statusEndpoint = TTS_API_ENDPOINT.replace('/run', `/status/${jobId}`);
         abortControllerRef.current = new AbortController();
         
         try {
@@ -184,6 +184,10 @@ export default function TTSPage() {
                 throw new Error('RunPod API key not configured');
             }
 
+            if (!TTS_API_ENDPOINT) {
+                throw new Error('TTS endpoint not configured. Please set NEXT_PUBLIC_TTS_ENDPOINT_ID');
+            }
+
             if (!text.trim()) {
                 throw new Error('Please enter text to synthesize');
             }
@@ -197,7 +201,7 @@ export default function TTSPage() {
                 selectedVoice 
             });
 
-            const response = await fetch(API_ENDPOINT, {
+            const response = await fetch(TTS_API_ENDPOINT, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -266,7 +270,7 @@ export default function TTSPage() {
         if (!currentJobId) return;
 
         try {
-            const cancelEndpoint = API_ENDPOINT.replace('/run', `/cancel/${currentJobId}`);
+            const cancelEndpoint = TTS_API_ENDPOINT.replace('/run', `/cancel/${currentJobId}`);
             const response = await fetch(cancelEndpoint, {
                 method: 'POST',
                 headers: {

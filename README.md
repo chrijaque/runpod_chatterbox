@@ -4,10 +4,17 @@ A voice cloning application using Chatterbox TTS with persistent voice embedding
 
 ## Architecture
 
-- **Frontend**: Next.js/React app for voice recording and library management
-- **Local API**: Flask server for voice library and audio file serving  
-- **RunPod Backend**: Serverless TTS generation with persistent voice cloning
-- **Local Storage**: Voice embeddings (`.npy`) and audio samples (`.wav`)
+- **Frontend**: Next.js/React app for voice recording, library management, and TTS generation
+- **Local API**: Flask server for voice library, TTS library, and audio file serving  
+- **Voice Cloning Handler**: RunPod serverless handler for creating voice embeddings
+- **TTS Generation Handler**: RunPod serverless handler for text-to-speech generation
+- **Local Storage**: Voice embeddings (`.npy`), audio samples (`.wav`), and TTS generations (`.wav`)
+
+### Handler Separation
+
+- **Voice Cloning** (`rp_handler.py`): Creates voice embeddings from audio samples
+- **TTS Generation** (`tts_handler.py`): Uses saved embeddings to generate speech
+- **Separate Endpoints**: Each handler has its own RunPod endpoint for easier debugging
 
 ## Setup
 
@@ -41,8 +48,13 @@ Create `frontend/.env.local`:
 
 ```env
 NEXT_PUBLIC_RUNPOD_API_KEY=your_runpod_api_key
-NEXT_PUBLIC_RUNPOD_ENDPOINT_ID=your_endpoint_id
+NEXT_PUBLIC_RUNPOD_ENDPOINT_ID=your_voice_clone_endpoint_id
+NEXT_PUBLIC_TTS_ENDPOINT_ID=your_tts_endpoint_id
 ```
+
+**Note**: You'll need to deploy both handlers separately on RunPod:
+- Voice Cloning Handler: Use `rp_handler.py` and `Dockerfile`
+- TTS Generation Handler: Use `tts_handler.py` and `Dockerfile.tts`
 
 ### 4. Start Frontend
 
@@ -79,10 +91,14 @@ GET  /api/voices/{id}/sample/base64 # Get base64 audio
 GET  /health                        # Health check
 ```
 
-### RunPod API
+### RunPod APIs
 
 ```
+# Voice Cloning Handler
 POST /run  # Generate voice clone
+
+# TTS Generation Handler  
+POST /run  # Generate TTS with saved voice
 ```
 
 ## File Structure
@@ -95,6 +111,10 @@ voice_clones/           # Voice embeddings
 voice_samples/          # Audio samples  
 ├── voice_emma_sample_20240120_143022.wav
 └── voice_christian_sample_20240120_143155.wav
+
+tts_generated/          # TTS generations
+├── tts_voice_emma_20240120_143022.wav
+└── tts_voice_christian_20240120_143155.wav
 
 temp_voice/             # Temporary files
 ```

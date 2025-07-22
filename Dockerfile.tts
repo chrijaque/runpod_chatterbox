@@ -1,0 +1,42 @@
+FROM nvidia/cuda:11.8-devel-ubuntu22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create symbolic link for python
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt /requirements.txt
+
+# Install Python dependencies with verbose pip output
+RUN pip install -v -r requirements.txt
+
+# Copy TTS handler files
+COPY tts_handler.py /
+COPY download_model.py /
+
+# Create required directories
+RUN mkdir -p /voice_clones /tts_generated
+
+# Download and verify model with detailed error reporting
+RUN python -u download_model.py 2>&1
+
+# Expose port (if needed for health checks)
+EXPOSE 8000
+
+# Set the entrypoint to the TTS handler
+CMD ["python", "-u", "tts_handler.py"] 

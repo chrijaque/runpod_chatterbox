@@ -21,14 +21,12 @@ model = None
 VOICE_CLONES_DIR = Path("/voice_clones")
 VOICE_SAMPLES_DIR = Path("/voice_samples") 
 TEMP_VOICE_DIR = Path("/temp_voice")
-TTS_GENERATED_DIR = Path("/tts_generated")
 
 # Log directory status (don't create them as they already exist in RunPod)
 logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR}")
 logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
-logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 
 def initialize_model():
     global model
@@ -147,13 +145,8 @@ def load_voice_embedding(voice_id):
 def handler(event, responseFormat="base64"):
     input = event['input']
     
-    # Check request type
-    request_type = input.get('request_type', 'voice_clone')  # Default to voice cloning
-    
-    if request_type == 'tts':
-        return handle_tts_request(input, responseFormat)
-    else:
-        return handle_voice_clone_request(input, responseFormat)
+    # This handler is for voice cloning only
+    return handle_voice_clone_request(input, responseFormat)
 
 def handle_voice_clone_request(input, responseFormat):
     """Handle voice cloning requests"""
@@ -355,91 +348,6 @@ def handle_voice_clone_request(input, responseFormat):
     logger.info(f"📤 Response format used: {responseFormat}")
     
     return response
-
-def handle_tts_request(input, responseFormat):
-    """Handle TTS generation requests using saved voice embeddings"""
-    global model
-    
-    # Extract TTS parameters
-    text = input.get('text')
-    voice_id = input.get('voice_id')
-    responseFormat = input.get('responseFormat', 'base64')
-    
-    if not text or not voice_id:
-        return {"status": "error", "message": "Both text and voice_id are required"}
-    
-    logger.info(f"🎤 TTS request: voice_id={voice_id}, text_length={len(text)}")
-    
-    try:
-        # Load the voice embedding
-        embedding_path = VOICE_CLONES_DIR / f"{voice_id}.npy"
-        if not embedding_path.exists():
-            return {"status": "error", "message": f"Voice embedding not found for {voice_id}"}
-        
-        logger.info(f"📁 Loading voice embedding from: {embedding_path}")
-        
-        # Load the embedding using the forked repository method
-        if hasattr(model, 'load_voice_clone'):
-            embedding = model.load_voice_clone(str(embedding_path))
-            logger.info(f"✅ Voice embedding loaded successfully")
-        else:
-            return {"status": "error", "message": "Voice embedding support not available"}
-        
-        # Generate speech using the embedding
-        logger.info(f"🎵 Generating TTS with voice embedding...")
-        start_time = time.time()
-        
-        try:
-            # Use the generate method with saved_voice_path
-            audio_tensor = model.generate(
-                text,
-                saved_voice_path=str(embedding_path),
-                temperature=0.7,
-                exaggeration=0.6
-            )
-            generation_time = time.time() - start_time
-            logger.info(f"✅ TTS generated successfully in {generation_time:.2f}s")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to generate TTS: {e}")
-            return {"status": "error", "message": f"Failed to generate TTS: {e}"}
-        
-        # Save the generated TTS to file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
-        
-        try:
-            torchaudio.save(str(tts_filename), audio_tensor, model.sr)
-            logger.info(f"💾 TTS saved to: {tts_filename} ({tts_filename.stat().st_size} bytes)")
-        except Exception as e:
-            logger.error(f"❌ Failed to save TTS file: {e}")
-            # Continue anyway, don't fail the request
-        
-        # Convert to base64
-        audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
-        
-        # Create response
-        response = {
-            "status": "success",
-            "audio_base64": audio_base64,
-            "metadata": {
-                "voice_id": voice_id,
-                "voice_name": voice_id.replace('voice_', ''),  # Extract name from ID
-                "text_input": text,
-                "generation_time": generation_time,
-                "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape),
-                "tts_file": str(tts_filename),
-                "timestamp": timestamp
-            }
-        }
-        
-        logger.info(f"📤 TTS Response: audio_base64 length={len(audio_base64)}, generation_time={generation_time:.2f}s, saved_to={tts_filename}")
-        return response
-        
-    except Exception as e:
-        logger.error(f"❌ TTS request failed: {e}")
-        return {"status": "error", "message": str(e)}
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""
