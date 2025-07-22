@@ -149,11 +149,13 @@ def handler(event, responseFormat="base64"):
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
     audio_format = input.get('audio_format', 'wav')  # Format of the input audio
+    responseFormat = input.get('responseFormat', 'base64')  # Response format from frontend
 
     if not name or not audio_data:
         return {"status": "error", "message": "Both name and audio_data are required"}
 
     logger.info(f"New request. Voice clone name: {name}")
+    logger.info(f"Response format requested: {responseFormat}")
     
     # Generate the template message
     template_message = generate_template_message(name)
@@ -301,6 +303,31 @@ def handler(event, responseFormat="base64"):
         }
         return response
 
+    # Default response format - ALWAYS return structured JSON
+    response = {
+        "status": "success",
+        "audio_base64": audio_base64,
+        "embedding_base64": embedding_base64,
+        "metadata": {
+            "sample_rate": model.sr,
+            "audio_shape": list(audio_tensor.shape),
+            "voice_id": voice_id,
+            "voice_name": name,
+            "embedding_path": str(embedding_path),
+            "embedding_exists": embedding_path.exists(),
+            "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+            "generation_method": generation_method,
+            "sample_file": str(sample_filename),
+            "template_message": template_message
+        }
+    }
+    
+    logger.info(f"📤 Returning response with keys: {list(response.keys())}")
+    logger.info(f"📤 Response type: {type(response)}")
+    logger.info(f"📤 Audio base64 length: {len(audio_base64) if audio_base64 else 0}")
+    logger.info(f"📤 Embedding base64 length: {len(embedding_base64) if embedding_base64 else 0}")
+    logger.info(f"📤 Response format used: {responseFormat}")
+    
     return response
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):

@@ -274,6 +274,7 @@ export default function Home() {
                         name: name,
                         audio_data: audioData,
                         audio_format: audioFormat,
+                        responseFormat: "base64",  // Explicitly request JSON response
                     },
                 }),
                 signal: abortControllerRef.current.signal,
