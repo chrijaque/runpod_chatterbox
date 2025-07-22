@@ -1,23 +1,7 @@
-FROM nvidia/cuda:11.8-devel-ubuntu22.04
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
-ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    git \
-    wget \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create symbolic link for python
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Set working directory
-WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt /requirements.txt
@@ -33,10 +17,10 @@ COPY download_model.py /
 RUN mkdir -p /voice_clones /tts_generated
 
 # Download and verify model with detailed error reporting
-RUN python -u download_model.py 2>&1
+RUN python3 -u download_model.py 2>&1
 
 # Expose port (if needed for health checks)
 EXPOSE 8000
 
 # Set the entrypoint to the TTS handler
-CMD ["python", "-u", "tts_handler.py"] 
+CMD ["python3", "-u", "tts_handler.py"] 
