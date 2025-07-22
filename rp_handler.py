@@ -145,6 +145,16 @@ def load_voice_embedding(voice_id):
 def handler(event, responseFormat="base64"):
     input = event['input']
     
+    # Check request type
+    request_type = input.get('request_type', 'voice_clone')  # Default to voice cloning
+    
+    if request_type == 'tts':
+        return handle_tts_request(input, responseFormat)
+    else:
+        return handle_voice_clone_request(input, responseFormat)
+
+def handle_voice_clone_request(input, responseFormat):
+    """Handle voice cloning requests"""
     # Handle voice generation request only
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
@@ -343,6 +353,78 @@ def handler(event, responseFormat="base64"):
     logger.info(f"📤 Response format used: {responseFormat}")
     
     return response
+
+def handle_tts_request(input, responseFormat):
+    """Handle TTS generation requests using saved voice embeddings"""
+    global model
+    
+    # Extract TTS parameters
+    text = input.get('text')
+    voice_id = input.get('voice_id')
+    responseFormat = input.get('responseFormat', 'base64')
+    
+    if not text or not voice_id:
+        return {"status": "error", "message": "Both text and voice_id are required"}
+    
+    logger.info(f"🎤 TTS request: voice_id={voice_id}, text_length={len(text)}")
+    
+    try:
+        # Load the voice embedding
+        embedding_path = VOICE_CLONES_DIR / f"{voice_id}.npy"
+        if not embedding_path.exists():
+            return {"status": "error", "message": f"Voice embedding not found for {voice_id}"}
+        
+        logger.info(f"📁 Loading voice embedding from: {embedding_path}")
+        
+        # Load the embedding using the forked repository method
+        if hasattr(model, 'load_voice_clone'):
+            embedding = model.load_voice_clone(str(embedding_path))
+            logger.info(f"✅ Voice embedding loaded successfully")
+        else:
+            return {"status": "error", "message": "Voice embedding support not available"}
+        
+        # Generate speech using the embedding
+        logger.info(f"🎵 Generating TTS with voice embedding...")
+        start_time = time.time()
+        
+        try:
+            # Use the generate method with saved_voice_path
+            audio_tensor = model.generate(
+                text,
+                saved_voice_path=str(embedding_path),
+                temperature=0.7,
+                exaggeration=0.6
+            )
+            generation_time = time.time() - start_time
+            logger.info(f"✅ TTS generated successfully in {generation_time:.2f}s")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to generate TTS: {e}")
+            return {"status": "error", "message": f"Failed to generate TTS: {e}"}
+        
+        # Convert to base64
+        audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
+        
+        # Create response
+        response = {
+            "status": "success",
+            "audio_base64": audio_base64,
+            "metadata": {
+                "voice_id": voice_id,
+                "voice_name": voice_id.replace('voice_', ''),  # Extract name from ID
+                "text_input": text,
+                "generation_time": generation_time,
+                "sample_rate": model.sr,
+                "audio_shape": list(audio_tensor.shape)
+            }
+        }
+        
+        logger.info(f"📤 TTS Response: audio_base64 length={len(audio_base64)}, generation_time={generation_time:.2f}s")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ TTS request failed: {e}")
+        return {"status": "error", "message": str(e)}
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""

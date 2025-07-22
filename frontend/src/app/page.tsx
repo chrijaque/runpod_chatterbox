@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
 import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
@@ -401,6 +402,11 @@ export default function Home() {
                     <p className="mt-2 text-sm text-gray-600">
                         Enter a name, record or upload audio, then create your personalized voice clone. Browse your voice library below.
                     </p>
+                    <div className="mt-4">
+                        <Link href="/tts" className="text-blue-600 hover:text-blue-800 text-sm">
+                            🎤 Generate TTS with Saved Voices →
+                        </Link>
+                    </div>
                 </div>
 
                 <div className="card">
