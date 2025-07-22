@@ -14,7 +14,7 @@ COPY tts_handler.py /
 COPY download_model.py /
 
 # Create required directories
-RUN mkdir -p /voice_clones /tts_generated
+RUN mkdir -p /voice_clones /tts_generated /temp_voice
 
 # Download and verify model with detailed error reporting
 RUN python3 -u download_model.py 2>&1

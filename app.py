@@ -264,6 +264,36 @@ def get_voice_sample_base64(voice_id: str) -> Dict[str, Any]:
             "message": str(e)
         }), 500
 
+@app.route('/api/voices/<voice_id>/embedding', methods=['GET'])
+def get_voice_embedding(voice_id: str) -> Dict[str, Any]:
+    """Get voice embedding as base64"""
+    try:
+        # Find the embedding file
+        embedding_file = VOICE_CLONES_DIR / f"{voice_id}.npy"
+        if not embedding_file.exists():
+            return jsonify({
+                "status": "error",
+                "message": f"No embedding found for voice_id: {voice_id}"
+            }), 404
+        
+        # Read and encode the embedding file
+        with open(embedding_file, 'rb') as f:
+            embedding_data = base64.b64encode(f.read()).decode('utf-8')
+        
+        return jsonify({
+            "status": "success",
+            "voice_id": voice_id,
+            "embedding_base64": embedding_data,
+            "embedding_file": str(embedding_file),
+            "file_size": embedding_file.stat().st_size
+        })
+        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 @app.route('/api/voices/save', methods=['POST'])
 def save_voice_locally() -> Dict[str, Any]:
     """Save voice files locally from RunPod generation"""

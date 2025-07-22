@@ -19,11 +19,13 @@ model = None
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_CLONES_DIR = Path("/voice_clones")
 TTS_GENERATED_DIR = Path("/tts_generated")
+TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
 logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_CLONES_DIR: {VOICE_CLONES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
+logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 def initialize_model():
     global model
@@ -97,23 +99,27 @@ def handler(event, responseFormat="base64"):
     # Extract TTS parameters
     text = input.get('text')
     voice_id = input.get('voice_id')
+    embedding_base64 = input.get('embedding_base64')  # New: embedded voice data
     responseFormat = input.get('responseFormat', 'base64')
     
     logger.info(f"📋 Extracted parameters:")
     logger.info(f"  - text: {text[:50]}{'...' if text and len(text) > 50 else ''} (length: {len(text) if text else 0})")
     logger.info(f"  - voice_id: {voice_id}")
+    logger.info(f"  - has_embedding_base64: {bool(embedding_base64)}")
+    logger.info(f"  - embedding_size: {len(embedding_base64) if embedding_base64 else 0}")
     logger.info(f"  - responseFormat: {responseFormat}")
     
-    if not text or not voice_id:
+    if not text or not voice_id or not embedding_base64:
         logger.error("❌ Missing required parameters")
         logger.error(f"  - text provided: {bool(text)}")
         logger.error(f"  - voice_id provided: {bool(voice_id)}")
-        return {"status": "error", "message": "Both text and voice_id are required"}
+        logger.error(f"  - embedding_base64 provided: {bool(embedding_base64)}")
+        return {"status": "error", "message": "text, voice_id, and embedding_base64 are required"}
     
     logger.info(f"🎤 TTS request validated: voice_id={voice_id}, text_length={len(text)}")
     
     try:
-        logger.info("🔍 ===== VOICE EMBEDDING LOADING =====")
+        logger.info("🔍 ===== VOICE EMBEDDING PROCESSING =====")
         
         # Check if model is initialized
         if model is None:
@@ -124,23 +130,27 @@ def handler(event, responseFormat="base64"):
         logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
         
-        # Load the voice embedding
-        embedding_path = VOICE_CLONES_DIR / f"{voice_id}.npy"
-        logger.info(f"🔍 Looking for embedding at: {embedding_path}")
-        logger.info(f"🔍 Embedding path exists: {embedding_path.exists()}")
+        # Decode the embedded voice data
+        logger.info("🔄 Decoding embedded voice data...")
+        try:
+            embedding_data = base64.b64decode(embedding_base64)
+            logger.info(f"✅ Embedded voice data decoded: {len(embedding_data)} bytes")
+        except Exception as e:
+            logger.error(f"❌ Failed to decode embedded voice data: {e}")
+            return {"status": "error", "message": f"Failed to decode embedded voice data: {e}"}
         
-        if not embedding_path.exists():
-            logger.error(f"❌ Voice embedding not found: {embedding_path}")
-            logger.info("📂 Checking voice_clones directory contents:")
-            if VOICE_CLONES_DIR.exists():
-                files = list(VOICE_CLONES_DIR.glob("*"))
-                logger.info(f"  Found {len(files)} files: {[f.name for f in files]}")
-            else:
-                logger.error(f"❌ Voice clones directory doesn't exist: {VOICE_CLONES_DIR}")
-            return {"status": "error", "message": f"Voice embedding not found for {voice_id}"}
+        # Save the embedded voice data to a temporary file
+        logger.info("🔄 Saving embedded voice data to temporary file...")
+        temp_embedding_path = TEMP_VOICE_DIR / f"{voice_id}_temp.npy"
         
-        logger.info(f"📁 Loading voice embedding from: {embedding_path}")
-        logger.info(f"📁 Embedding file size: {embedding_path.stat().st_size} bytes")
+        try:
+            with open(temp_embedding_path, 'wb') as f:
+                f.write(embedding_data)
+            logger.info(f"✅ Temporary embedding file created: {temp_embedding_path}")
+            logger.info(f"✅ File size: {temp_embedding_path.stat().st_size} bytes")
+        except Exception as e:
+            logger.error(f"❌ Failed to save temporary embedding file: {e}")
+            return {"status": "error", "message": f"Failed to save temporary embedding file: {e}"}
         
         # Check if model has the required method
         logger.info(f"🔍 Checking model capabilities:")
@@ -151,7 +161,7 @@ def handler(event, responseFormat="base64"):
         # Load the embedding using the forked repository method
         if hasattr(model, 'load_voice_clone'):
             logger.info("🔄 Loading embedding using load_voice_clone method...")
-            embedding = model.load_voice_clone(str(embedding_path))
+            embedding = model.load_voice_clone(str(temp_embedding_path))
             logger.info(f"✅ Voice embedding loaded successfully")
             logger.info(f"✅ Embedding type: {type(embedding)}")
             if hasattr(embedding, 'shape'):
@@ -263,6 +273,14 @@ def handler(event, responseFormat="base64"):
         logger.info(f"📤 Audio base64 length: {len(audio_base64)}")
         logger.info(f"📤 Generation time: {generation_time:.2f}s")
         logger.info(f"📤 TTS file: {tts_filename}")
+        
+        # Clean up temporary embedding file
+        try:
+            if temp_embedding_path.exists():
+                os.unlink(temp_embedding_path)
+                logger.info(f"🗑️ Cleaned up temporary embedding file: {temp_embedding_path}")
+        except Exception as cleanup_error:
+            logger.warning(f"⚠️ Failed to clean up temporary embedding file: {cleanup_error}")
         
         # List final directory contents for debugging
         logger.info("📂 ===== FINAL DIRECTORY CONTENTS =====")

@@ -201,6 +201,21 @@ export default function TTSPage() {
                 selectedVoice 
             });
 
+            // Fetch the voice embedding from local API
+            console.log('📥 Fetching voice embedding from local API...');
+            const embeddingResponse = await fetch(`http://localhost:5001/api/voices/${selectedVoice}/embedding`);
+            
+            if (!embeddingResponse.ok) {
+                const errorData = await embeddingResponse.json().catch(() => ({}));
+                throw new Error(`Failed to fetch voice embedding: ${errorData.message || embeddingResponse.statusText}`);
+            }
+            
+            const embeddingData = await embeddingResponse.json();
+            console.log('✅ Voice embedding fetched:', { 
+                hasEmbedding: !!embeddingData.embedding_base64,
+                embeddingSize: embeddingData.embedding_base64 ? embeddingData.embedding_base64.length : 0
+            });
+
             const response = await fetch(TTS_API_ENDPOINT, {
                 method: 'POST',
                 headers: {
@@ -209,9 +224,9 @@ export default function TTSPage() {
                 },
                 body: JSON.stringify({
                     input: {
-                        request_type: 'tts',
                         text: text,
                         voice_id: selectedVoice,
+                        embedding_base64: embeddingData.embedding_base64,
                         responseFormat: "base64",
                     },
                 }),
