@@ -238,26 +238,31 @@ export default function Home() {
     };
 
     const handleSubmit = async () => {
-        console.log('Submitting with:', { name, audioFormat, hasAudioData: !!audioData });
-        
-        if (!name || !audioData) {
-            setError('Please provide both a name and audio input');
-            return;
-        }
-
-        if (!RUNPOD_API_KEY) {
-            setError('RunPod API key is not configured');
-            return;
-        }
-
-        setIsLoading(true);
-        setError(null);
-        setResult(null);
-        setCurrentJobId(null);
-        setMetadata(null); // Clear previous metadata
-
         try {
-            console.log('Making API request...');
+            setIsLoading(true);
+            setError(null);
+            setResult(null);
+            setMetadata(null);
+
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            abortControllerRef.current = new AbortController();
+
+            if (!RUNPOD_API_KEY) {
+                throw new Error('RunPod API key not configured');
+            }
+
+            if (!audioData) {
+                throw new Error('Please upload or record audio first');
+            }
+
+            if (!name.trim()) {
+                throw new Error('Please enter a voice clone name');
+            }
+
+            console.log('🚀 Starting voice generation...', { name, audioFormat, hasAudioData: !!audioData });
+
             const response = await fetch(API_ENDPOINT, {
                 method: 'POST',
                 headers: {
@@ -266,30 +271,66 @@ export default function Home() {
                 },
                 body: JSON.stringify({
                     input: {
-                        name,
+                        name: name,
                         audio_data: audioData,
                         audio_format: audioFormat,
                     },
                 }),
+                signal: abortControllerRef.current.signal,
             });
 
             const data = await response.json();
-            console.log('API response:', data);
+            console.log('📨 RunPod API response received:', {
+                hasId: !!data.id,
+                hasOutput: !!data.output,
+                hasError: !!data.error,
+                status: data.status,
+                keys: Object.keys(data)
+            });
+
+            if (!response.ok) {
+                throw new Error(data.message || 'Failed to generate voice');
+            }
 
             if (data.id) {
                 setCurrentJobId(data.id);
+                console.log('⏳ Job queued, polling for results...', { jobId: data.id });
+                
                 // Job was accepted, start polling for status
                 const result = await pollJobStatus(data.id);
-                setResult(result);
+                
+                console.log('🏁 Final result received:', {
+                    hasResult: !!result,
+                    resultType: typeof result,
+                    hasAudioBase64: !!(result && result.audio_base64),
+                    hasEmbeddingBase64: !!(result && result.embedding_base64),
+                    hasMetadata: !!(result && result.metadata),
+                    status: result?.status
+                });
+                
+                setResult(result); // Store the result directly
+                
                 // Save metadata if available
-                if (data.metadata) {
-                    setMetadata(data.metadata);
+                if (result && result.metadata) {
+                    setMetadata(result.metadata);
+                    console.log('📋 Metadata saved:', result.metadata);
                 }
+                
                 // Save voice files locally after successful generation
                 if (result && result.audio_base64) {
+                    console.log('💾 Attempting to save voice files locally...');
                     await saveVoiceFilesLocally(result, name);
+                } else {
+                    console.error('❌ No audio data in result - cannot save files locally', {
+                        hasResult: !!result,
+                        resultType: typeof result,
+                        hasAudioBase64: !!(result && result.audio_base64),
+                        resultKeys: result ? Object.keys(result) : []
+                    });
                 }
+                
                 // Refresh voice library after successful creation
+                console.log('🔄 Refreshing voice library...');
                 await loadVoiceLibrary();
             } else {
                 throw new Error('No job ID in response');
@@ -374,19 +415,22 @@ export default function Home() {
                             </div>
                         </div>
 
-                        <div className="flex gap-4">
+                        <div className="flex items-center space-x-2">
                             <button
+                                type="button"
                                 onClick={handleSubmit}
-                                disabled={isLoading || !name || !audioData}
+                                disabled={isLoading || !audioData || !name.trim()}
                                 className="btn-primary flex-1"
                             >
-                                {isLoading ? 'Creating Clone...' : 'Clone Voice'}
+                                {isLoading ? 'Creating...' : 'Clone Voice'}
                             </button>
-
+                            
+                            {/* Stop button when job is running */}
                             {isLoading && currentJobId && (
                                 <button
+                                    type="button"
                                     onClick={stopJob}
-                                    className="btn-secondary"
+                                    className="btn-secondary px-3 py-2 text-sm"
                                 >
                                     Stop
                                 </button>

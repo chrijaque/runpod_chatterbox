@@ -259,7 +259,7 @@ def handler(event, responseFormat="base64"):
             logger.error(f"Failed to read embedding file for transfer: {e}")
 
     if responseFormat == "base64":
-        # Return base64
+        # Return base64 - ALWAYS return structured JSON, never raw strings
         response = {
             "status": "success",
             "audio_base64": audio_base64,
@@ -277,12 +277,31 @@ def handler(event, responseFormat="base64"):
                 "template_message": template_message
             }
         }
+        return response
     elif responseFormat == "binary":
+        # Still return structured JSON, not raw data
         with open(sample_filename, 'rb') as f:
             audio_data = base64.b64encode(f.read()).decode('utf-8')
-        response = audio_data  # Just return the base64 string
+        response = {
+            "status": "success", 
+            "audio_base64": audio_data,
+            "embedding_base64": embedding_base64,
+            "metadata": {
+                "sample_rate": model.sr,
+                "audio_shape": list(audio_tensor.shape),
+                "voice_id": voice_id,
+                "voice_name": name,
+                "embedding_path": str(embedding_path),
+                "embedding_exists": embedding_path.exists(),
+                "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+                "generation_method": generation_method,
+                "sample_file": str(sample_filename),
+                "template_message": template_message
+            }
+        }
+        return response
 
-    return response 
+    return response
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""
