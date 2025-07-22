@@ -28,24 +28,48 @@ logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 def initialize_model():
     global model
     
+    logger.info("🔧 ===== MODEL INITIALIZATION =====")
+    
     if model is not None:
-        logger.info("Model already initialized")
+        logger.info("✅ Model already initialized")
+        logger.info(f"✅ Model type: {type(model)}")
         return model
     
-    logger.info("Initializing ChatterboxTTS model for TTS generation...")
+    logger.info("🔄 Initializing ChatterboxTTS model for TTS generation...")
     
     # Check CUDA availability
-    if not torch.cuda.is_available():
+    logger.info("🔍 Checking CUDA availability...")
+    cuda_available = torch.cuda.is_available()
+    logger.info(f"🔍 CUDA available: {cuda_available}")
+    
+    if not cuda_available:
+        logger.error("❌ CUDA is required but not available")
         raise RuntimeError("CUDA is required but not available")
     
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
+    logger.info(f"✅ CUDA device count: {torch.cuda.device_count()}")
+    logger.info(f"✅ CUDA device name: {torch.cuda.get_device_name(0)}")
+    logger.info(f"✅ CUDA device capability: {torch.cuda.get_device_capability(0)}")
     
     try:
+        logger.info("🔄 Loading ChatterboxTTS model...")
         model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("Model initialized successfully on CUDA device")
+        logger.info("✅ Model initialized successfully on CUDA device")
+        logger.info(f"✅ Model type: {type(model)}")
+        logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
+        logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
+        
+        # Check model capabilities
+        logger.info("🔍 Checking model capabilities:")
+        logger.info(f"  - has load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+        logger.info(f"  - has generate: {hasattr(model, 'generate')}")
+        logger.info(f"  - has save_voice_clone: {hasattr(model, 'save_voice_clone')}")
+        
     except Exception as e:
-        logger.error(f"Failed to initialize model: {str(e)}")
+        logger.error("❌ Failed to initialize model")
+        logger.error(f"❌ Error type: {type(e)}")
+        logger.error(f"❌ Error message: {str(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise
 
 def list_files_for_debug():
@@ -62,38 +86,99 @@ def handler(event, responseFormat="base64"):
     """Handle TTS generation requests using saved voice embeddings"""
     global model
     
-    input = event['input']
+    logger.info("🚀 ===== TTS HANDLER STARTED =====")
+    logger.info(f"📥 Received event: {type(event)}")
+    logger.info(f"📥 Event keys: {list(event.keys()) if isinstance(event, dict) else 'Not a dict'}")
+    
+    input = event.get('input', {})
+    logger.info(f"📥 Input type: {type(input)}")
+    logger.info(f"📥 Input keys: {list(input.keys()) if isinstance(input, dict) else 'Not a dict'}")
     
     # Extract TTS parameters
     text = input.get('text')
     voice_id = input.get('voice_id')
     responseFormat = input.get('responseFormat', 'base64')
     
+    logger.info(f"📋 Extracted parameters:")
+    logger.info(f"  - text: {text[:50]}{'...' if text and len(text) > 50 else ''} (length: {len(text) if text else 0})")
+    logger.info(f"  - voice_id: {voice_id}")
+    logger.info(f"  - responseFormat: {responseFormat}")
+    
     if not text or not voice_id:
+        logger.error("❌ Missing required parameters")
+        logger.error(f"  - text provided: {bool(text)}")
+        logger.error(f"  - voice_id provided: {bool(voice_id)}")
         return {"status": "error", "message": "Both text and voice_id are required"}
     
-    logger.info(f"🎤 TTS request: voice_id={voice_id}, text_length={len(text)}")
+    logger.info(f"🎤 TTS request validated: voice_id={voice_id}, text_length={len(text)}")
     
     try:
+        logger.info("🔍 ===== VOICE EMBEDDING LOADING =====")
+        
+        # Check if model is initialized
+        if model is None:
+            logger.error("❌ Model not initialized")
+            return {"status": "error", "message": "Model not initialized"}
+        
+        logger.info(f"✅ Model is initialized: {type(model)}")
+        logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
+        logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
+        
         # Load the voice embedding
         embedding_path = VOICE_CLONES_DIR / f"{voice_id}.npy"
+        logger.info(f"🔍 Looking for embedding at: {embedding_path}")
+        logger.info(f"🔍 Embedding path exists: {embedding_path.exists()}")
+        
         if not embedding_path.exists():
+            logger.error(f"❌ Voice embedding not found: {embedding_path}")
+            logger.info("📂 Checking voice_clones directory contents:")
+            if VOICE_CLONES_DIR.exists():
+                files = list(VOICE_CLONES_DIR.glob("*"))
+                logger.info(f"  Found {len(files)} files: {[f.name for f in files]}")
+            else:
+                logger.error(f"❌ Voice clones directory doesn't exist: {VOICE_CLONES_DIR}")
             return {"status": "error", "message": f"Voice embedding not found for {voice_id}"}
         
         logger.info(f"📁 Loading voice embedding from: {embedding_path}")
+        logger.info(f"📁 Embedding file size: {embedding_path.stat().st_size} bytes")
+        
+        # Check if model has the required method
+        logger.info(f"🔍 Checking model capabilities:")
+        logger.info(f"  - has load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+        logger.info(f"  - has generate: {hasattr(model, 'generate')}")
+        logger.info(f"  - has save_voice_clone: {hasattr(model, 'save_voice_clone')}")
         
         # Load the embedding using the forked repository method
         if hasattr(model, 'load_voice_clone'):
+            logger.info("🔄 Loading embedding using load_voice_clone method...")
             embedding = model.load_voice_clone(str(embedding_path))
             logger.info(f"✅ Voice embedding loaded successfully")
+            logger.info(f"✅ Embedding type: {type(embedding)}")
+            if hasattr(embedding, 'shape'):
+                logger.info(f"✅ Embedding shape: {embedding.shape}")
+            if hasattr(embedding, 'dtype'):
+                logger.info(f"✅ Embedding dtype: {embedding.dtype}")
         else:
+            logger.error("❌ Model doesn't have load_voice_clone method")
+            logger.error("❌ This suggests the forked repository features are not available")
             return {"status": "error", "message": "Voice embedding support not available"}
         
         # Generate speech using the embedding
-        logger.info(f"🎵 Generating TTS with voice embedding...")
+        logger.info("🎵 ===== TTS GENERATION =====")
+        logger.info(f"🎵 Input text: {text}")
+        logger.info(f"🎵 Using voice: {voice_id}")
+        logger.info(f"🎵 Embedding path: {embedding_path}")
+        
         start_time = time.time()
         
         try:
+            logger.info("🔄 Starting TTS generation...")
+            logger.info(f"🔄 Generation parameters:")
+            logger.info(f"  - text length: {len(text)}")
+            logger.info(f"  - saved_voice_path: {embedding_path}")
+            logger.info(f"  - temperature: 0.7")
+            logger.info(f"  - exaggeration: 0.6")
+            
             # Use the generate method with saved_voice_path
             audio_tensor = model.generate(
                 text,
@@ -101,28 +186,61 @@ def handler(event, responseFormat="base64"):
                 temperature=0.7,
                 exaggeration=0.6
             )
+            
             generation_time = time.time() - start_time
             logger.info(f"✅ TTS generated successfully in {generation_time:.2f}s")
+            logger.info(f"✅ Audio tensor type: {type(audio_tensor)}")
+            logger.info(f"✅ Audio tensor shape: {audio_tensor.shape}")
+            logger.info(f"✅ Audio tensor dtype: {audio_tensor.dtype}")
+            logger.info(f"✅ Sample rate: {model.sr}")
             
         except Exception as e:
-            logger.error(f"❌ Failed to generate TTS: {e}")
+            generation_time = time.time() - start_time
+            logger.error(f"❌ Failed to generate TTS after {generation_time:.2f}s")
+            logger.error(f"❌ Error type: {type(e)}")
+            logger.error(f"❌ Error message: {str(e)}")
+            logger.error(f"❌ Error details: {e}")
             return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
         # Save the generated TTS to file
+        logger.info("💾 ===== SAVING TTS FILE =====")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
         
+        logger.info(f"💾 Target filename: {tts_filename}")
+        logger.info(f"💾 TTS directory exists: {TTS_GENERATED_DIR.exists()}")
+        
         try:
+            logger.info("🔄 Saving audio tensor to file...")
             torchaudio.save(str(tts_filename), audio_tensor, model.sr)
-            logger.info(f"💾 TTS saved to: {tts_filename} ({tts_filename.stat().st_size} bytes)")
+            
+            if tts_filename.exists():
+                file_size = tts_filename.stat().st_size
+                logger.info(f"✅ TTS saved successfully: {tts_filename}")
+                logger.info(f"✅ File size: {file_size} bytes")
+                logger.info(f"✅ File size (KB): {file_size / 1024:.1f} KB")
+            else:
+                logger.error(f"❌ File was not created: {tts_filename}")
+                
         except Exception as e:
             logger.error(f"❌ Failed to save TTS file: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            logger.error(f"❌ Error details: {e}")
             # Continue anyway, don't fail the request
         
         # Convert to base64
-        audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
+        logger.info("📤 ===== CONVERTING TO BASE64 =====")
+        try:
+            audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
+            logger.info(f"✅ Audio converted to base64 successfully")
+            logger.info(f"✅ Base64 length: {len(audio_base64)} characters")
+            logger.info(f"✅ Base64 size (KB): {len(audio_base64) * 3 / 4 / 1024:.1f} KB")
+        except Exception as e:
+            logger.error(f"❌ Failed to convert audio to base64: {e}")
+            return {"status": "error", "message": f"Failed to convert audio to base64: {e}"}
         
         # Create response
+        logger.info("📤 ===== CREATING RESPONSE =====")
         response = {
             "status": "success",
             "audio_base64": audio_base64,
@@ -138,38 +256,97 @@ def handler(event, responseFormat="base64"):
             }
         }
         
-        logger.info(f"📤 TTS Response: audio_base64 length={len(audio_base64)}, generation_time={generation_time:.2f}s, saved_to={tts_filename}")
+        logger.info(f"📤 Response created successfully")
+        logger.info(f"📤 Response keys: {list(response.keys())}")
+        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
+        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
+        logger.info(f"📤 Audio base64 length: {len(audio_base64)}")
+        logger.info(f"📤 Generation time: {generation_time:.2f}s")
+        logger.info(f"📤 TTS file: {tts_filename}")
         
         # List final directory contents for debugging
+        logger.info("📂 ===== FINAL DIRECTORY CONTENTS =====")
         list_files_for_debug()
         
+        logger.info("🎉 ===== TTS HANDLER COMPLETED SUCCESSFULLY =====")
         return response
         
     except Exception as e:
+        logger.error("💥 ===== TTS HANDLER FAILED =====")
         logger.error(f"❌ TTS request failed: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        logger.error(f"❌ Error details: {e}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""
+    logger.info("🔄 Converting audio tensor to base64...")
+    logger.info(f"🔄 Audio tensor shape: {audio_tensor.shape}")
+    logger.info(f"🔄 Audio tensor dtype: {audio_tensor.dtype}")
+    logger.info(f"🔄 Sample rate: {sample_rate}")
+    
     try:
         # Save to temporary file
+        logger.info("🔄 Creating temporary file...")
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            torchaudio.save(tmp_file.name, audio_tensor, sample_rate)
+            tmp_filename = tmp_file.name
+            logger.info(f"🔄 Temporary file: {tmp_filename}")
+            
+            logger.info("🔄 Saving audio tensor to temporary file...")
+            torchaudio.save(tmp_filename, audio_tensor, sample_rate)
+            
+            # Check if file was created
+            if os.path.exists(tmp_filename):
+                file_size = os.path.getsize(tmp_filename)
+                logger.info(f"✅ Temporary file created: {file_size} bytes")
+            else:
+                logger.error(f"❌ Temporary file was not created: {tmp_filename}")
+                raise Exception("Failed to create temporary audio file")
             
             # Read back as binary data
-            with open(tmp_file.name, 'rb') as audio_file:
+            logger.info("🔄 Reading audio data from temporary file...")
+            with open(tmp_filename, 'rb') as audio_file:
                 audio_data = audio_file.read()
             
+            logger.info(f"✅ Audio data read: {len(audio_data)} bytes")
+            
             # Clean up temporary file
-            os.unlink(tmp_file.name)
+            logger.info("🔄 Cleaning up temporary file...")
+            os.unlink(tmp_filename)
+            logger.info("✅ Temporary file cleaned up")
             
             # Encode as base64
-            return base64.b64encode(audio_data).decode('utf-8')
+            logger.info("🔄 Encoding audio data to base64...")
+            base64_data = base64.b64encode(audio_data).decode('utf-8')
+            logger.info(f"✅ Base64 encoding completed: {len(base64_data)} characters")
+            
+            return base64_data
             
     except Exception as e:
-        logger.error(f"Error converting audio to base64: {e}")
+        logger.error(f"❌ Error converting audio to base64: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise
 
 if __name__ == '__main__':
-    initialize_model()
-    runpod.serverless.start({'handler': handler }) 
+    logger.info("🚀 ===== TTS HANDLER STARTING =====")
+    logger.info("🚀 Starting TTS generation handler...")
+    
+    try:
+        logger.info("🔧 Initializing model...")
+        initialize_model()
+        logger.info("✅ Model initialization completed")
+        
+        logger.info("🚀 Starting RunPod serverless handler...")
+        runpod.serverless.start({'handler': handler })
+        
+    except Exception as e:
+        logger.error("💥 ===== TTS HANDLER STARTUP FAILED =====")
+        logger.error(f"❌ Failed to start TTS handler: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        raise 
