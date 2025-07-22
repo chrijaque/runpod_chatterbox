@@ -59,7 +59,16 @@ def initialize_model():
         logger.info(f"✅ Model type: {type(model)}")
         logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
-        
+
+        # Additional model introspection logs
+        logger.info(f"📦 Model class: {model.__class__}")
+        logger.info(f"📁 Model module: {model.__class__.__module__}")
+        logger.info(f"🧠 Model dir(): {dir(model)}")
+        logger.info(f"🔎 Has method load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+
+        # Fast-fail check for required method
+        assert hasattr(model, 'load_voice_clone'), "🚨 Loaded model is missing `load_voice_clone`. Wrong class?"
+
         # Check model capabilities
         logger.info("🔍 Checking model capabilities:")
         logger.info(f"  - has load_voice_clone: {hasattr(model, 'load_voice_clone')}")
