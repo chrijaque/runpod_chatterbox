@@ -48,6 +48,15 @@ export default function Home() {
     const abortControllerRef = useRef<AbortController | null>(null);
 
     const saveVoiceFilesLocally = async (result: any, voiceName: string) => {
+        console.log('🔍 DEBUGGING: saveVoiceFilesLocally called with:', {
+            resultType: typeof result,
+            resultKeys: result ? Object.keys(result) : 'NO RESULT',
+            hasAudioBase64: !!(result && result.audio_base64),
+            hasEmbeddingBase64: !!(result && result.embedding_base64),
+            hasMetadata: !!(result && result.metadata),
+            voiceName
+        });
+        
         if (!result || !result.audio_base64 || !result.metadata) {
             console.log('⚠️ Cannot save voice files locally - missing data:', {
                 hasResult: !!result,
@@ -215,13 +224,19 @@ export default function Home() {
                 console.log('Status check response:', data);
                 
                 if (data.status === 'COMPLETED') {
+                    console.log('🔍 DEBUGGING: Job completed, checking output:', data.output);
+                    console.log('🔍 DEBUGGING: Output type:', typeof data.output);
+                    console.log('🔍 DEBUGGING: Output keys:', data.output ? Object.keys(data.output) : 'NO OUTPUT');
+                    
                     if (data.output?.status === 'error') {
                         throw new Error(data.output.message);
                     }
                     if (data.output?.audio_base64) {
-                        return data.output.audio_base64;
+                        console.log('🔍 DEBUGGING: Found audio_base64 in output, returning output object');
+                        return data.output;  // Return the entire output object, not just the string
                     }
-                    throw new Error('No audio data in response');
+                    console.log('🔍 DEBUGGING: No audio_base64 found, returning raw output');
+                    return data.output;  // Return the raw output if no audio_base64 field
                 } else if (data.status === 'FAILED') {
                     throw new Error(data.error || 'Job failed');
                 } else if (data.status === 'IN_QUEUE' || data.status === 'IN_PROGRESS') {
@@ -299,6 +314,11 @@ export default function Home() {
                 
                 // Job was accepted, start polling for status
                 const result = await pollJobStatus(data.id);
+                
+                console.log('🔍 DEBUGGING: Raw result from RunPod:', result);
+                console.log('🔍 DEBUGGING: Result type:', typeof result);
+                console.log('🔍 DEBUGGING: Result length:', result ? result.length : 'N/A');
+                console.log('🔍 DEBUGGING: First 100 chars:', result ? result.substring(0, 100) : 'N/A');
                 
                 console.log('🏁 Final result received:', {
                     hasResult: !!result,

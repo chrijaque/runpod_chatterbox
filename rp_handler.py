@@ -279,6 +279,11 @@ def handler(event, responseFormat="base64"):
                 "template_message": template_message
             }
         }
+        logger.info(f"📤 BASE64 FORMAT: Returning structured JSON response")
+        logger.info(f"📤 Response keys: {list(response.keys())}")
+        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
+        logger.info(f"📤 Has embedding_base64: {bool(response.get('embedding_base64'))}")
+        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
         return response
     elif responseFormat == "binary":
         # Still return structured JSON, not raw data
@@ -301,6 +306,11 @@ def handler(event, responseFormat="base64"):
                 "template_message": template_message
             }
         }
+        logger.info(f"📤 BINARY FORMAT: Returning structured JSON response")
+        logger.info(f"📤 Response keys: {list(response.keys())}")
+        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
+        logger.info(f"📤 Has embedding_base64: {bool(response.get('embedding_base64'))}")
+        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
         return response
 
     # Default response format - ALWAYS return structured JSON
@@ -322,8 +332,12 @@ def handler(event, responseFormat="base64"):
         }
     }
     
-    logger.info(f"📤 Returning response with keys: {list(response.keys())}")
+    logger.info(f"📤 DEFAULT FORMAT: Returning structured JSON response")
+    logger.info(f"📤 Response keys: {list(response.keys())}")
     logger.info(f"📤 Response type: {type(response)}")
+    logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
+    logger.info(f"📤 Has embedding_base64: {bool(response.get('embedding_base64'))}")
+    logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
     logger.info(f"📤 Audio base64 length: {len(audio_base64) if audio_base64 else 0}")
     logger.info(f"📤 Embedding base64 length: {len(embedding_base64) if embedding_base64 else 0}")
     logger.info(f"📤 Response format used: {responseFormat}")
