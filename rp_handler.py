@@ -86,14 +86,14 @@ def save_voice_embedding(temp_voice_file, voice_id):
         return embedding_path
     
     try:
-        if hasattr(model, 'save_voice_clone'):
-            logger.info(f"📁 Using enhanced save_voice_clone method")
+        if hasattr(model, 'save_voice_profile'):
+            logger.info(f"📁 Using enhanced save_voice_profile method")
             
             # Pass the audio file path directly (not the loaded tensor)
             logger.info(f"🎵 Using audio file: {temp_voice_file}")
             
             # Save embedding using file path
-            model.save_voice_clone(str(temp_voice_file), str(embedding_path))
+            model.save_voice_profile(str(temp_voice_file), str(embedding_path))
             logger.info(f"✅ Embedding saved directly to: {embedding_path}")
             
             # Verify the file was created
@@ -128,9 +128,9 @@ def load_voice_embedding(voice_id):
         raise FileNotFoundError(f"No voice embedding found for {voice_id}")
     
     try:
-        if hasattr(model, 'load_voice_clone'):
+        if hasattr(model, 'load_voice_profile'):
             # Use enhanced method from forked repository
-            embedding = model.load_voice_clone(str(embedding_path))
+            embedding = model.load_voice_profile(str(embedding_path))
             logger.info(f"✅ Loaded embedding from {embedding_path}")
             return embedding
         else:
@@ -278,7 +278,7 @@ def handle_voice_clone_request(input, responseFormat):
                 "voice_name": name,
                 "embedding_path": str(embedding_path),
                 "embedding_exists": embedding_path.exists(),
-                "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+                "has_embedding_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
                 "generation_method": generation_method,
                 "sample_file": str(sample_filename),
                 "template_message": template_message
@@ -305,7 +305,7 @@ def handle_voice_clone_request(input, responseFormat):
                 "voice_name": name,
                 "embedding_path": str(embedding_path),
                 "embedding_exists": embedding_path.exists(),
-                "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+                "has_embedding_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
                 "generation_method": generation_method,
                 "sample_file": str(sample_filename),
                 "template_message": template_message
@@ -330,7 +330,7 @@ def handle_voice_clone_request(input, responseFormat):
             "voice_name": name,
             "embedding_path": str(embedding_path),
             "embedding_exists": embedding_path.exists(),
-            "has_embedding_support": hasattr(model, 'save_voice_clone') and hasattr(model, 'load_voice_clone'),
+            "has_embedding_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
             "generation_method": generation_method,
             "sample_file": str(sample_filename),
             "template_message": template_message

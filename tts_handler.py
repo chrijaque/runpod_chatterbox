@@ -64,16 +64,16 @@ def initialize_model():
         logger.info(f"📦 Model class: {model.__class__}")
         logger.info(f"📁 Model module: {model.__class__.__module__}")
         logger.info(f"🧠 Model dir(): {dir(model)}")
-        logger.info(f"🔎 Has method load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+        logger.info(f"🔎 Has method load_voice_profile: {hasattr(model, 'load_voice_profile')}")
 
         # Fast-fail check for required method
-        assert hasattr(model, 'load_voice_clone'), "🚨 Loaded model is missing `load_voice_clone`. Wrong class?"
+        assert hasattr(model, 'load_voice_profile'), "🚨 Loaded model is missing `load_voice_profile`. Wrong class?"
 
         # Check model capabilities
         logger.info("🔍 Checking model capabilities:")
-        logger.info(f"  - has load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+        logger.info(f"  - has load_voice_profile: {hasattr(model, 'load_voice_profile')}")
         logger.info(f"  - has generate: {hasattr(model, 'generate')}")
-        logger.info(f"  - has save_voice_clone: {hasattr(model, 'save_voice_clone')}")
+        logger.info(f"  - has save_voice_profile: {hasattr(model, 'save_voice_profile')}")
         
     except Exception as e:
         logger.error("❌ Failed to initialize model")
@@ -163,14 +163,14 @@ def handler(event, responseFormat="base64"):
         
         # Check if model has the required method
         logger.info(f"🔍 Checking model capabilities:")
-        logger.info(f"  - has load_voice_clone: {hasattr(model, 'load_voice_clone')}")
+        logger.info(f"  - has load_voice_profile: {hasattr(model, 'load_voice_profile')}")
         logger.info(f"  - has generate: {hasattr(model, 'generate')}")
-        logger.info(f"  - has save_voice_clone: {hasattr(model, 'save_voice_clone')}")
+        logger.info(f"  - has save_voice_profile: {hasattr(model, 'save_voice_profile')}")
         
         # Load the embedding using the forked repository method
-        if hasattr(model, 'load_voice_clone'):
-            logger.info("🔄 Loading embedding using load_voice_clone method...")
-            embedding = model.load_voice_clone(str(temp_embedding_path))
+        if hasattr(model, 'load_voice_profile'):
+            logger.info("🔄 Loading embedding using load_voice_profile method...")
+            embedding = model.load_voice_profile(str(temp_embedding_path))
             logger.info(f"✅ Voice embedding loaded successfully")
             logger.info(f"✅ Embedding type: {type(embedding)}")
             if hasattr(embedding, 'shape'):
@@ -178,7 +178,7 @@ def handler(event, responseFormat="base64"):
             if hasattr(embedding, 'dtype'):
                 logger.info(f"✅ Embedding dtype: {embedding.dtype}")
         else:
-            logger.error("❌ Model doesn't have load_voice_clone method")
+            logger.error("❌ Model doesn't have load_voice_profile method")
             logger.error("❌ This suggests the forked repository features are not available")
             return {"status": "error", "message": "Voice embedding support not available"}
         
