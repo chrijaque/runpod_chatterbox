@@ -33,7 +33,7 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 
 # Install forked repository FIRST to prevent dependency conflicts
 RUN echo "🔧 Installing forked repository..." && \
-    pip install -v git+https://github.com/chrijaque/chatterbox_embed.git#egg=chatterbox-tts
+    pip install --no-cache-dir --use-pep517 git+https://github.com/chatterbox-ai/chatterbox-tts.git@main
 
 # Debug: Check which repository was installed
 RUN echo "🔍 Checking installed repository..." && \
