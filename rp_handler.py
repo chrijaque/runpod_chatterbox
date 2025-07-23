@@ -55,17 +55,50 @@ def initialize_model():
         
         logger.info(f"📦 chatterbox module loaded from: {chatterbox.__file__}")
         
-        # Optional: print git revision if it's installed as a git repo
-        try:
-            repo_path = os.path.dirname(chatterbox.__file__)
-            if os.path.exists(os.path.join(repo_path, '.git')):
+        # Enhanced Debug: Log chatterbox installation details with dependency analysis
+        repo_path = os.path.dirname(chatterbox.__file__)
+        git_path = os.path.join(repo_path, '.git')
+        
+        # Check if it's a git repository
+        if os.path.exists(git_path):
+            logger.info(f"📁 chatterbox installed as git repo: {repo_path}")
+            try:
                 import subprocess
                 commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
-                logger.info(f"🔢 chatterbox git commit: {commit_hash}")
-            else:
-                logger.info(f"📁 chatterbox not installed as git repo (no .git directory found)")
+                logger.info(f"🔢 Git commit: {commit_hash}")
+                remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin']).decode().strip()
+                logger.info(f"🌐 Git remote: {remote_url}")
+                
+                # Check if it's the forked repository
+                if 'chrijaque/chatterbox_embed' in remote_url:
+                    logger.info("✅ This is the CORRECT forked repository!")
+                else:
+                    logger.error("❌ This is NOT the forked repository - using wrong repo!")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get git info: {e}")
+        else:
+            logger.error(f"📁 chatterbox not installed as git repo (no .git directory found)")
+            logger.error(f"❌ This indicates PyPI package installation instead of git repo")
+        
+        # Check pip installation details
+        try:
+            import subprocess
+            pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
+            logger.info(f"📋 Pip package info:\n{pip_info}")
         except Exception as e:
-            logger.warning(f"⚠️ Could not determine git commit: {e}")
+            logger.warning(f"⚠️ Could not get pip info: {e}")
+        
+        # Check for dependency conflicts
+        try:
+            import subprocess
+            deps = subprocess.check_output(['pip', 'list']).decode().strip()
+            chatterbox_deps = [line for line in deps.split('\n') if 'chatterbox' in line.lower()]
+            if chatterbox_deps:
+                logger.info(f"🔍 Found chatterbox-related packages:\n" + '\n'.join(chatterbox_deps))
+            else:
+                logger.info("🔍 No chatterbox-related packages found in pip list")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check dependencies: {e}")
         
         model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("Model initialized successfully on CUDA device")
