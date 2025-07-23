@@ -41,6 +41,7 @@ RUN echo "🔧 Installing other requirements..." && \
 
 # Copy TTS handler files
 COPY tts_handler.py /
+COPY diagnose_startup.py /
 
 # Create required directories
 RUN mkdir -p /voice_profiles /tts_generated /temp_voice
@@ -54,5 +55,5 @@ RUN echo "🔍 Final verification after all installations..." && \
 # Expose port (if needed for health checks)
 EXPOSE 8000
 
-# Set the entrypoint to the TTS handler
-CMD ["python3", "-u", "tts_handler.py"] 
+# Set the entrypoint to the TTS handler with diagnostic
+CMD ["sh", "-c", "python3 -u diagnose_startup.py && python3 -u tts_handler.py"] 
