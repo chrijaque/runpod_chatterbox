@@ -13,4 +13,4 @@ einops
 ffmpeg-python
 runpod>=1.7.7
 numpy
-git+https://github.com/chrijaque/chatterbox_embed.git
+git+https://github.com/chrijaque/chatterbox_embed.git#egg=chatterbox-tts&subdirectory=src
