@@ -61,10 +61,16 @@ def initialize_model():
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
 
         # Additional model introspection logs
+        import inspect
         logger.info(f"📦 Model class: {model.__class__}")
         logger.info(f"📁 Model module: {model.__class__.__module__}")
+        logger.info(f"📂 Loaded model from file: {inspect.getfile(model.__class__)}")
         logger.info(f"🧠 Model dir(): {dir(model)}")
         logger.info(f"🔎 Has method load_voice_profile: {hasattr(model, 'load_voice_profile')}")
+
+        # List all methods that contain 'voice' or 'profile'
+        voice_methods = [method for method in dir(model) if 'voice' in method.lower() or 'profile' in method.lower()]
+        logger.info(f"🔍 Voice/Profile related methods: {voice_methods}")
 
         # Fast-fail check for required method
         assert hasattr(model, 'load_voice_profile'), "🚨 Loaded model is missing `load_voice_profile`. Wrong class?"
@@ -86,7 +92,7 @@ def initialize_model():
 def list_files_for_debug():
     """List files in our directories for debugging"""
     logger.info("📂 Directory contents:")
-    for directory in [VOICE_CLONES_DIR, TTS_GENERATED_DIR]:
+    for directory in [VOICE_PROFILES_DIR, TTS_GENERATED_DIR]:
         if directory.exists():
             files = list(directory.glob("*"))
             logger.info(f"  {directory}: {[f.name for f in files]} ({len(files)} files)")
