@@ -25,14 +25,30 @@ ENV HF_HOME=/root/.cache/huggingface
 
 # Install Python dependencies with verbose pip output
 COPY requirements.txt /requirements.txt
-RUN pip install -v -r requirements.txt
+
+# Debug: Show what's in requirements.txt
+RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
+
+# Install with extra verbose output and check chatterbox installation
+# Force reinstall chatterbox from git to prevent PyPI version
+RUN pip install -v -r requirements.txt && \
+    pip uninstall -y chatterbox-tts && \
+    pip install -v git+https://github.com/chrijaque/chatterbox_embed.git#egg=chatterbox-tts
+
+# Debug: Check which chatterbox is installed
+RUN echo "🔍 Checking chatterbox installation:" && \
+    python -c "import chatterbox; print(f'📦 chatterbox module path: {chatterbox.__file__}')" && \
+    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); print(f'📁 chatterbox directory: {repo_path}')" && \
+    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); git_path = os.path.join(repo_path, '.git'); print(f'🔍 .git exists: {os.path.exists(git_path)}')" && \
+    python -c "import chatterbox; print(f'📋 chatterbox version: {getattr(chatterbox, \"__version__\", \"Unknown\")}')" && \
+    python -c "from chatterbox.tts import ChatterboxTTS; model = ChatterboxTTS.from_pretrained(device='cpu'); print(f'✅ Model loaded successfully'); print(f'🔍 Available methods: {[m for m in dir(model) if \"voice\" in m.lower() or \"profile\" in m.lower()]}')"
 
 # Copy files
 COPY rp_handler.py /
 COPY download_model.py /
 
 # Create required directories
-RUN mkdir -p /voice_clones /voice_samples /temp_voice /tts_generated
+RUN mkdir -p /voice_profiles /voice_samples /temp_voice /tts_generated
 
 # Download and verify model with detailed error reporting
 RUN python -u download_model.py 2>&1

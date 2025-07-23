@@ -13,4 +13,6 @@ einops
 ffmpeg-python
 runpod>=1.7.7
 numpy
+# Install forked repository with voice profile support
+# Force install from git and prevent PyPI version
 git+https://github.com/chrijaque/chatterbox_embed.git#egg=chatterbox-tts
