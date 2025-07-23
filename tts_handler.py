@@ -53,6 +53,24 @@ def initialize_model():
     logger.info(f"✅ CUDA device capability: {torch.cuda.get_device_capability(0)}")
     
     try:
+        # Debug: Check which chatterbox repository is being used
+        import chatterbox
+        import os
+        
+        logger.info(f"📦 chatterbox module loaded from: {chatterbox.__file__}")
+        
+        # Optional: print git revision if it's installed as a git repo
+        try:
+            repo_path = os.path.dirname(chatterbox.__file__)
+            if os.path.exists(os.path.join(repo_path, '.git')):
+                import subprocess
+                commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
+                logger.info(f"🔢 chatterbox git commit: {commit_hash}")
+            else:
+                logger.info(f"📁 chatterbox not installed as git repo (no .git directory found)")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not determine git commit: {e}")
+        
         logger.info("🔄 Loading ChatterboxTTS model...")
         model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ Model initialized successfully on CUDA device")
