@@ -4,6 +4,20 @@ FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies including FFmpeg
+RUN apt-get update && \
+    apt-get install -y \
+    git \
+    wget \
+    curl \
+    ffmpeg \
+    libavcodec-extra \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
 COPY requirements.txt /requirements.txt
@@ -27,13 +41,11 @@ RUN echo "🔧 Installing other requirements..." && \
 
 # Copy TTS handler files
 COPY tts_handler.py /
-COPY download_model.py /
 
 # Create required directories
 RUN mkdir -p /voice_profiles /tts_generated /temp_voice
 
-# Download and verify model with detailed error reporting
-RUN python3 -u download_model.py 2>&1
+# Model will be downloaded at runtime when needed
 
 # Final verification after all installations
 RUN echo "🔍 Final verification after all installations..." && \

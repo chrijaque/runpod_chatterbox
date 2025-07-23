@@ -10,13 +10,17 @@ ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
+# Install system dependencies including FFmpeg
 RUN apt-get update && \
     apt-get install -y \
     git \
     wget \
     curl \
-    ffmpeg && \
+    ffmpeg \
+    libavcodec-extra \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Set git global config to avoid warnings
@@ -45,13 +49,11 @@ RUN echo "🔧 Installing other requirements..." && \
 
 # Copy files
 COPY rp_handler.py /
-COPY download_model.py /
 
 # Create required directories
 RUN mkdir -p /voice_profiles /voice_samples /temp_voice /tts_generated
 
-# Download and verify model with detailed error reporting
-RUN python -u download_model.py 2>&1
+# Model will be downloaded at runtime when needed
 
 # Final verification after all installations
 RUN echo "🔍 Final verification after all installations..." && \

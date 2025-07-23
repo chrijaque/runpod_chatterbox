@@ -1,18 +1,27 @@
-torch>=2.0.0
+# PyTorch ecosystem with compatible versions
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
+
+# Core dependencies
+transformers==4.36.2
+diffusers==0.25.1
+safetensors==0.4.1
+einops==0.7.0
+
+# Audio processing
+librosa==0.10.1
+ffmpeg-python==0.2.0
+
+# Voice cloning
 conformer
 s3tokenizer
-librosa
 resemble-perth
-huggingface_hub 
-safetensors
-transformers
-diffusers 
-torchaudio 
-torchvision 
-einops
-ffmpeg-python
+
+# Utilities
+huggingface_hub==0.20.3
 runpod>=1.7.7
-numpy
+numpy==1.24.3
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
 # NOTE: This is installed FIRST in Dockerfile to prevent dependency conflicts
