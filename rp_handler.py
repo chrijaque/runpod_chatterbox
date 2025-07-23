@@ -22,8 +22,12 @@ VOICE_PROFILES_DIR = Path("/voice_profiles")
 VOICE_SAMPLES_DIR = Path("/voice_samples") 
 TEMP_VOICE_DIR = Path("/temp_voice")
 
-# Log directory status (don't create them as they already exist in RunPod)
-logger.info(f"Using existing directories:")
+# Create directories if they don't exist (RunPod deployment)
+VOICE_PROFILES_DIR.mkdir(exist_ok=True)
+VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
+TEMP_VOICE_DIR.mkdir(exist_ok=True)
+
+logger.info(f"Using directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
@@ -61,7 +65,7 @@ def get_voice_id(name):
 def list_files_for_debug():
     """List files in our directories for debugging"""
     logger.info("📂 Directory contents:")
-    for directory in [VOICE_CLONES_DIR, VOICE_SAMPLES_DIR, TEMP_VOICE_DIR]:
+    for directory in [VOICE_PROFILES_DIR, VOICE_SAMPLES_DIR, TEMP_VOICE_DIR]:
         if directory.exists():
             files = list(directory.glob("*"))
             logger.info(f"  {directory}: {[f.name for f in files]} ({len(files)} files)")
