@@ -37,9 +37,6 @@ RUN echo "🔧 Installing forked repository..." && \
 
 # Debug: Check which repository was installed
 RUN echo "🔍 Checking installed repository..." && \
-    python -c "import chatterbox; print('📦 chatterbox module path:', chatterbox.__file__)" && \
-    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); print('📁 chatterbox directory:', repo_path)" && \
-    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); git_path = os.path.join(repo_path, '.git'); print('🔍 .git exists:', os.path.exists(git_path))" && \
     pip show chatterbox-tts
 
 # Install other requirements (excluding chatterbox-tts since it's already installed)
@@ -58,9 +55,6 @@ RUN python -u download_model.py 2>&1
 
 # Final verification after all installations
 RUN echo "🔍 Final verification after all installations..." && \
-    python -c "import chatterbox; print('📦 FINAL chatterbox module path:', chatterbox.__file__)" && \
-    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); print('📁 FINAL chatterbox directory:', repo_path)" && \
-    python -c "import chatterbox; import os; repo_path = os.path.dirname(chatterbox.__file__); git_path = os.path.join(repo_path, '.git'); print('🔍 FINAL .git exists:', os.path.exists(git_path))" && \
     pip show chatterbox-tts
 
 # Start the container
