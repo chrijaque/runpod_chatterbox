@@ -69,27 +69,43 @@ def diagnose_chatterbox():
         print(f"   ❌ Error importing chatterbox: {e}")
         return False
     
-    # Test 4: Check ChatterboxTTS class
+    # Test 4: Check ChatterboxTTS class (lightweight - no model loading)
     print(f"\n🧠 ChatterboxTTS Class:")
     try:
         from chatterbox.tts import ChatterboxTTS
         print(f"   ✅ ChatterboxTTS imported successfully")
         
-        # Check available methods
-        model = ChatterboxTTS.from_pretrained(device='cpu')
-        print(f"   ✅ Model loaded successfully")
+        # Check for voice profile methods on the class (not instance)
+        has_save_profile = hasattr(ChatterboxTTS, 'save_voice_profile')
+        has_load_profile = hasattr(ChatterboxTTS, 'load_voice_profile')
+        has_save_clone = hasattr(ChatterboxTTS, 'save_voice_clone')
+        has_load_clone = hasattr(ChatterboxTTS, 'load_voice_clone')
         
-        # Check for voice profile methods
-        has_save_profile = hasattr(model, 'save_voice_profile')
-        has_load_profile = hasattr(model, 'load_voice_profile')
-        has_save_clone = hasattr(model, 'save_voice_clone')
-        has_load_clone = hasattr(model, 'load_voice_clone')
-        
-        print(f"   🔍 Voice Profile Methods:")
+        print(f"   🔍 Voice Profile Methods (Class Level):")
         print(f"      save_voice_profile: {'✅' if has_save_profile else '❌'}")
         print(f"      load_voice_profile: {'✅' if has_load_profile else '❌'}")
         print(f"      save_voice_clone: {'✅' if has_save_clone else '❌'}")
         print(f"      load_voice_clone: {'✅' if has_load_clone else '❌'}")
+        
+        # Try to create a minimal instance for method checking
+        try:
+            # This should be much faster than loading the full model
+            model = ChatterboxTTS()
+            print(f"   ✅ ChatterboxTTS instance created successfully")
+            
+            # Check instance methods
+            has_save_profile_inst = hasattr(model, 'save_voice_profile')
+            has_load_profile_inst = hasattr(model, 'load_voice_profile')
+            
+            print(f"   🔍 Voice Profile Methods (Instance Level):")
+            print(f"      save_voice_profile: {'✅' if has_save_profile_inst else '❌'}")
+            print(f"      load_voice_profile: {'✅' if has_load_profile_inst else '❌'}")
+            
+        except Exception as inst_e:
+            print(f"   ⚠️ Could not create instance (this is normal during build): {inst_e}")
+            # Use class-level checks instead
+            has_save_profile_inst = has_save_profile
+            has_load_profile_inst = has_load_profile
         
     except Exception as e:
         print(f"   ❌ Error with ChatterboxTTS: {e}")
