@@ -11,6 +11,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict
 
+# Configure logging first
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Try to import optional dependencies
 try:
     import nltk
@@ -42,10 +46,6 @@ try:
 except ImportError:
     PYDUB_AVAILABLE = False
     logger.warning("⚠️ pydub not available - will use torchaudio for audio processing")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 model = None
 

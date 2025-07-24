@@ -70,5 +70,5 @@ RUN echo "🔍 Final verification after all installations..." && \
 # Expose port (if needed for health checks)
 EXPOSE 8000
 
-# Set the entrypoint to the TTS handler with diagnostic
-CMD ["sh", "-c", "python3 -u diagnose_startup.py && python3 -u tts_handler.py"] 
+# Set the entrypoint to the TTS handler directly
+CMD ["python3", "-u", "tts_handler.py"] 
