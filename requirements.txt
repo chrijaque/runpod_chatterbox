@@ -24,6 +24,7 @@ runpod>=1.7.7
 aiohttp>=3.8.0
 multidict>=6.0.0
 yarl>=1.9.0
+propcache>=0.1.0
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
 # NOTE: This is installed FIRST in Dockerfile to prevent dependency conflicts
