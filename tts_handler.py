@@ -20,21 +20,26 @@ try:
     import nltk
     from nltk.tokenize import sent_tokenize
     
-    # Download required NLTK data if not available
+    # Force download and setup NLTK punkt tokenizer
+    logger.info("🔧 Setting up NLTK punkt tokenizer...")
     try:
+        # Download punkt tokenizer explicitly
+        nltk.download('punkt', quiet=True)
+        
+        # Verify it's available
         nltk.data.find('tokenizers/punkt')
         NLTK_AVAILABLE = True
-        logger.info("✅ NLTK punkt tokenizer available")
-    except LookupError:
-        logger.warning("⚠️ NLTK punkt tokenizer not found - downloading...")
-        try:
-            nltk.download('punkt', quiet=True)
-            NLTK_AVAILABLE = True
-            logger.info("✅ NLTK punkt tokenizer downloaded successfully")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to download NLTK punkt: {e}")
-            NLTK_AVAILABLE = False
-            logger.warning("⚠️ Will use simple text splitting instead")
+        logger.info("✅ NLTK punkt tokenizer downloaded and verified")
+        
+        # Test tokenization to ensure it works
+        test_text = "This is a test. It has multiple sentences. Let's verify NLTK works."
+        test_sentences = sent_tokenize(test_text)
+        logger.info(f"✅ NLTK test successful: {len(test_sentences)} sentences tokenized")
+        
+    except Exception as e:
+        logger.error(f"❌ NLTK setup failed: {e}")
+        NLTK_AVAILABLE = False
+        logger.warning("⚠️ Will use simple text splitting instead")
     
 except ImportError:
     NLTK_AVAILABLE = False
@@ -86,13 +91,15 @@ class TTSProcessor:
         if NLTK_AVAILABLE:
             try:
                 # Use NLTK for proper sentence tokenization
+                logger.info("📝 Using NLTK sentence tokenization")
                 sentences = sent_tokenize(text)
-                logger.debug(f"📝 NLTK tokenization: {len(sentences)} sentences")
+                logger.info(f"📝 NLTK tokenization successful: {len(sentences)} sentences")
             except Exception as e:
                 logger.warning(f"⚠️ NLTK tokenization failed: {e} - using fallback")
                 sentences = self._simple_sentence_split(text)
         else:
             # Fallback to simple sentence splitting
+            logger.info("📝 Using fallback sentence splitting (NLTK not available)")
             sentences = self._simple_sentence_split(text)
         
         chunks, current = [], ""
