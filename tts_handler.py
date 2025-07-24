@@ -240,20 +240,12 @@ def handler(event, responseFormat="base64"):
             return {"status": "error", "message": "Voice profile support not available"}
         
         # Generate speech using the profile
-        logger.info("🎵 ===== TTS GENERATION =====")
-        logger.info(f"🎵 Input text: {text}")
-        logger.info(f"🎵 Using voice: {voice_id}")
-        logger.info(f"🎵 Profile path: {temp_profile_path}")
+        logger.info(f"🎵 TTS: {voice_id} | Text length: {len(text)}")
         
         start_time = time.time()
         
         try:
-            logger.info("🔄 Starting TTS generation...")
-            logger.info(f"🔄 Generation parameters:")
-            logger.info(f"  - text length: {len(text)}")
-            logger.info(f"  - saved_voice_path: {temp_profile_path}")
-            logger.info(f"  - temperature: 0.7")
-            logger.info(f"  - exaggeration: 0.6")
+            logger.info("🔄 Generating TTS...")
             
             # Use the generate method with saved_voice_path
             audio_tensor = model.generate(
@@ -264,11 +256,7 @@ def handler(event, responseFormat="base64"):
             )
             
             generation_time = time.time() - start_time
-            logger.info(f"✅ TTS generated successfully in {generation_time:.2f}s")
-            logger.info(f"✅ Audio tensor type: {type(audio_tensor)}")
-            logger.info(f"✅ Audio tensor shape: {audio_tensor.shape}")
-            logger.info(f"✅ Audio tensor dtype: {audio_tensor.dtype}")
-            logger.info(f"✅ Sample rate: {model.sr}")
+            logger.info(f"✅ TTS generated in {generation_time:.2f}s | Shape: {audio_tensor.shape}")
             
         except Exception as e:
             generation_time = time.time() - start_time
@@ -279,44 +267,25 @@ def handler(event, responseFormat="base64"):
             return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
         # Save the generated TTS to file
-        logger.info("💾 ===== SAVING TTS FILE =====")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
         
-        logger.info(f"💾 Target filename: {tts_filename}")
-        logger.info(f"💾 TTS directory exists: {TTS_GENERATED_DIR.exists()}")
-        
         try:
-            logger.info("🔄 Saving audio tensor to file...")
             torchaudio.save(str(tts_filename), audio_tensor, model.sr)
-            
-            if tts_filename.exists():
-                file_size = tts_filename.stat().st_size
-                logger.info(f"✅ TTS saved successfully: {tts_filename}")
-                logger.info(f"✅ File size: {file_size} bytes")
-                logger.info(f"✅ File size (KB): {file_size / 1024:.1f} KB")
-            else:
-                logger.error(f"❌ File was not created: {tts_filename}")
-                
+            logger.info(f"💾 Saved: {tts_filename.name}")
         except Exception as e:
             logger.error(f"❌ Failed to save TTS file: {e}")
-            logger.error(f"❌ Error type: {type(e)}")
-            logger.error(f"❌ Error details: {e}")
             # Continue anyway, don't fail the request
         
         # Convert to base64
-        logger.info("📤 ===== CONVERTING TO BASE64 =====")
         try:
             audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
-            logger.info(f"✅ Audio converted to base64 successfully")
-            logger.info(f"✅ Base64 length: {len(audio_base64)} characters")
-            logger.info(f"✅ Base64 size (KB): {len(audio_base64) * 3 / 4 / 1024:.1f} KB")
+            logger.info(f"📤 Base64: {len(audio_base64)} chars")
         except Exception as e:
             logger.error(f"❌ Failed to convert audio to base64: {e}")
             return {"status": "error", "message": f"Failed to convert audio to base64: {e}"}
         
         # Create response
-        logger.info("📤 ===== CREATING RESPONSE =====")
         response = {
             "status": "success",
             "audio_base64": audio_base64,
@@ -332,27 +301,16 @@ def handler(event, responseFormat="base64"):
             }
         }
         
-        logger.info(f"📤 Response created successfully")
-        logger.info(f"📤 Response keys: {list(response.keys())}")
-        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
-        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
-        logger.info(f"📤 Audio base64 length: {len(audio_base64)}")
-        logger.info(f"📤 Generation time: {generation_time:.2f}s")
-        logger.info(f"📤 TTS file: {tts_filename}")
+        logger.info(f"📤 Response ready | Time: {generation_time:.2f}s | File: {tts_filename.name}")
         
         # Clean up temporary profile file
         try:
             if temp_profile_path.exists():
                 os.unlink(temp_profile_path)
-                logger.info(f"🗑️ Cleaned up temporary profile file: {temp_profile_path}")
         except Exception as cleanup_error:
-            logger.warning(f"⚠️ Failed to clean up temporary profile file: {cleanup_error}")
+            logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
         
-        # List final directory contents for debugging
-        logger.info("📂 ===== FINAL DIRECTORY CONTENTS =====")
-        list_files_for_debug()
-        
-        logger.info("🎉 ===== TTS HANDLER COMPLETED SUCCESSFULLY =====")
+        logger.info("🎉 TTS completed successfully")
         return response
         
     except Exception as e:
@@ -366,71 +324,41 @@ def handler(event, responseFormat="base64"):
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""
-    logger.info("🔄 Converting audio tensor to base64...")
-    logger.info(f"🔄 Audio tensor shape: {audio_tensor.shape}")
-    logger.info(f"🔄 Audio tensor dtype: {audio_tensor.dtype}")
-    logger.info(f"🔄 Sample rate: {sample_rate}")
-    
     try:
         # Save to temporary file
-        logger.info("🔄 Creating temporary file...")
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
             tmp_filename = tmp_file.name
-            logger.info(f"🔄 Temporary file: {tmp_filename}")
             
-            logger.info("🔄 Saving audio tensor to temporary file...")
+            # Save audio tensor to temporary file
             torchaudio.save(tmp_filename, audio_tensor, sample_rate)
             
-            # Check if file was created
-            if os.path.exists(tmp_filename):
-                file_size = os.path.getsize(tmp_filename)
-                logger.info(f"✅ Temporary file created: {file_size} bytes")
-            else:
-                logger.error(f"❌ Temporary file was not created: {tmp_filename}")
-                raise Exception("Failed to create temporary audio file")
-            
             # Read back as binary data
-            logger.info("🔄 Reading audio data from temporary file...")
             with open(tmp_filename, 'rb') as audio_file:
                 audio_data = audio_file.read()
             
-            logger.info(f"✅ Audio data read: {len(audio_data)} bytes")
-            
             # Clean up temporary file
-            logger.info("🔄 Cleaning up temporary file...")
             os.unlink(tmp_filename)
-            logger.info("✅ Temporary file cleaned up")
             
             # Encode as base64
-            logger.info("🔄 Encoding audio data to base64...")
             base64_data = base64.b64encode(audio_data).decode('utf-8')
-            logger.info(f"✅ Base64 encoding completed: {len(base64_data)} characters")
             
             return base64_data
             
     except Exception as e:
         logger.error(f"❌ Error converting audio to base64: {e}")
-        logger.error(f"❌ Error type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise
 
 if __name__ == '__main__':
-    logger.info("🚀 ===== TTS HANDLER STARTING =====")
-    logger.info("🚀 Starting TTS generation handler...")
+    logger.info("🚀 TTS Handler starting...")
     
     try:
         logger.info("🔧 Initializing model...")
         initialize_model()
-        logger.info("✅ Model initialization completed")
+        logger.info("✅ Model ready")
         
         logger.info("🚀 Starting RunPod serverless handler...")
         runpod.serverless.start({'handler': handler })
         
     except Exception as e:
-        logger.error("💥 ===== TTS HANDLER STARTUP FAILED =====")
-        logger.error(f"❌ Failed to start TTS handler: {e}")
-        logger.error(f"❌ Error type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        logger.error(f"💥 TTS Handler startup failed: {e}")
         raise 

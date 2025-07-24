@@ -49,59 +49,22 @@ def initialize_model():
     logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
-        # Debug: Check which chatterbox repository is being used
+        # Quick check for forked repository
         import chatterbox
-        import os
+        import subprocess
         
-        logger.info(f"📦 chatterbox module loaded from: {chatterbox.__file__}")
-        
-        # Enhanced Debug: Log chatterbox installation details with dependency analysis
-        repo_path = os.path.dirname(chatterbox.__file__)
-        git_path = os.path.join(repo_path, '.git')
-        
-        # Check if it's a git repository
-        if os.path.exists(git_path):
-            logger.info(f"📁 chatterbox installed as git repo: {repo_path}")
-            try:
-                import subprocess
-                commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
-                logger.info(f"🔢 Git commit: {commit_hash}")
-                remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin']).decode().strip()
-                logger.info(f"🌐 Git remote: {remote_url}")
-                
-                # Check if it's the forked repository
-                if 'chrijaque/chatterbox_embed' in remote_url:
-                    logger.info("✅ This is the CORRECT forked repository!")
-                else:
-                    logger.error("❌ This is NOT the forked repository - using wrong repo!")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not get git info: {e}")
-        else:
-            logger.error(f"📁 chatterbox not installed as git repo (no .git directory found)")
-            logger.error(f"❌ This indicates PyPI package installation instead of git repo")
-        
-        # Check pip installation details
+        # Check if it's the forked repository
         try:
-            import subprocess
             pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
-            logger.info(f"📋 Pip package info:\n{pip_info}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get pip info: {e}")
-        
-        # Check for dependency conflicts
-        try:
-            import subprocess
-            deps = subprocess.check_output(['pip', 'list']).decode().strip()
-            chatterbox_deps = [line for line in deps.split('\n') if 'chatterbox' in line.lower()]
-            if chatterbox_deps:
-                logger.info(f"🔍 Found chatterbox-related packages:\n" + '\n'.join(chatterbox_deps))
+            if 'chrijaque/chatterbox_embed' in pip_info:
+                logger.info("✅ Using forked repository")
             else:
-                logger.info("🔍 No chatterbox-related packages found in pip list")
+                logger.warning("⚠️ Not using forked repository")
         except Exception as e:
-            logger.warning(f"⚠️ Could not check dependencies: {e}")
+            logger.warning(f"⚠️ Could not verify repository: {e}")
         
         model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("Model initialized successfully on CUDA device")
+        logger.info("✅ Model initialized on CUDA")
     except Exception as e:
         logger.error(f"Failed to initialize model: {str(e)}")
         raise
@@ -237,19 +200,17 @@ def handle_voice_clone_request(input, responseFormat):
         # Try to load existing profile, or create new one
         profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
         if profile_path.exists():
-            logger.info(f"Loading existing voice profile for {voice_id}")
+            logger.info(f"🎵 Loading existing profile: {voice_id}")
             profile = load_voice_profile(voice_id)
         else:
-            logger.info(f"Creating new voice profile for {voice_id}")
+            logger.info(f"🎵 Creating new profile: {voice_id}")
             save_voice_profile(temp_voice_file, voice_id)
             profile = load_voice_profile(voice_id)
         
         # Generate speech with the template message
-        generation_method = "audio-file-based"  # default
         if profile is not None:
             # Use profile-based generation (forked repository method)
-            logger.info("Using profile-based generation")
-            generation_method = "profile-based"
+            logger.info("🔄 Using profile-based generation")
             
             # Create reference dictionary for inference
             ref_dict = {
@@ -265,37 +226,25 @@ def handle_voice_clone_request(input, responseFormat):
                 audio_tensor = model.inference(template_message, ref_dict=ref_dict)
             except AttributeError:
                 # Fallback to generate method if inference doesn't exist
-                logger.warning("inference method not available, using generate method")
+                logger.warning("⚠️ Using fallback generation method")
                 audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
         else:
             # Use original audio file method (fallback)
-            logger.info("Using original audio file method (fallback)")
+            logger.info("🔄 Using audio file method")
             audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
 
         # Generate output filename in voice_samples directory
         sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
-        logger.info(f"💾 Saving audio sample directly to: {sample_filename}")
         
         # Save as WAV directly to final location
-        logger.info(f"🎵 Audio tensor shape: {audio_tensor.shape}, Sample rate: {model.sr}")
         torchaudio.save(sample_filename, audio_tensor, model.sr)
-        
-        # Verify the file was created
-        if sample_filename.exists():
-            file_size = sample_filename.stat().st_size
-            logger.info(f"✅ Sample saved: {sample_filename} ({file_size} bytes)")
-        else:
-            logger.error(f"❌ Sample file not created: {sample_filename}")
+        logger.info(f"💾 Saved sample: {sample_filename.name}")
         
         # Clean up temporary voice file
         try:
             os.unlink(temp_voice_file)
-            logger.info(f"🗑️ Cleaned up temp file: {temp_voice_file}")
         except Exception as cleanup_error:
-            logger.warning(f"Failed to clean up temp file: {cleanup_error}")
-            
-        # List final directory contents for debugging
-        list_files_for_debug()
+            logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
@@ -316,9 +265,9 @@ def handle_voice_clone_request(input, responseFormat):
             with open(profile_path, 'rb') as f:
                 profile_data = f.read()
             profile_base64 = base64.b64encode(profile_data).decode('utf-8')
-            logger.info(f"📦 Profile file encoded for transfer: {len(profile_base64)} chars")
+            logger.info(f"📦 Profile ready: {len(profile_base64)} chars")
         except Exception as e:
-            logger.error(f"Failed to read profile file for transfer: {e}")
+            logger.error(f"Failed to read profile file: {e}")
 
     if responseFormat == "base64":
         # Return base64 - ALWAYS return structured JSON, never raw strings
@@ -339,11 +288,7 @@ def handle_voice_clone_request(input, responseFormat):
                 "template_message": template_message
             }
         }
-        logger.info(f"📤 BASE64 FORMAT: Returning structured JSON response")
-        logger.info(f"📤 Response keys: {list(response.keys())}")
-        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
-        logger.info(f"📤 Has profile_base64: {bool(response.get('profile_base64'))}")
-        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
+        logger.info(f"📤 Voice clone completed successfully")
         return response
     elif responseFormat == "binary":
         # Still return structured JSON, not raw data
@@ -366,11 +311,7 @@ def handle_voice_clone_request(input, responseFormat):
                 "template_message": template_message
             }
         }
-        logger.info(f"📤 BINARY FORMAT: Returning structured JSON response")
-        logger.info(f"📤 Response keys: {list(response.keys())}")
-        logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
-        logger.info(f"📤 Has profile_base64: {bool(response.get('profile_base64'))}")
-        logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
+        logger.info(f"📤 Voice clone completed successfully")
         return response
 
     # Default response format - ALWAYS return structured JSON
@@ -392,16 +333,7 @@ def handle_voice_clone_request(input, responseFormat):
         }
     }
     
-    logger.info(f"📤 DEFAULT FORMAT: Returning structured JSON response")
-    logger.info(f"📤 Response keys: {list(response.keys())}")
-    logger.info(f"📤 Response type: {type(response)}")
-    logger.info(f"📤 Has audio_base64: {bool(response.get('audio_base64'))}")
-    logger.info(f"📤 Has profile_base64: {bool(response.get('profile_base64'))}")
-    logger.info(f"📤 Has metadata: {bool(response.get('metadata'))}")
-    logger.info(f"📤 Audio base64 length: {len(audio_base64) if audio_base64 else 0}")
-    logger.info(f"📤 Profile base64 length: {len(profile_base64) if profile_base64 else 0}")
-    logger.info(f"📤 Response format used: {responseFormat}")
-    
+    logger.info(f"📤 Voice clone completed successfully")
     return response
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
@@ -426,5 +358,7 @@ def audio_tensor_to_base64(audio_tensor, sample_rate):
         raise
 
 if __name__ == '__main__':
+    logger.info("🚀 Voice Clone Handler starting...")
     initialize_model()
+    logger.info("✅ Voice Clone Handler ready")
     runpod.serverless.start({'handler': handler })
