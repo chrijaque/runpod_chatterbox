@@ -62,7 +62,7 @@ COPY rp_handler.py /
 COPY diagnose_startup.py /
 
 # Create required directories
-RUN mkdir -p /voice_profiles /voice_samples /temp_voice /tts_generated
+RUN mkdir -p /voice_profiles /voice_samples /temp_voice
 
 # Model will be downloaded at runtime when needed
 

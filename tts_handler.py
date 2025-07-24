@@ -13,8 +13,25 @@ from typing import List, Dict
 
 # Try to import optional dependencies
 try:
+    import nltk
     from nltk.tokenize import sent_tokenize
-    NLTK_AVAILABLE = True
+    
+    # Download required NLTK data if not available
+    try:
+        nltk.data.find('tokenizers/punkt')
+        NLTK_AVAILABLE = True
+        logger.info("✅ NLTK punkt tokenizer available")
+    except LookupError:
+        logger.warning("⚠️ NLTK punkt tokenizer not found - downloading...")
+        try:
+            nltk.download('punkt', quiet=True)
+            NLTK_AVAILABLE = True
+            logger.info("✅ NLTK punkt tokenizer downloaded successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to download NLTK punkt: {e}")
+            NLTK_AVAILABLE = False
+            logger.warning("⚠️ Will use simple text splitting instead")
+    
 except ImportError:
     NLTK_AVAILABLE = False
     logger.warning("⚠️ nltk not available - will use simple text splitting")
@@ -67,11 +84,16 @@ class TTSProcessor:
         :return: List of text chunks
         """
         if NLTK_AVAILABLE:
-            # Use NLTK for proper sentence tokenization
-            sentences = sent_tokenize(text)
+            try:
+                # Use NLTK for proper sentence tokenization
+                sentences = sent_tokenize(text)
+                logger.debug(f"📝 NLTK tokenization: {len(sentences)} sentences")
+            except Exception as e:
+                logger.warning(f"⚠️ NLTK tokenization failed: {e} - using fallback")
+                sentences = self._simple_sentence_split(text)
         else:
             # Fallback to simple sentence splitting
-            sentences = [s.strip() for s in text.replace('\n', ' ').split('.') if s.strip()]
+            sentences = self._simple_sentence_split(text)
         
         chunks, current = [], ""
         for sent in sentences:
@@ -83,7 +105,41 @@ class TTSProcessor:
                 current = sent
         if current.strip():
             chunks.append(current.strip())
+        
+        logger.info(f"📦 Text chunking: {len(sentences)} sentences → {len(chunks)} chunks")
         return chunks
+    
+    def _simple_sentence_split(self, text: str) -> List[str]:
+        """
+        Simple sentence splitting fallback when NLTK is not available.
+        
+        :param text: Text to split into sentences
+        :return: List of sentences
+        """
+        # Clean up the text
+        text = text.replace('\n', ' ').replace('\r', ' ')
+        
+        # Split on sentence endings
+        sentence_endings = ['.', '!', '?']
+        sentences = []
+        current = ""
+        
+        for char in text:
+            current += char
+            if char in sentence_endings:
+                sentence = current.strip()
+                if sentence:
+                    sentences.append(sentence)
+                current = ""
+        
+        # Add any remaining text
+        if current.strip():
+            sentences.append(current.strip())
+        
+        # Filter out empty sentences
+        sentences = [s for s in sentences if s.strip()]
+        
+        return sentences
 
     def generate_chunks(self, chunks: List[str]) -> List[str]:
         """
@@ -100,21 +156,43 @@ class TTSProcessor:
         for i, chunk in enumerate(chunks):
             logger.info(f"🔄 Generating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
             
-            try:
-                # Generate audio tensor
-                audio_tensor = self.model.generate(chunk, temperature=0.7)
-                
-                # Save to temporary file
-                temp_wav = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.wav", delete=False)
-                torchaudio.save(temp_wav.name, audio_tensor, self.model.sr)
-                wav_paths.append(temp_wav.name)
-                
-                logger.info(f"✅ Chunk {i+1} generated | Shape: {audio_tensor.shape}")
-                
-            except Exception as e:
-                logger.error(f"❌ Failed to generate chunk {i+1}: {e}")
-                # Continue with other chunks instead of failing completely
-                continue
+            # Retry logic for each chunk
+            chunk_success = False
+            retry_count = 0
+            max_retries = 2  # 2 retries = 3 total attempts
+            
+            while not chunk_success and retry_count <= max_retries:
+                try:
+                    # Clear GPU cache before each attempt
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # Generate audio tensor
+                    audio_tensor = self.model.generate(chunk, temperature=0.7)
+                    
+                    # Save to temporary file
+                    temp_wav = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.wav", delete=False)
+                    torchaudio.save(temp_wav.name, audio_tensor, self.model.sr)
+                    wav_paths.append(temp_wav.name)
+                    
+                    logger.info(f"✅ Chunk {i+1} generated | Shape: {audio_tensor.shape}")
+                    chunk_success = True
+                    
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        logger.warning(f"⚠️ Chunk {i+1} failed (attempt {retry_count}/{max_retries + 1}): {e}")
+                        logger.info(f"🔄 Retrying chunk {i+1}...")
+                    else:
+                        # Final failure - stop processing
+                        logger.error(f"❌ Chunk {i+1} failed after {max_retries + 1} attempts: {e}")
+                        logger.error(f"❌ Stopping TTS processing due to chunk failure")
+                        
+                        # Clean up any successfully generated chunks
+                        self.cleanup(wav_paths)
+                        
+                        # Raise exception to stop processing
+                        raise RuntimeError(f"Chunk {i+1} failed after {max_retries + 1} attempts: {e}")
         
         return wav_paths
 
@@ -415,9 +493,9 @@ def handler(event, responseFormat="base64"):
         logger.info(f"🎵 TTS: {voice_id} | Text length: {len(text)}")
         
         # Safety check for extremely long texts
-        if len(text) > 10000:
+        if len(text) > 13000:
             logger.warning(f"⚠️ Very long text ({len(text)} chars) - truncating to safe length")
-            text = text[:10000] + "... [truncated]"
+            text = text[:13000] + "... [truncated]"
             logger.info(f"📝 Truncated text to {len(text)} characters")
         
         start_time = time.time()

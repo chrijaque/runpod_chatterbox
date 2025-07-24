@@ -28,6 +28,14 @@ def test_text_chunking_with_real_story():
     # Test different chunk sizes to see the effect
     chunk_sizes = [300, 500, 600, 800]
     
+    # Test the new 13,000 character limit
+    print(f"📊 New character limit: 13,000 (was 10,000)")
+    if len(story_text) > 13000:
+        print(f"⚠️ Story would be truncated to 13,000 characters")
+    else:
+        print(f"✅ Story fits within new 13,000 character limit")
+    print()
+    
     for max_chars in chunk_sizes:
         print(f"🔍 Testing with max_chars = {max_chars}:")
         

@@ -49,6 +49,11 @@ RUN echo "🔧 Installing other requirements..." && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
+# Pre-download NLTK data to avoid runtime issues
+RUN echo "🔧 Pre-downloading NLTK data..." && \
+    python -c "import nltk; nltk.download('punkt', quiet=True)" && \
+    echo "✅ NLTK punkt tokenizer downloaded"
+
 # Copy TTS handler files
 COPY tts_handler.py /
 COPY diagnose_startup.py /
