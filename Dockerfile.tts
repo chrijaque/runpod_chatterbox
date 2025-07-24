@@ -51,9 +51,9 @@ RUN echo "🔧 Installing other requirements..." && \
 
 # Pre-download NLTK data to avoid runtime issues
 RUN echo "🔧 Pre-downloading NLTK data..." && \
-    python -c "import nltk; nltk.download('punkt', quiet=True); print('✅ NLTK punkt downloaded')" && \
-    python -c "import nltk; nltk.data.find('tokenizers/punkt'); print('✅ NLTK punkt verified')" && \
-    python -c "from nltk.tokenize import sent_tokenize; test = sent_tokenize('Test sentence. Another one.'); print(f'✅ NLTK test: {len(test)} sentences')" && \
+    python -c "import nltk; nltk.download('punkt', quiet=True)" && \
+    python -c "import nltk.data; nltk.data.find('tokenizers/punkt')" && \
+    python -c "from nltk.tokenize.punkt import PunktSentenceTokenizer; tokenizer = PunktSentenceTokenizer(); tokenizer.tokenize('Test sentence. Another one.')" && \
     echo "✅ NLTK punkt tokenizer fully configured"
 
 # Copy TTS handler files
