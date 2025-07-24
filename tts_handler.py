@@ -508,6 +508,10 @@ def handler(event, responseFormat="base64"):
         
         # Generate speech using the profile
         logger.info(f"🎵 TTS: {voice_id} | Text length: {len(text)}")
+        logger.info(f"🔍 DEBUG: Model loaded: {model is not None}")
+        logger.info(f"🔍 DEBUG: Voice profile loaded: {profile is not None}")
+        logger.info(f"🔍 DEBUG: Voice profile type: {type(profile)}")
+        logger.info(f"🔍 DEBUG: Temp profile path exists: {temp_profile_path.exists()}")
         
         # Safety check for extremely long texts
         if len(text) > 13000:
@@ -525,61 +529,72 @@ def handler(event, responseFormat="base64"):
             logger.info("🔄 Starting TTS processing...")
             
             # Use TTSProcessor for robust chunking and generation
+            logger.info(f"🔍 DEBUG: Initializing TTSProcessor...")
+            logger.info(f"🔍 DEBUG: Model type: {type(model)}")
+            logger.info(f"🔍 DEBUG: Voice profile path: {temp_profile_path}")
+            logger.info(f"🔍 DEBUG: Voice profile path exists: {temp_profile_path.exists()}")
+            
             processor = TTSProcessor(
                 model=model,
                 voice_profile_path=str(temp_profile_path),
                 pause_ms=150,  # Slightly longer pause for better flow
                 max_chars=600   # Conservative chunk size to avoid CUDA errors
             )
+            logger.info(f"🔍 DEBUG: TTSProcessor initialized successfully")
             
             # Process the text
+            logger.info(f"🔍 DEBUG: Starting text processing...")
+            logger.info(f"🔍 DEBUG: Input text length: {len(text)}")
+            logger.info(f"🔍 DEBUG: Output filename: {tts_filename}")
+            
             result = processor.process(text, str(tts_filename))
+            logger.info(f"🔍 DEBUG: Text processing completed")
+            logger.info(f"🔍 DEBUG: Processing result: {result}")
             
             generation_time = time.time() - start_time
             logger.info(f"✅ TTS generated in {generation_time:.2f}s")
             logger.info(f"📊 Processing stats: {result}")
             
             # Load the generated audio for base64 conversion
+            logger.info(f"🔍 DEBUG: Loading generated audio file...")
+            logger.info(f"🔍 DEBUG: Audio file path: {tts_filename}")
+            logger.info(f"🔍 DEBUG: Audio file exists: {tts_filename.exists()}")
+            if tts_filename.exists():
+                logger.info(f"🔍 DEBUG: Audio file size: {tts_filename.stat().st_size} bytes")
+            
             audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
+            logger.info(f"🔍 DEBUG: Audio loaded successfully")
+            logger.info(f"🔍 DEBUG: Audio tensor shape: {audio_tensor.shape}")
+            logger.info(f"🔍 DEBUG: Audio tensor dtype: {audio_tensor.dtype}")
+            logger.info(f"🔍 DEBUG: Sample rate: {sample_rate}")
             
-            # Also save to local directory for immediate access
+            # Save TTS file locally (same pattern as voice cloning)
+            logger.info(f"🔍 DEBUG: Starting local file save process")
+            logger.info(f"🔍 DEBUG: audio_tensor shape: {audio_tensor.shape}")
+            logger.info(f"🔍 DEBUG: sample_rate: {sample_rate}")
+            logger.info(f"🔍 DEBUG: voice_id: {voice_id}")
+            logger.info(f"🔍 DEBUG: timestamp: {timestamp}")
+            
             local_tts_dir = Path("./tts_generated")
+            logger.info(f"🔍 DEBUG: Creating directory: {local_tts_dir.absolute()}")
             local_tts_dir.mkdir(exist_ok=True)
-            local_filename = local_tts_dir / f"tts_{voice_id}_{timestamp}.wav"
-            torchaudio.save(local_filename, audio_tensor, sample_rate)
-            logger.info(f"💾 Saved TTS locally: {local_filename}")
+            logger.info(f"🔍 DEBUG: Directory exists: {local_tts_dir.exists()}")
             
-            # Automatically send to local Flask app for saving
+            local_filename = local_tts_dir / f"tts_{voice_id}_{timestamp}.wav"
+            logger.info(f"🔍 DEBUG: Full file path: {local_filename.absolute()}")
+            logger.info(f"🔍 DEBUG: Parent directory exists: {local_filename.parent.exists()}")
+            
             try:
-                import requests
-                from io import BytesIO
-                
-                # Convert audio tensor to base64
-                audio_base64 = audio_tensor_to_base64(audio_tensor, sample_rate)
-                
-                # Send to local Flask app
-                local_api_url = "http://localhost:5001/api/tts/save"
-                
-                payload = {
-                    "voice_id": voice_id,
-                    "timestamp": timestamp,
-                    "audio_base64": audio_base64,
-                    "file_size_mb": len(audio_base64) / 1024 / 1024
-                }
-                
-                response = requests.post(local_api_url, json=payload, timeout=30)
-                if response.status_code == 200:
-                    result = response.json()
-                    if result.get("status") == "success":
-                        logger.info(f"✅ File automatically saved to local Flask app: {result.get('local_file')}")
-                    else:
-                        logger.warning(f"⚠️ Local save failed: {result.get('message')}")
-                else:
-                    logger.warning(f"⚠️ Local API call failed: {response.status_code}")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Local save callback failed: {e}")
-                logger.info("💡 Make sure your Flask app is running on localhost:5001")
+                torchaudio.save(local_filename, audio_tensor, sample_rate)
+                logger.info(f"💾 Saved TTS locally: {local_filename}")
+                logger.info(f"🔍 DEBUG: File exists after save: {local_filename.exists()}")
+                logger.info(f"🔍 DEBUG: File size: {local_filename.stat().st_size} bytes")
+            except Exception as save_error:
+                logger.error(f"❌ ERROR saving TTS file: {save_error}")
+                logger.error(f"🔍 DEBUG: audio_tensor dtype: {audio_tensor.dtype}")
+                logger.error(f"🔍 DEBUG: audio_tensor device: {audio_tensor.device}")
+                logger.error(f"🔍 DEBUG: sample_rate type: {type(sample_rate)}")
+                raise save_error
             
         except Exception as e:
             generation_time = time.time() - start_time
