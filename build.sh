@@ -35,7 +35,7 @@ fi
 echo -e "${BLUE}🔍 Pre-build checks...${NC}"
 
 # Check if key files exist
-FILES=("rp_handler.py" "diagnose_startup.py")
+FILES=("rp_handler.py")
 for file in "${FILES[@]}"; do
     if [ -f "$file" ]; then
         echo -e "${GREEN}✅ Found: $file${NC}"

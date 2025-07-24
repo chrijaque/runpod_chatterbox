@@ -549,6 +549,39 @@ def handler(event, responseFormat="base64"):
             torchaudio.save(local_filename, audio_tensor, sample_rate)
             logger.info(f"💾 Saved TTS locally: {local_filename}")
             
+            # Automatically send to local Flask app for saving
+            try:
+                import requests
+                import base64
+                from io import BytesIO
+                
+                # Convert audio tensor to base64
+                audio_base64 = audio_tensor_to_base64(audio_tensor, sample_rate)
+                
+                # Send to local Flask app
+                local_api_url = "http://localhost:5001/api/tts/save"
+                
+                payload = {
+                    "voice_id": voice_id,
+                    "timestamp": timestamp,
+                    "audio_base64": audio_base64,
+                    "file_size_mb": len(audio_base64) / 1024 / 1024
+                }
+                
+                response = requests.post(local_api_url, json=payload, timeout=30)
+                if response.status_code == 200:
+                    result = response.json()
+                    if result.get("status") == "success":
+                        logger.info(f"✅ File automatically saved to local Flask app: {result.get('local_file')}")
+                    else:
+                        logger.warning(f"⚠️ Local save failed: {result.get('message')}")
+                else:
+                    logger.warning(f"⚠️ Local API call failed: {response.status_code}")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Local save callback failed: {e}")
+                logger.info("💡 Make sure your Flask app is running on localhost:5001")
+            
         except Exception as e:
             generation_time = time.time() - start_time
             logger.error(f"❌ Failed to generate TTS after {generation_time:.2f}s")

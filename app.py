@@ -363,6 +363,60 @@ def save_voice_locally() -> Dict[str, Any]:
             "message": str(e)
         }), 500
 
+@app.route('/api/tts/save', methods=['POST'])
+def save_tts_file() -> Dict[str, Any]:
+    """Save TTS file from RunPod to local directory"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                "status": "error",
+                "message": "No data received"
+            }), 400
+        
+        voice_id = data.get('voice_id')
+        timestamp = data.get('timestamp')
+        audio_base64 = data.get('audio_base64')
+        file_size_mb = data.get('file_size_mb', 0)
+        
+        if not all([voice_id, timestamp, audio_base64]):
+            return jsonify({
+                "status": "error",
+                "message": "Missing required fields: voice_id, timestamp, audio_base64"
+            }), 400
+        
+        # Decode base64 audio data
+        audio_data = base64.b64decode(audio_base64)
+        
+        # Create filename
+        filename = f"tts_{voice_id}_{timestamp}.wav"
+        file_path = TTS_GENERATED_DIR / filename
+        
+        # Save to local directory
+        with open(file_path, 'wb') as f:
+            f.write(audio_data)
+        
+        print(f"✅ TTS file saved locally: {file_path}")
+        print(f"📊 File size: {len(audio_data):,} bytes ({file_size_mb:.1f} MB)")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"TTS file saved successfully",
+            "local_file": str(file_path),
+            "file_size_bytes": len(audio_data),
+            "file_size_mb": file_size_mb,
+            "voice_id": voice_id,
+            "timestamp": timestamp
+        })
+        
+    except Exception as e:
+        print(f"❌ Error saving TTS file: {e}")
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
 @app.route('/api/test/save-dummy-files', methods=['POST'])
 def test_save_dummy_files() -> Dict[str, Any]:
     """Test endpoint to create dummy files and verify saving works"""
@@ -434,7 +488,8 @@ def debug_directories() -> Dict[str, Any]:
         for name, directory in [
             ("voice_profiles", VOICE_PROFILES_DIR),
             ("voice_samples", VOICE_SAMPLES_DIR), 
-            ("temp_voice", TEMP_VOICE_DIR)
+            ("temp_voice", TEMP_VOICE_DIR),
+            ("tts_generated", TTS_GENERATED_DIR)
         ]:
             debug_info["directories"][name] = {
                 "path": str(directory.absolute()),

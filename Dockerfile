@@ -59,7 +59,7 @@ RUN echo "🔧 Installing other requirements..." && \
 
 # Copy files
 COPY rp_handler.py /
-COPY diagnose_startup.py /
+
 
 # Create required directories
 RUN mkdir -p /voice_profiles /voice_samples /temp_voice
@@ -71,6 +71,6 @@ RUN echo "🔍 Final verification after all installations..." && \
     pip show chatterbox-tts
 
 # Start the container with diagnostic
-CMD ["sh", "-c", "python3 -u diagnose_startup.py && python3 -u rp_handler.py"]
+CMD ["python3", "-u", "rp_handler.py"]
 
 

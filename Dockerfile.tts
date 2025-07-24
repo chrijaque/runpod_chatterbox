@@ -58,7 +58,7 @@ RUN echo "🔧 Pre-downloading NLTK data..." && \
 
 # Copy TTS handler files
 COPY tts_handler.py /
-COPY diagnose_startup.py /
+
 
 # Create required directories
 RUN mkdir -p /voice_profiles /tts_generated /temp_voice

@@ -22,7 +22,7 @@ The build script checks for these files:
 - ✅ `Dockerfile`
 - ✅ `requirements.txt`
 - ✅ `rp_handler.py`
-- ✅ `diagnose_startup.py`
+
 
 ## Build Process
 
@@ -39,8 +39,8 @@ The build script checks for these files:
 - **Check resources** - Ensure enough disk space and memory
 
 ### Missing Dependencies
-- Run `python3 check_dependencies.py` to verify local environment
-- Run `python3 test_import_chain.py` to test specific imports
+
+
 
 ### Repository Issues
 - Verify GitHub repository is accessible
