@@ -31,6 +31,8 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 RUN echo "🔧 Installing forked repository..." && \
     echo "🔍 Testing repository access..." && \
     curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
+    echo "🔧 Uninstalling existing PyTorch packages to prevent conflicts..." && \
+    pip uninstall -y torch torchvision torchaudio || true && \
     echo "🔧 Installing forked repository..." && \
     pip install --no-cache-dir --force-reinstall git+https://github.com/chrijaque/chatterbox_embed.git@master#egg=chatterbox-tts && \
     echo "🔍 Verifying forked repository installation..." && \
