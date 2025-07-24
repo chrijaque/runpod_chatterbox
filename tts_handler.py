@@ -552,7 +552,6 @@ def handler(event, responseFormat="base64"):
             # Automatically send to local Flask app for saving
             try:
                 import requests
-                import base64
                 from io import BytesIO
                 
                 # Convert audio tensor to base64
