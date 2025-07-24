@@ -18,24 +18,25 @@ logger = logging.getLogger(__name__)
 # Try to import optional dependencies
 try:
     import nltk
-    from nltk.tokenize import sent_tokenize
+    from nltk.tokenize.punkt import PunktSentenceTokenizer
     
     # Force download and setup NLTK punkt tokenizer
     logger.info("🔧 Setting up NLTK punkt tokenizer...")
     try:
         # Download punkt tokenizer explicitly
         nltk.download('punkt', quiet=True)
-        
+
         # Verify it's available
         nltk.data.find('tokenizers/punkt')
         NLTK_AVAILABLE = True
         logger.info("✅ NLTK punkt tokenizer downloaded and verified")
-        
+
         # Test tokenization to ensure it works
         test_text = "This is a test. It has multiple sentences. Let's verify NLTK works."
-        test_sentences = sent_tokenize(test_text)
+        tokenizer = PunktSentenceTokenizer()
+        test_sentences = tokenizer.tokenize(test_text)
         logger.info(f"✅ NLTK test successful: {len(test_sentences)} sentences tokenized")
-        
+
     except Exception as e:
         logger.error(f"❌ NLTK setup failed: {e}")
         NLTK_AVAILABLE = False
@@ -92,7 +93,8 @@ class TTSProcessor:
             try:
                 # Use NLTK for proper sentence tokenization
                 logger.info("📝 Using NLTK sentence tokenization")
-                sentences = sent_tokenize(text)
+                tokenizer = PunktSentenceTokenizer()
+                sentences = tokenizer.tokenize(text)
                 logger.info(f"📝 NLTK tokenization successful: {len(sentences)} sentences")
             except Exception as e:
                 logger.warning(f"⚠️ NLTK tokenization failed: {e} - using fallback")
@@ -101,7 +103,7 @@ class TTSProcessor:
             # Fallback to simple sentence splitting
             logger.info("📝 Using fallback sentence splitting (NLTK not available)")
             sentences = self._simple_sentence_split(text)
-        
+
         chunks, current = [], ""
         for sent in sentences:
             if len(current) + len(sent) + 1 <= self.max_chars:
@@ -112,7 +114,7 @@ class TTSProcessor:
                 current = sent
         if current.strip():
             chunks.append(current.strip())
-        
+
         logger.info(f"📦 Text chunking: {len(sentences)} sentences → {len(chunks)} chunks")
         return chunks
     
@@ -419,6 +421,14 @@ def handler(event, responseFormat="base64"):
     logger.info(f"📥 Input type: {type(input)}")
     logger.info(f"📥 Input keys: {list(input.keys()) if isinstance(input, dict) else 'Not a dict'}")
     
+    # Check if this is a file download request
+    if input.get('action') == 'download_file':
+        return handle_file_download(input)
+    
+    # Check if this is a file listing request
+    if input.get('action') == 'list_files':
+        return list_available_files()
+    
     # Extract TTS parameters
     text = input.get('text')
     voice_id = input.get('voice_id')
@@ -559,29 +569,53 @@ def handler(event, responseFormat="base64"):
             else:
                 return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
-        # Convert to base64
+        # Check response size and handle large files
         try:
             audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
-            logger.info(f"📤 Base64: {len(audio_base64)} chars")
+            base64_size = len(audio_base64)
+            logger.info(f"📤 Base64 size: {base64_size:,} chars ({base64_size/1024/1024:.1f} MB)")
+            
+            # If response is too large, return file path instead
+            if base64_size > 10_000_000:  # 10MB limit
+                logger.warning(f"⚠️ Response too large ({base64_size/1024/1024:.1f} MB) - returning file path only")
+                response = {
+                    "status": "success",
+                    "audio_base64": None,  # No audio data in response
+                    "file_path": str(tts_filename),
+                    "file_size_mb": base64_size/1024/1024,
+                    "metadata": {
+                        "voice_id": voice_id,
+                        "voice_name": voice_id.replace('voice_', ''),
+                        "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
+                        "generation_time": generation_time,
+                        "sample_rate": model.sr,
+                        "audio_shape": list(audio_tensor.shape),
+                        "tts_file": str(tts_filename),
+                        "timestamp": timestamp,
+                        "response_type": "file_path_only"
+                    }
+                }
+            else:
+                # Normal response with audio data
+                response = {
+                    "status": "success",
+                    "audio_base64": audio_base64,
+                    "metadata": {
+                        "voice_id": voice_id,
+                        "voice_name": voice_id.replace('voice_', ''),
+                        "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
+                        "generation_time": generation_time,
+                        "sample_rate": model.sr,
+                        "audio_shape": list(audio_tensor.shape),
+                        "tts_file": str(tts_filename),
+                        "timestamp": timestamp,
+                        "response_type": "audio_data"
+                    }
+                }
+                
         except Exception as e:
             logger.error(f"❌ Failed to convert audio to base64: {e}")
             return {"status": "error", "message": f"Failed to convert audio to base64: {e}"}
-        
-        # Create response
-        response = {
-            "status": "success",
-            "audio_base64": audio_base64,
-            "metadata": {
-                "voice_id": voice_id,
-                "voice_name": voice_id.replace('voice_', ''),  # Extract name from ID
-                "text_input": text,
-                "generation_time": generation_time,
-                "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape),
-                "tts_file": str(tts_filename),
-                "timestamp": timestamp
-            }
-        }
         
         logger.info(f"📤 Response ready | Time: {generation_time:.2f}s | File: {tts_filename.name}")
         
@@ -603,6 +637,74 @@ def handler(event, responseFormat="base64"):
         import traceback
         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         return {"status": "error", "message": str(e)}
+
+def handle_file_download(input):
+    """Handle file download requests"""
+    logger.info("📁 ===== FILE DOWNLOAD REQUEST =====")
+    
+    file_path = input.get('file_path')
+    if not file_path:
+        logger.error("❌ No file_path provided in download request")
+        return {"status": "error", "message": "No file_path provided"}
+    
+    logger.info(f"📁 Requested file: {file_path}")
+    
+    # Method 1: Try direct file access
+    logger.info("🔍 Method 1: Direct file system access")
+    try:
+        if os.path.exists(file_path):
+            file_size = os.path.getsize(file_path)
+            logger.info(f"✅ File exists: {file_path}")
+            logger.info(f"📊 File size: {file_size:,} bytes ({file_size/1024/1024:.1f} MB)")
+            
+            # Read file and convert to base64
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+            
+            audio_base64 = base64.b64encode(file_data).decode('utf-8')
+            logger.info(f"✅ File read successfully: {len(audio_base64):,} base64 chars")
+            
+            return {
+                "status": "success",
+                "method": "direct_file_access",
+                "file_path": file_path,
+                "file_size_bytes": file_size,
+                "file_size_mb": file_size/1024/1024,
+                "audio_base64": audio_base64,
+                "message": "File downloaded via direct file system access"
+            }
+        else:
+            logger.error(f"❌ File not found: {file_path}")
+            return {"status": "error", "message": f"File not found: {file_path}"}
+            
+    except Exception as e:
+        logger.error(f"❌ Direct file access failed: {e}")
+        return {"status": "error", "message": f"Direct file access failed: {e}"}
+
+def list_available_files():
+    """List all available TTS files for debugging"""
+    logger.info("📂 ===== LISTING AVAILABLE FILES =====")
+    
+    try:
+        if TTS_GENERATED_DIR.exists():
+            files = list(TTS_GENERATED_DIR.glob("*.wav"))
+            logger.info(f"📂 Found {len(files)} TTS files:")
+            
+            for file in files:
+                file_size = file.stat().st_size
+                logger.info(f"  📄 {file.name}: {file_size:,} bytes ({file_size/1024/1024:.1f} MB)")
+            
+            return {
+                "status": "success",
+                "files": [{"name": f.name, "size_bytes": f.stat().st_size, "size_mb": f.stat().st_size/1024/1024} for f in files]
+            }
+        else:
+            logger.error(f"❌ TTS directory not found: {TTS_GENERATED_DIR}")
+            return {"status": "error", "message": f"TTS directory not found: {TTS_GENERATED_DIR}"}
+            
+    except Exception as e:
+        logger.error(f"❌ Failed to list files: {e}")
+        return {"status": "error", "message": f"Failed to list files: {e}"}
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""
