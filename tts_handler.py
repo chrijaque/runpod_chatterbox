@@ -542,6 +542,13 @@ def handler(event, responseFormat="base64"):
             # Load the generated audio for base64 conversion
             audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
             
+            # Also save to local directory for immediate access
+            local_tts_dir = Path("./tts_generated")
+            local_tts_dir.mkdir(exist_ok=True)
+            local_filename = local_tts_dir / f"tts_{voice_id}_{timestamp}.wav"
+            torchaudio.save(local_filename, audio_tensor, sample_rate)
+            logger.info(f"💾 Saved TTS locally: {local_filename}")
+            
         except Exception as e:
             generation_time = time.time() - start_time
             logger.error(f"❌ Failed to generate TTS after {generation_time:.2f}s")
@@ -591,6 +598,7 @@ def handler(event, responseFormat="base64"):
                         "sample_rate": model.sr,
                         "audio_shape": list(audio_tensor.shape),
                         "tts_file": str(tts_filename),
+                        "local_file": str(local_filename),
                         "timestamp": timestamp,
                         "response_type": "file_path_only"
                     }
@@ -608,6 +616,7 @@ def handler(event, responseFormat="base64"):
                         "sample_rate": model.sr,
                         "audio_shape": list(audio_tensor.shape),
                         "tts_file": str(tts_filename),
+                        "local_file": str(local_filename),
                         "timestamp": timestamp,
                         "response_type": "audio_data"
                     }

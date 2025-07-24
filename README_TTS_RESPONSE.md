@@ -60,13 +60,20 @@ if (response.audio_base64) {
 }
 ```
 
-### For Large Files - Method 1: Direct File Download
+### For Large Files - Method 1: RunPod to Local Download
 ```javascript
 if (response.audio_base64 === null && response.file_path) {
   console.log(`Large audio file generated: ${response.file_path}`);
+  console.log(`Local file saved at: ${response.local_file}`);
   console.log(`File size: ${response.file_size_mb} MB`);
   
-  // Download the file using the TTS handler
+  // Option A: File is already saved locally (if running locally)
+  if (response.local_file) {
+    console.log(`✅ File saved locally: ${response.local_file}`);
+    // The file is already available on your local machine
+  }
+  
+  // Option B: Download from RunPod to local ./tts_generated/ directory
   const downloadResponse = await fetch('/api/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -79,13 +86,20 @@ if (response.audio_base64 === null && response.file_path) {
   const downloadResult = await downloadResponse.json();
   
   if (downloadResult.status === 'success') {
-    // Convert base64 to audio blob
+    // Convert base64 to file and save locally
     const audioBlob = base64ToBlob(downloadResult.audio_base64, 'audio/wav');
-    const audioUrl = URL.createObjectURL(audioBlob);
     
-    // Play or download the audio
-    const audio = new Audio(audioUrl);
-    audio.play();
+    // Save to local ./tts_generated/ directory
+    const filename = response.file_path.split('/').pop();
+    const localFile = `./tts_generated/${filename}`;
+    
+    // Download to local filesystem
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(audioBlob);
+    link.download = filename;
+    link.click();
+    
+    console.log(`✅ File downloaded to: ${localFile}`);
   } else {
     console.error('Download failed:', downloadResult.message);
   }
