@@ -247,13 +247,11 @@ def handler(event, responseFormat="base64"):
         try:
             logger.info("🔄 Generating TTS...")
             
-            # Use the generate method with saved_voice_path
-            audio_tensor = model.generate(
-                text,
-                saved_voice_path=str(temp_profile_path),
-                temperature=0.7,
-                exaggeration=0.6
-            )
+            # ✅ CORRECT METHOD: Use prepare_conditionals_with_voice_profile
+            model.prepare_conditionals_with_voice_profile(str(temp_profile_path), exaggeration=0.6)
+            
+            # Then generate without saved_voice_path parameter
+            audio_tensor = model.generate(text, temperature=0.7)
             
             generation_time = time.time() - start_time
             logger.info(f"✅ TTS generated in {generation_time:.2f}s | Shape: {audio_tensor.shape}")
