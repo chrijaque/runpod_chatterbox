@@ -44,10 +44,12 @@ def check_chatterbox_installation():
                                          text=True)
         
         # Look for indicators of git installation
-        if 'git' in pip_info.lower() or 'chrijaque' in pip_info.lower():
-            logger.info("✅ Package appears to be from git installation")
+        if 'chrijaque' in pip_info.lower():
+            logger.info("✅ Package appears to be from forked repository")
+        elif 'git' in pip_info.lower():
+            logger.info("⚠️ Package appears to be from git installation (but not forked repo)")
         else:
-            logger.info("⚠️ Package appears to be from PyPI")
+            logger.info("❌ Package appears to be from PyPI (original repository)")
         
         # Check the actual file location and content
         repo_path = os.path.dirname(chatterbox.__file__)

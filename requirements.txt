@@ -19,11 +19,11 @@ ffmpeg-python==0.2.0
 # resemble-perth
 
 # Utilities
-huggingface_hub==0.20.3
+huggingface_hub>=0.23.2
 runpod>=1.7.7
 aiohttp>=3.8.0
 multidict>=6.0.0
-numpy==1.24.3
+yarl>=1.9.0
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
 # NOTE: This is installed FIRST in Dockerfile to prevent dependency conflicts

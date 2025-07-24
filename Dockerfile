@@ -40,8 +40,8 @@ RUN echo "🔧 Installing forked repository..." && \
     echo "🔍 Testing repository access..." && \
     curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
     echo "🔧 Uninstalling existing PyTorch packages to prevent conflicts..." && \
-    pip uninstall -y torch torchvision torchaudio || true && \
-    echo "🔧 Installing forked repository..." && \
+    pip uninstall -y torch torchvision torchaudio chatterbox-tts || true && \
+    echo "🔧 Installing forked repository with dependencies..." && \
     pip install --no-cache-dir --force-reinstall git+https://github.com/chrijaque/chatterbox_embed.git@master#egg=chatterbox-tts && \
     echo "🔍 Verifying forked repository installation..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)" && \
