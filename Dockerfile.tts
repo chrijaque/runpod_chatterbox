@@ -29,7 +29,13 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 
 # Install forked repository FIRST to prevent dependency conflicts
 RUN echo "🔧 Installing forked repository..." && \
-    pip install --no-cache-dir git+https://github.com/chrijaque/chatterbox_embed.git@master#egg=chatterbox-tts
+    echo "🔍 Testing repository access..." && \
+    curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
+    echo "🔧 Installing forked repository..." && \
+    pip install --no-cache-dir --force-reinstall git+https://github.com/chrijaque/chatterbox_embed.git@master#egg=chatterbox-tts && \
+    echo "🔍 Verifying forked repository installation..." && \
+    pip show chatterbox-tts | grep -E "(Location|Version)" && \
+    python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
 
 # Debug: Check which repository was installed
 RUN echo "🔍 Checking installed repository..." && \
@@ -37,7 +43,9 @@ RUN echo "🔍 Checking installed repository..." && \
 
 # Install other requirements (excluding chatterbox-tts since it's already installed)
 RUN echo "🔧 Installing other requirements..." && \
-    pip install -v -r requirements.txt --no-deps
+    pip install -v -r requirements.txt --no-deps && \
+    echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
+    pip show chatterbox-tts | grep -E "(Location|Version)"
 
 # Copy TTS handler files
 COPY tts_handler.py /

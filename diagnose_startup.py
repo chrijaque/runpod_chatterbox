@@ -27,42 +27,51 @@ def check_chatterbox_installation():
         
         # Try to import chatterbox module
         logger.info("📦 Checking chatterbox module...")
-        import chatterbox
-        logger.info(f"✅ chatterbox module loaded from: {chatterbox.__file__}")
+        try:
+            import chatterbox
+            logger.info(f"✅ chatterbox module loaded from: {chatterbox.__file__}")
+        except Exception as e:
+            logger.error(f"❌ Failed to import chatterbox: {e}")
+            logger.error("This indicates a serious installation problem")
+            return
         
-        # Check if it's a git repository
-        repo_path = os.path.dirname(chatterbox.__file__)
-        git_path = os.path.join(repo_path, '.git')
+        # Check package metadata to determine source
+        logger.info("📦 Checking package metadata...")
         
-        if os.path.exists(git_path):
-            logger.info(f"📁 chatterbox installed as git repo: {repo_path}")
-            
-            # Get git commit hash
-            try:
-                commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD'], 
-                                                   stderr=subprocess.STDOUT, 
-                                                   text=True).strip()
-                logger.info(f"🔢 Git commit: {commit_hash}")
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"⚠️ Could not get git commit: {e}")
-            
-            # Get git remote URL
-            try:
-                remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin'], 
-                                                   stderr=subprocess.STDOUT, 
-                                                   text=True).strip()
-                logger.info(f"🌐 Git remote: {remote_url}")
-                
-                # Check if it's the forked repository
-                if 'chrijaque/chatterbox_embed' in remote_url:
-                    logger.info("✅ This is the CORRECT forked repository!")
-                else:
-                    logger.error("❌ This is NOT the forked repository - using wrong repo!")
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"⚠️ Could not get git remote: {e}")
+        # Check pip show output for location and version
+        pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts'], 
+                                         stderr=subprocess.STDOUT, 
+                                         text=True)
+        
+        # Look for indicators of git installation
+        if 'git' in pip_info.lower() or 'chrijaque' in pip_info.lower():
+            logger.info("✅ Package appears to be from git installation")
         else:
-            logger.error(f"📁 chatterbox not installed as git repo (no .git directory found)")
-            logger.error(f"❌ This indicates PyPI package installation instead of git repo")
+            logger.info("⚠️ Package appears to be from PyPI")
+        
+        # Check the actual file location and content
+        repo_path = os.path.dirname(chatterbox.__file__)
+        logger.info(f"📁 chatterbox installed at: {repo_path}")
+        
+        # Check if there are any git-related files or indicators
+        git_indicators = [
+            os.path.join(repo_path, '.git'),
+            os.path.join(repo_path, '..', '.git'),
+            os.path.join(repo_path, '..', '..', '.git')
+        ]
+        
+        git_found = False
+        for indicator in git_indicators:
+            if os.path.exists(indicator):
+                logger.info(f"🔍 Found git indicator: {indicator}")
+                git_found = True
+                break
+        
+        if not git_found:
+            logger.info("📦 Package installed as regular Python package (normal for pip git install)")
+        
+        # Check package version and metadata
+        logger.info(f"📋 Package info from pip show:\n{pip_info}")
         
         # Check for voice profile method availability
         logger.info("🔍 Checking for voice profile methods...")

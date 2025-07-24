@@ -1,27 +1,28 @@
-# PyTorch ecosystem with compatible versions
-torch==2.1.2
-torchvision==0.16.2
-torchaudio==2.1.2
+# PyTorch ecosystem - installed by forked repository
+# torch==2.6.0 (from forked repo)
+# torchvision (from forked repo)  
+# torchaudio==2.6.0 (from forked repo)
 
-# Core dependencies
-transformers==4.36.2
-diffusers==0.25.1
-safetensors==0.4.1
-einops==0.7.0
+# Core dependencies - installed by forked repository
+# transformers==4.46.3 (from forked repo)
+# diffusers==0.29.0 (from forked repo)
+# safetensors==0.5.3 (from forked repo)
+# einops>=0.6.1 (from forked repo)
 
-# Audio processing
-librosa==0.10.1
+# Audio processing - installed by forked repository
+# librosa==0.11.0 (from forked repo)
 ffmpeg-python==0.2.0
 
-# Voice cloning
-conformer
-s3tokenizer
-resemble-perth
+# Voice cloning dependencies are included in the forked chatterbox repository
+# conformer
+# s3tokenizer  
+# resemble-perth
 
 # Utilities
 huggingface_hub==0.20.3
 runpod>=1.7.7
 aiohttp>=3.8.0
+multidict>=6.0.0
 numpy==1.24.3
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
