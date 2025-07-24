@@ -25,6 +25,10 @@ aiohttp>=3.8.0
 multidict>=6.0.0
 yarl>=1.9.0
 propcache>=0.1.0
+aiohappyeyeballs>=0.1.0
+aiosignal>=1.0.0
+frozenlist>=1.0.0
+attrs>=21.0.0
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
 # NOTE: This is installed FIRST in Dockerfile to prevent dependency conflicts

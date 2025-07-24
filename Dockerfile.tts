@@ -45,7 +45,7 @@ RUN echo "🔍 Checking installed repository..." && \
 
 # Install other requirements (excluding chatterbox-tts since it's already installed)
 RUN echo "🔧 Installing other requirements..." && \
-    pip install -v -r requirements.txt --no-deps && \
+    pip install -v -r requirements.txt && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
