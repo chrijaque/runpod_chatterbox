@@ -9,6 +9,22 @@ import logging
 from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict
+
+# Try to import optional dependencies
+try:
+    from nltk.tokenize import sent_tokenize
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    logger.warning("⚠️ nltk not available - will use simple text splitting")
+
+try:
+    from pydub import AudioSegment, effects
+    PYDUB_AVAILABLE = True
+except ImportError:
+    PYDUB_AVAILABLE = False
+    logger.warning("⚠️ pydub not available - will use torchaudio for audio processing")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,6 +42,162 @@ logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
+
+# Chunking and processing class
+class TTSProcessor:
+    def __init__(self, model: ChatterboxTTS, voice_profile_path: str, pause_ms: int = 100, max_chars: int = 500):
+        """
+        Initializes the TTSProcessor with a TTS model and a voice profile.
+
+        :param model: The ChatterboxTTS model instance
+        :param voice_profile_path: Path to the voice profile (.npy)
+        :param pause_ms: Milliseconds of silence between chunks
+        :param max_chars: Maximum number of characters per chunk
+        """
+        self.model = model
+        self.voice_profile = voice_profile_path
+        self.pause_ms = pause_ms
+        self.max_chars = max_chars
+
+    def chunk_text(self, text: str) -> List[str]:
+        """
+        Splits input text into sentence-aligned chunks based on max character count.
+
+        :param text: Full story text
+        :return: List of text chunks
+        """
+        if NLTK_AVAILABLE:
+            # Use NLTK for proper sentence tokenization
+            sentences = sent_tokenize(text)
+        else:
+            # Fallback to simple sentence splitting
+            sentences = [s.strip() for s in text.replace('\n', ' ').split('.') if s.strip()]
+        
+        chunks, current = [], ""
+        for sent in sentences:
+            if len(current) + len(sent) + 1 <= self.max_chars:
+                current += (" " + sent).strip()
+            else:
+                if current.strip():
+                    chunks.append(current.strip())
+                current = sent
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks
+
+    def generate_chunks(self, chunks: List[str]) -> List[str]:
+        """
+        Generates speech from each text chunk and stores temporary WAV files.
+
+        :param chunks: List of text chunks
+        :return: List of file paths to temporary WAV files
+        """
+        wav_paths = []
+        
+        # Prepare voice profile once
+        self.model.prepare_conditionals_with_voice_profile(self.voice_profile, exaggeration=0.6)
+        
+        for i, chunk in enumerate(chunks):
+            logger.info(f"🔄 Generating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
+            
+            try:
+                # Generate audio tensor
+                audio_tensor = self.model.generate(chunk, temperature=0.7)
+                
+                # Save to temporary file
+                temp_wav = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.wav", delete=False)
+                torchaudio.save(temp_wav.name, audio_tensor, self.model.sr)
+                wav_paths.append(temp_wav.name)
+                
+                logger.info(f"✅ Chunk {i+1} generated | Shape: {audio_tensor.shape}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to generate chunk {i+1}: {e}")
+                # Continue with other chunks instead of failing completely
+                continue
+        
+        return wav_paths
+
+    def stitch_and_normalize(self, wav_paths: List[str], output_path: str) -> float:
+        """
+        Stitches WAV chunks together with pause and normalizes audio levels.
+
+        :param wav_paths: List of temporary WAV file paths
+        :param output_path: Final path to export the combined WAV file
+        :return: Total duration of the final audio in seconds
+        """
+        if PYDUB_AVAILABLE:
+            # Use pydub for professional audio processing
+            final = AudioSegment.empty()
+            for p in wav_paths:
+                seg = AudioSegment.from_wav(p)
+                final += seg + AudioSegment.silent(self.pause_ms)
+            normalized = effects.normalize(final)
+            normalized.export(output_path, format="wav")
+            return len(normalized) / 1000.0  # Convert ms to seconds
+        else:
+            # Fallback to torchaudio concatenation
+            audio_chunks = []
+            for wav_path in wav_paths:
+                audio_tensor, sample_rate = torchaudio.load(wav_path)
+                audio_chunks.append(audio_tensor)
+                
+                # Add silence between chunks
+                silence_duration = int(self.pause_ms * sample_rate / 1000)
+                silence = torch.zeros(1, silence_duration)
+                audio_chunks.append(silence)
+            
+            # Concatenate all chunks
+            if audio_chunks:
+                final_audio = torch.cat(audio_chunks, dim=-1)
+                torchaudio.save(output_path, final_audio, sample_rate)
+                return final_audio.shape[-1] / sample_rate
+            else:
+                raise RuntimeError("No audio chunks to concatenate")
+
+    def cleanup(self, wav_paths: List[str]):
+        """
+        Deletes temporary WAV files to clean up disk space.
+
+        :param wav_paths: List of paths to temporary WAV files
+        """
+        for path in wav_paths:
+            try:
+                os.remove(path)
+                logger.debug(f"🧹 Cleaned up temporary file: {path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to delete {path} — {e}")
+
+    def process(self, text: str, output_path: str) -> Dict:
+        """
+        Full TTS pipeline: chunk → generate → stitch → clean.
+
+        :param text: Input text to synthesize
+        :param output_path: Path to save the final audio file
+        :return: Dictionary with metadata including duration, chunk count, and file paths
+        """
+        logger.info(f"🎵 Starting TTS processing for {len(text)} characters")
+        
+        chunks = self.chunk_text(text)
+        logger.info(f"📦 Split into {len(chunks)} chunks")
+        
+        wav_paths = self.generate_chunks(chunks)
+        if not wav_paths:
+            raise RuntimeError("Failed to generate any audio chunks")
+        
+        logger.info(f"🔗 Stitching {len(wav_paths)} audio chunks...")
+        total_duration = self.stitch_and_normalize(wav_paths, output_path)
+        
+        self.cleanup(wav_paths)
+        
+        logger.info(f"✅ TTS processing completed | Duration: {total_duration:.2f}s")
+        
+        return {
+            "chunk_count": len(chunks),
+            "output_path": output_path,
+            "duration_sec": total_duration,
+            "successful_chunks": len(wav_paths)
+        }
 
 def initialize_model():
     global model
@@ -242,19 +414,38 @@ def handler(event, responseFormat="base64"):
         # Generate speech using the profile
         logger.info(f"🎵 TTS: {voice_id} | Text length: {len(text)}")
         
+        # Safety check for extremely long texts
+        if len(text) > 10000:
+            logger.warning(f"⚠️ Very long text ({len(text)} chars) - truncating to safe length")
+            text = text[:10000] + "... [truncated]"
+            logger.info(f"📝 Truncated text to {len(text)} characters")
+        
         start_time = time.time()
         
+        # Create output filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+        
         try:
-            logger.info("🔄 Generating TTS...")
+            logger.info("🔄 Starting TTS processing...")
             
-            # ✅ CORRECT METHOD: Use prepare_conditionals_with_voice_profile
-            model.prepare_conditionals_with_voice_profile(str(temp_profile_path), exaggeration=0.6)
+            # Use TTSProcessor for robust chunking and generation
+            processor = TTSProcessor(
+                model=model,
+                voice_profile_path=str(temp_profile_path),
+                pause_ms=150,  # Slightly longer pause for better flow
+                max_chars=600   # Conservative chunk size to avoid CUDA errors
+            )
             
-            # Then generate without saved_voice_path parameter
-            audio_tensor = model.generate(text, temperature=0.7)
+            # Process the text
+            result = processor.process(text, str(tts_filename))
             
             generation_time = time.time() - start_time
-            logger.info(f"✅ TTS generated in {generation_time:.2f}s | Shape: {audio_tensor.shape}")
+            logger.info(f"✅ TTS generated in {generation_time:.2f}s")
+            logger.info(f"📊 Processing stats: {result}")
+            
+            # Load the generated audio for base64 conversion
+            audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
             
         except Exception as e:
             generation_time = time.time() - start_time
@@ -262,18 +453,26 @@ def handler(event, responseFormat="base64"):
             logger.error(f"❌ Error type: {type(e)}")
             logger.error(f"❌ Error message: {str(e)}")
             logger.error(f"❌ Error details: {e}")
-            return {"status": "error", "message": f"Failed to generate TTS: {e}"}
-        
-        # Save the generated TTS to file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
-        
-        try:
-            torchaudio.save(str(tts_filename), audio_tensor, model.sr)
-            logger.info(f"💾 Saved: {tts_filename.name}")
-        except Exception as e:
-            logger.error(f"❌ Failed to save TTS file: {e}")
-            # Continue anyway, don't fail the request
+            
+            # Try with even smaller chunks if it's a CUDA error
+            if "CUDA error" in str(e) and len(text) > 300:
+                logger.info("🔄 Retrying with smaller chunks due to CUDA error...")
+                try:
+                    processor = TTSProcessor(
+                        model=model,
+                        voice_profile_path=str(temp_profile_path),
+                        pause_ms=100,
+                        max_chars=300  # Even smaller chunks
+                    )
+                    result = processor.process(text, str(tts_filename))
+                    audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
+                    generation_time = time.time() - start_time
+                    logger.info(f"✅ TTS generated with smaller chunks in {generation_time:.2f}s")
+                except Exception as retry_error:
+                    logger.error(f"❌ Retry also failed: {retry_error}")
+                    return {"status": "error", "message": f"Failed to generate TTS even with chunking: {retry_error}"}
+            else:
+                return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
         # Convert to base64
         try:

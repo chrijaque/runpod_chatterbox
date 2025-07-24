@@ -29,6 +29,10 @@ aiohappyeyeballs>=0.1.0
 aiosignal>=1.0.0
 frozenlist>=1.0.0
 attrs>=21.0.0
+
+# Optional TTS processing dependencies (for better audio handling)
+nltk>=3.8.1
+pydub>=0.25.1
 # Install forked repository with voice profile support
 # Force install from git and prevent PyPI version
 # NOTE: This is installed FIRST in Dockerfile to prevent dependency conflicts
