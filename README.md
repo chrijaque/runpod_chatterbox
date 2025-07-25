@@ -24,7 +24,7 @@ runpod_chatterbox/
 │   ├── docker-compose.yml
 │   └── README.md
 ├── frontend/                   ← Next.js Frontend Application
-├── rp_handler.py              ← RunPod Voice Cloning Handler
+├── vc_handler.py              ← RunPod Voice Cloning Handler
 ├── tts_handler.py             ← RunPod TTS Handler
 ├── firebase_creds.json        ← Firebase Credentials
 └── README.md                  ← This file
@@ -103,7 +103,7 @@ python test_fastapi.py
 ### Test RunPod Handlers
 ```bash
 # Test voice cloning
-python rp_handler.py
+python vc_handler.py
 
 # Test TTS generation
 python tts_handler.py
@@ -120,7 +120,7 @@ docker-compose up --build
 ### RunPod Handlers
 ```bash
 # Build voice cloning handler
-docker build -f Dockerfile -t voice-clone-handler .
+docker build -f Dockerfile.vc -t voice-clone-handler .
 
 # Build TTS handler
 docker build -f Dockerfile.tts -t tts-handler .

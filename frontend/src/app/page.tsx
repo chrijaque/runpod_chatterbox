@@ -38,6 +38,8 @@ export default function Home() {
     const [name, setName] = useState('');
     const [audioData, setAudioData] = useState<string | null>(null);
     const [audioFormat, setAudioFormat] = useState<string>('wav');
+    const [language, setLanguage] = useState<string>('en');
+    const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
@@ -47,6 +49,16 @@ export default function Home() {
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    // Load voice library on component mount
+    useEffect(() => {
+        loadVoiceLibrary();
+    }, []);
+
+    // Reload voice library when metadata settings change
+    useEffect(() => {
+        loadVoiceLibrary();
+    }, [language, isKidsVoice]);
 
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
         console.log('🔍 DEBUGGING: saveVoiceToAPI called with:', {
@@ -67,7 +79,7 @@ export default function Home() {
             return;
         }
         
-        console.log('💾 Starting to save voice to FastAPI...', { voiceName });
+        console.log('💾 Starting to save voice to FastAPI with new organized workflow...', { voiceName });
         
         try {
             const metadata = result.metadata;
@@ -80,51 +92,45 @@ export default function Home() {
                 hasProfileData: !!result.profile_base64
             });
             
-            // Create audio blob
-            const audioBlob = new Blob([
-                Uint8Array.from(atob(result.audio_base64), c => c.charCodeAt(0))
-            ], { type: 'audio/wav' });
+            // Create the new organized request structure
+            const cloneRequest = {
+                title: voiceName,
+                voices: [result.audio_base64], // Use the generated sample as the voice data
+                visibility: "private",
+                metadata: {
+                    language: language, // Use state variable
+                    isKidsVoice: isKidsVoice, // Use state variable
+                    userId: "dev_user", // Default for development
+                    createdAt: new Date().toISOString()
+                }
+            };
             
-            console.log('🎵 Created audio blob:', { size: audioBlob.size, type: audioBlob.type });
+            console.log('📤 Sending organized clone request to FastAPI...', {
+                title: cloneRequest.title,
+                voicesCount: cloneRequest.voices.length,
+                language: cloneRequest.metadata.language,
+                isKidsVoice: cloneRequest.metadata.isKidsVoice
+            });
             
-            // Create profile blob if available
-            let profileBlob = null;
-            if (result.profile_base64) {
-                profileBlob = new Blob([
-                    Uint8Array.from(atob(result.profile_base64), c => c.charCodeAt(0))
-                ], { type: 'application/octet-stream' });
-                console.log('🧠 Created profile blob:', { size: profileBlob.size });
-            }
-            
-            const formData = new FormData();
-            formData.append('voice_id', voiceId);
-            formData.append('voice_name', voiceName);
-            formData.append('audio_file', audioBlob, `${voiceId}_sample.wav`);
-            formData.append('template_message', metadata.template_message || '');
-            
-            // Add profile file if available
-            if (profileBlob) {
-                formData.append('profile_file', profileBlob, `${voiceId}.npy`);
-                console.log('📎 Added profile file to form data');
-            }
-            
-            console.log('📤 Sending to FastAPI...');
-            
-            // Send to FastAPI to save (will handle Firebase upload)
-            const response = await fetch(`${VOICE_API}/save`, {
+            // Send to FastAPI using the new organized clone endpoint
+            const response = await fetch(`${VOICE_API}/clone`, {
                 method: 'POST',
-                body: formData
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(cloneRequest)
             });
             
             const responseData = await response.json();
             console.log('📥 FastAPI response:', responseData);
             
             if (response.ok) {
-                console.log(`✅ Successfully saved voice to FastAPI/Firebase for: ${voiceName}`);
+                console.log(`✅ Successfully saved voice to Firebase with organized structure for: ${voiceName}`);
+                console.log('📁 Firebase URLs:', responseData.firebase_urls);
                 // Refresh the voice library to show the new voice
                 await loadVoiceLibrary();
             } else {
-                console.error(`❌ Failed to save voice: ${responseData.message}`);
+                console.error(`❌ Failed to save voice: ${responseData.detail || responseData.message}`);
             }
         } catch (error) {
             console.error('❌ Error saving voice to API:', error);
@@ -134,21 +140,31 @@ export default function Home() {
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
         try {
-            // Use FastAPI server instead of RunPod
-            const response = await fetch(VOICE_API, {
+            // Use the new Firebase-based endpoint to list voices by language
+            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}`, {
                 method: 'GET',
             });
 
             const data = await response.json();
-            console.log('Library API response:', data);
+            console.log('Voice Library API response:', data);
 
             if (data.status === 'success') {
-                setVoiceLibrary(data.voices || []);
+                // Transform Firebase data to match our Voice interface
+                const voices = data.voices.map((voice: any) => ({
+                    voice_id: voice.voice_id,
+                    name: voice.title || voice.voice_id,
+                    sample_file: voice.sample_url || '',
+                    embedding_file: voice.profile_url || '',
+                    created_date: voice.created_at ? new Date(voice.created_at).getTime() / 1000 : Date.now() / 1000
+                }));
+                setVoiceLibrary(voices);
             } else {
-                throw new Error(data.message || 'Failed to load voice library');
+                throw new Error(data.detail || data.message || 'Failed to load voice library');
             }
         } catch (err) {
             console.error('Error loading voice library:', err);
+            // Set empty array on error to avoid breaking the UI
+            setVoiceLibrary([]);
         } finally {
             setIsLoadingLibrary(false);
         }
@@ -157,18 +173,29 @@ export default function Home() {
     const playVoiceSample = async (voiceId: string) => {
         setPlayingVoice(voiceId);
         try {
-            // Use FastAPI server to get audio file directly
-            const audioUrl = `${VOICE_API}/${voiceId}/sample`;
+            // Use the new Firebase-based endpoint to get voice sample URL
+            const response = await fetch(`${VOICE_API}/${voiceId}/sample/firebase?language=${language}&is_kids_voice=${isKidsVoice}`);
             
-            // Create audio element and play
-            const audio = new Audio(audioUrl);
-            audio.onended = () => setPlayingVoice(null);
-            audio.onerror = () => {
-                console.error('Error playing audio');
-                setPlayingVoice(null);
-            };
+            if (!response.ok) {
+                throw new Error('Failed to get voice sample URL');
+            }
             
-            await audio.play();
+            const data = await response.json();
+            console.log('Voice sample Firebase response:', data);
+            
+            if (data.status === 'success' && data.sample_url) {
+                // Create audio element and play from Firebase URL
+                const audio = new Audio(data.sample_url);
+                audio.onended = () => setPlayingVoice(null);
+                audio.onerror = () => {
+                    console.error('Error playing audio from Firebase');
+                    setPlayingVoice(null);
+                };
+                
+                await audio.play();
+            } else {
+                throw new Error('No sample URL available');
+            }
         } catch (err) {
             console.error('Error playing voice sample:', err);
             setPlayingVoice(null);
@@ -442,6 +469,52 @@ export default function Home() {
                                     </div>
                                 </div>
                                 <FileUploader onFileSelect={handleFileSelect} />
+                            </div>
+                        </div>
+
+                        {/* Metadata Configuration for Organized Storage */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium text-gray-900">Storage Configuration</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Language
+                                    </label>
+                                    <select
+                                        id="language"
+                                        value={language}
+                                        onChange={(e) => setLanguage(e.target.value)}
+                                        className="form-input"
+                                    >
+                                        <option value="en">English</option>
+                                        <option value="da">Danish</option>
+                                        <option value="fr">French</option>
+                                        <option value="de">German</option>
+                                        <option value="es">Spanish</option>
+                                        <option value="tr">Turkish</option>
+                                        <option value="ar">Arabic</option>
+                                        <option value="zh">Chinese</option>
+                                        <option value="ja">Japanese</option>
+                                        <option value="ko">Korean</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="flex items-center space-x-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={isKidsVoice}
+                                            onChange={(e) => setIsKidsVoice(e.target.checked)}
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700">Kids Voice</span>
+                                    </label>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Store in kids voice directory
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                                <strong>Storage Path:</strong> audio/voices/{language}/{isKidsVoice ? 'kids/' : ''}recorded/
                             </div>
                         </div>
 

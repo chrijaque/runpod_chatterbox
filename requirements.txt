@@ -9,6 +9,9 @@
 # To install dependencies for RunPod handlers:
 # pip install -r requirements.txt
 
+# RunPod SDK for handler functionality
+runpod>=1.5.0
+
 # Core dependencies (same as api-app/requirements.txt)
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0

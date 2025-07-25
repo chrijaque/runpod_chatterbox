@@ -20,8 +20,8 @@ echo -e "${YELLOW}📦 Building with tag: ${TAG}${NC}"
 echo ""
 
 # Check if we're in the right directory
-if [ ! -f "Dockerfile" ]; then
-    echo -e "${RED}❌ Error: Dockerfile not found in current directory${NC}"
+if [ ! -f "Dockerfile.vc" ]; then
+    echo -e "${RED}❌ Error: Dockerfile.vc not found in current directory${NC}"
     echo "Please run this script from the project root directory"
     exit 1
 fi
@@ -35,7 +35,7 @@ fi
 echo -e "${BLUE}🔍 Pre-build checks...${NC}"
 
 # Check if key files exist
-FILES=("rp_handler.py")
+FILES=("vc_handler.py")
 for file in "${FILES[@]}"; do
     if [ -f "$file" ]; then
         echo -e "${GREEN}✅ Found: $file${NC}"

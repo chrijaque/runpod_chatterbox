@@ -19,9 +19,9 @@
 ## Required Files
 
 The build script checks for these files:
-- ✅ `Dockerfile`
+- ✅ `Dockerfile.vc`
 - ✅ `requirements.txt`
-- ✅ `rp_handler.py`
+- ✅ `vc_handler.py`
 
 
 ## Build Process

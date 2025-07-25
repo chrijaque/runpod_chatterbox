@@ -30,7 +30,7 @@ FIREBASE_STORAGE_ENABLED=True
    - Copy your API key
 
 2. **Voice Clone Endpoint ID**:
-   - Deploy `rp_handler.py` to RunPod
+   - Deploy `vc_handler.py` to RunPod
    - Copy the endpoint ID from the RunPod console
 
 3. **TTS Endpoint ID**:

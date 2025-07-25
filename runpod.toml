@@ -8,4 +8,4 @@ cuda = "12.8.1"
 python_version = "3.11"
 
 [runtime]
-handler = "rp_handler.py" 
+handler = "vc_handler.py" 

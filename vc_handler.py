@@ -161,7 +161,7 @@ def load_voice_profile(voice_id):
         raise
 
 def handler(event, responseFormat="base64"):
-    input = event['input']
+    input = event['input']    
     
     # This handler is for voice cloning only
     return handle_voice_clone_request(input, responseFormat)
@@ -340,7 +340,7 @@ def handle_voice_clone_request(input, responseFormat):
     }
     
     logger.info(f"📤 Voice clone completed successfully")
-    return response
+    return response 
 
 def audio_tensor_to_base64(audio_tensor, sample_rate):
     """Convert audio tensor to base64 encoded WAV data."""

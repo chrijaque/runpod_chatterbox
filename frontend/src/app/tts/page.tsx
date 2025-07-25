@@ -38,6 +38,9 @@ interface TTSGeneration {
 export default function TTSPage() {
     const [text, setText] = useState('');
     const [selectedVoice, setSelectedVoice] = useState<string>('');
+    const [language, setLanguage] = useState<string>('en');
+    const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
+    const [storyType, setStoryType] = useState<string>('user');
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
     const [ttsGenerations, setTtsGenerations] = useState<TTSGeneration[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -54,6 +57,11 @@ export default function TTSPage() {
         loadVoiceLibrary();
         loadTTSGenerations();
     }, []);
+
+    // Reload TTS generations when metadata settings change
+    useEffect(() => {
+        loadTTSGenerations();
+    }, [language, storyType, isKidsVoice]);
 
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
@@ -85,21 +93,34 @@ export default function TTSPage() {
     const loadTTSGenerations = async () => {
         setIsLoadingGenerations(true);
         try {
-            const response = await fetch(TTS_GENERATIONS_API, {
+            // Use the new Firebase-based endpoint to list stories by language and type
+            const response = await fetch(`${TTS_GENERATIONS_API}/stories/${language}?story_type=${storyType}`, {
                 method: 'GET',
             });
 
             const data = await response.json();
-            console.log('TTS Generations API response:', data);
+            console.log('TTS Stories API response:', data);
 
             if (data.status === 'success') {
-                setTtsGenerations(data.generations || []);
+                // Transform Firebase data to match our TTSGeneration interface
+                const generations = data.stories.map((story: any) => ({
+                    file_id: story.generation_id || story.file_id,
+                    voice_id: story.voice_id || 'unknown',
+                    voice_name: story.voice_name || 'Unknown Voice',
+                    file_path: story.story_url || '',
+                    created_date: story.created_at ? new Date(story.created_at).getTime() / 1000 : Date.now() / 1000,
+                    timestamp: story.timestamp || new Date().toISOString(),
+                    file_size: story.file_size || 0
+                }));
+                setTtsGenerations(generations);
             } else {
-                throw new Error(data.message || 'Failed to load TTS generations');
+                throw new Error(data.detail || data.message || 'Failed to load TTS generations');
             }
         } catch (err) {
             console.error('Error loading TTS generations:', err);
             setError('Failed to load TTS generations');
+            // Set empty array on error to avoid breaking the UI
+            setTtsGenerations([]);
         } finally {
             setIsLoadingGenerations(false);
         }
@@ -108,16 +129,29 @@ export default function TTSPage() {
     const playTTSGeneration = async (fileId: string) => {
         setPlayingGeneration(fileId);
         try {
-            const audioUrl = `${TTS_GENERATIONS_API}/${fileId}/audio`;
+            // Use the new Firebase-based endpoint to get story audio URL
+            const response = await fetch(`${TTS_GENERATIONS_API}/stories/${language}/${storyType}/${fileId}/audio`);
             
-            const audio = new Audio(audioUrl);
-            audio.onended = () => setPlayingGeneration(null);
-            audio.onerror = () => {
-                console.error('Error playing TTS generation');
-                setPlayingGeneration(null);
-            };
+            if (!response.ok) {
+                throw new Error('Failed to get story audio URL');
+            }
             
-            await audio.play();
+            const data = await response.json();
+            console.log('Story audio Firebase response:', data);
+            
+            if (data.status === 'success' && data.audio_url) {
+                // Create audio element and play from Firebase URL
+                const audio = new Audio(data.audio_url);
+                audio.onended = () => setPlayingGeneration(null);
+                audio.onerror = () => {
+                    console.error('Error playing story audio from Firebase');
+                    setPlayingGeneration(null);
+                };
+                
+                await audio.play();
+            } else {
+                throw new Error('No audio URL available');
+            }
         } catch (err) {
             console.error('Error playing TTS generation:', err);
             setPlayingGeneration(null);
@@ -181,14 +215,6 @@ export default function TTSPage() {
             }
             abortControllerRef.current = new AbortController();
 
-            if (!RUNPOD_API_KEY) {
-                throw new Error('RunPod API key not configured');
-            }
-
-            if (!TTS_API_ENDPOINT) {
-                throw new Error('TTS endpoint not configured. Please set NEXT_PUBLIC_TTS_ENDPOINT_ID');
-            }
-
             if (!text.trim()) {
                 throw new Error('Please enter text to synthesize');
             }
@@ -197,77 +223,73 @@ export default function TTSPage() {
                 throw new Error('Please select a voice from the library');
             }
 
-            console.log('🚀 Starting TTS generation...', { 
+            console.log('🚀 Starting TTS generation with organized workflow...', { 
                 text: text.substring(0, 50) + '...', 
                 selectedVoice 
             });
 
-                    // Fetch the voice profile from FastAPI
-        console.log('📥 Fetching voice profile from FastAPI...');
-        const profileResponse = await fetch(`${VOICE_API}/${selectedVoice}/profile`);
-        
-        if (!profileResponse.ok) {
-            const errorData = await profileResponse.json().catch(() => ({}));
-            throw new Error(`Failed to fetch voice profile: ${errorData.message || profileResponse.statusText}`);
-        }
-        
-        const profileData = await profileResponse.json();
-        console.log('✅ Voice profile fetched:', {
-            hasProfile: !!profileData.profile_base64,
-            profileSize: profileData.profile_base64 ? profileData.profile_base64.length : 0
-        });
+            // Create form data for the new organized TTS generation
+            const formData = new FormData();
+            formData.append('voice_id', selectedVoice);
+            formData.append('text', text);
+            formData.append('responseFormat', 'base64');
+            formData.append('language', language); // Use state variable
+            formData.append('is_kids_voice', isKidsVoice.toString()); // Use state variable
+            formData.append('story_type', storyType); // Use state variable
 
-            const response = await fetch(TTS_API_ENDPOINT, {
+            console.log('📤 Sending organized TTS request to FastAPI...', {
+                voice_id: selectedVoice,
+                text_length: text.length,
+                language: language,
+                is_kids_voice: isKidsVoice,
+                story_type: storyType
+            });
+
+            // Send to FastAPI using the new organized TTS endpoint
+            const response = await fetch(`${TTS_GENERATIONS_API}/generate`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                },
-                body: JSON.stringify({
-                    input: {
-                        text: text,
-                        voice_id: selectedVoice,
-                        profile_base64: profileData.profile_base64,
-                        responseFormat: "base64",
-                    },
-                }),
-                signal: abortControllerRef.current.signal,
+                body: formData
             });
 
             const data = await response.json();
-            console.log('📨 TTS RunPod API response received:', {
-                hasId: !!data.id,
-                hasOutput: !!data.output,
-                hasError: !!data.error,
+            console.log('📨 FastAPI TTS response received:', {
                 status: data.status,
+                hasGenerationId: !!data.generation_id,
+                hasAudioBase64: !!data.audio_base64,
+                hasMetadata: !!data.metadata,
                 keys: Object.keys(data)
             });
 
             if (!response.ok) {
-                throw new Error(data.message || 'Failed to generate TTS');
+                throw new Error(data.detail || data.message || 'Failed to generate TTS');
             }
 
-            if (data.id) {
-                setCurrentJobId(data.id);
-                console.log('⏳ TTS Job queued, polling for results...', { jobId: data.id });
-                
-                const result = await pollJobStatus(data.id);
-                
-                console.log('🏁 TTS Final result received:', {
-                    hasResult: !!result,
-                    resultType: typeof result,
-                    hasAudioBase64: !!(result && result.audio_base64),
-                    hasMetadata: !!(result && result.metadata),
-                    status: result?.status
+            if (data.status === 'success') {
+                console.log('🏁 TTS generation completed successfully:', {
+                    generation_id: data.generation_id,
+                    hasAudioBase64: !!data.audio_base64,
+                    firebase_urls: data.metadata?.firebase_urls
                 });
                 
-                setResult(result);
+                // Set the result for display
+                setResult({
+                    audio_base64: data.audio_base64,
+                    metadata: {
+                        voice_id: data.voice_id,
+                        voice_name: data.metadata?.voice_name || selectedVoice,
+                        text_input: text,
+                        generation_time: data.metadata?.generation_time || 0,
+                        tts_file: data.metadata?.tts_file || '',
+                        timestamp: data.metadata?.timestamp || new Date().toISOString(),
+                        firebase_url: data.metadata?.firebase_urls?.story_url
+                    }
+                });
                 
                 // Refresh TTS generations after successful generation
                 await loadTTSGenerations();
                 
             } else {
-                throw new Error('No job ID in response');
+                throw new Error('TTS generation failed');
             }
         } catch (err: unknown) {
             console.error('TTS API error:', err);
@@ -377,6 +399,66 @@ export default function TTSPage() {
                                     ))}
                                 </select>
                             )}
+                        </div>
+
+                        {/* Metadata Configuration for Organized Storage */}
+                        <div className="space-y-4">
+                            <h3 className="text-sm font-medium text-gray-900">Storage Configuration</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                    <label htmlFor="tts-language" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Language
+                                    </label>
+                                    <select
+                                        id="tts-language"
+                                        value={language}
+                                        onChange={(e) => setLanguage(e.target.value)}
+                                        className="form-input"
+                                    >
+                                        <option value="en">English</option>
+                                        <option value="da">Danish</option>
+                                        <option value="fr">French</option>
+                                        <option value="de">German</option>
+                                        <option value="es">Spanish</option>
+                                        <option value="tr">Turkish</option>
+                                        <option value="ar">Arabic</option>
+                                        <option value="zh">Chinese</option>
+                                        <option value="ja">Japanese</option>
+                                        <option value="ko">Korean</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label htmlFor="story-type" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Story Type
+                                    </label>
+                                    <select
+                                        id="story-type"
+                                        value={storyType}
+                                        onChange={(e) => setStoryType(e.target.value)}
+                                        className="form-input"
+                                    >
+                                        <option value="user">User Generated</option>
+                                        <option value="app">App Generated</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="flex items-center space-x-2">
+                                        <input
+                                            type="checkbox"
+                                            checked={isKidsVoice}
+                                            onChange={(e) => setIsKidsVoice(e.target.checked)}
+                                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700">Kids Voice</span>
+                                    </label>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        Use kids voice settings
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                                <strong>Storage Path:</strong> audio/stories/{language}/{storyType}/
+                            </div>
                         </div>
 
                         <div className="flex items-center space-x-2">

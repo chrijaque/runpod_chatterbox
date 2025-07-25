@@ -58,8 +58,7 @@ RUN echo "🔧 Installing other requirements..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
 # Copy files
-COPY rp_handler.py /
-
+COPY vc_handler.py /
 
 # Create required directories
 RUN mkdir -p /voice_profiles /voice_samples /temp_voice
@@ -71,6 +70,6 @@ RUN echo "🔍 Final verification after all installations..." && \
     pip show chatterbox-tts
 
 # Start the container with diagnostic
-CMD ["python3", "-u", "rp_handler.py"]
+CMD ["python3", "-u", "vc_handler.py"]
 
 
