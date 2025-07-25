@@ -30,6 +30,7 @@ class VoiceCloneRequest(BaseModel):
     voices: List[str] = Field(..., description="List of base64 encoded WAV audio blobs")
     visibility: str = Field(default="private", description="Voice visibility (private/public)")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    generated_sample: Optional[str] = Field(None, description="Pre-generated sample audio (base64) to avoid duplicate RunPod calls")
 
 class VoiceMetadata(BaseModel):
     """Voice metadata structure"""

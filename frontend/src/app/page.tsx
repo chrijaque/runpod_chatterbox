@@ -61,6 +61,12 @@ export default function Home() {
     }, [language, isKidsVoice]);
 
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
+        // This function saves the voice clone to Firebase via FastAPI
+        // OPTIMIZED Workflow: 
+        // 1. User records/uploads audio (stored in audioData state)
+        // 2. Frontend calls RunPod directly for immediate feedback
+        // 3. Frontend sends ORIGINAL recording + GENERATED SAMPLE to FastAPI
+        // 4. FastAPI uploads to Firebase WITHOUT calling RunPod again (optimization!)
         console.log('🔍 DEBUGGING: saveVoiceToAPI called with:', {
             resultType: typeof result,
             resultKeys: result ? Object.keys(result) : 'NO RESULT',
@@ -93,9 +99,11 @@ export default function Home() {
             });
             
             // Create the new organized request structure
+            // Send both original recording AND generated sample to avoid duplicate RunPod calls
             const cloneRequest = {
                 title: voiceName,
-                voices: [result.audio_base64], // Use the generated sample as the voice data
+                voices: [audioData], // Original recording for voice profile
+                generated_sample: result.audio_base64, // Pre-generated sample for Firebase
                 visibility: "private",
                 metadata: {
                     language: language, // Use state variable
@@ -109,7 +117,10 @@ export default function Home() {
                 title: cloneRequest.title,
                 voicesCount: cloneRequest.voices.length,
                 language: cloneRequest.metadata.language,
-                isKidsVoice: cloneRequest.metadata.isKidsVoice
+                isKidsVoice: cloneRequest.metadata.isKidsVoice,
+                hasGeneratedSample: !!result.audio_base64,
+                audioDataLength: audioData ? audioData.length : 0,
+                sampleLength: result.audio_base64 ? result.audio_base64.length : 0
             });
             
             // Send to FastAPI using the new organized clone endpoint

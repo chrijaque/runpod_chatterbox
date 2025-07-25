@@ -84,47 +84,76 @@ async def create_voice_clone(request: VoiceCloneRequest):
         # Use the first voice for RunPod processing (you could extend this to process multiple)
         primary_audio = request.voices[0]
         
-        # Prepare RunPod request
-        runpod_request = {
-            "name": request.title,
-            "audio_data": primary_audio,
-            "audio_format": "wav",
-            "responseFormat": "base64"
-        }
-        
-        # Submit to RunPod
-        job = runpod_client.create_voice_clone(
-            name=request.title,
-            audio_base64=primary_audio,
-            audio_format="wav",
-            response_format="base64"
-        )
-        if not job:
-            raise HTTPException(status_code=500, detail="Failed to submit voice clone job to RunPod")
-        
-        # Wait for completion
-        result = runpod_client.wait_for_job_completion(
-            endpoint_id=settings.RUNPOD_ENDPOINT_ID or "",
-            job_id=job['id']
-        )
-        if not result or result.get('status') != 'COMPLETED':
-            error_msg = result.get('error', 'Unknown error') if result else 'Job failed'
-            raise HTTPException(status_code=500, detail=f"Voice clone failed: {error_msg}")
-        
-        output = result.get('output', {})
-        if output.get('status') != 'success':
-            raise HTTPException(status_code=500, detail=f"Voice clone failed: {output.get('message', 'Unknown error')}")
-        
-        # Extract file information from RunPod response
-        sample_file = output.get('metadata', {}).get('sample_file')
-        profile_path = output.get('metadata', {}).get('profile_path')
-        
-        if not sample_file:
-            raise HTTPException(status_code=500, detail="Invalid response from RunPod")
-        
-        # Extract filename from RunPod path
-        sample_filename = Path(sample_file).name
-        profile_filename = f"{voice_id}.npy" if profile_path else None
+        # Check if we have a pre-generated sample to avoid duplicate RunPod calls
+        if request.generated_sample:
+            logger.info(f"🎯 Using pre-generated sample - skipping RunPod call for: {request.title}")
+            
+            # Use the pre-generated sample directly
+            output = {
+                "status": "success",
+                "audio_base64": request.generated_sample,
+                "profile_base64": None,  # We'll need to generate this separately if needed
+                "metadata": {
+                    "sample_file": f"/voice_samples/{voice_id}_sample_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav",
+                    "profile_path": f"/voice_profiles/{voice_id}.npy",
+                    "voice_id": voice_id,
+                    "voice_name": request.title,
+                    "generation_method": "pre_generated_sample"
+                }
+            }
+            
+            # Extract file information from our constructed response
+            sample_file = output.get('metadata', {}).get('sample_file')
+            profile_path = output.get('metadata', {}).get('profile_path')
+            
+            # Extract filename from path
+            sample_filename = Path(sample_file).name
+            profile_filename = f"{voice_id}.npy" if profile_path else None
+            
+        else:
+            logger.info(f"🔄 No pre-generated sample - calling RunPod for: {request.title}")
+            
+            # Prepare RunPod request
+            runpod_request = {
+                "name": request.title,
+                "audio_data": primary_audio,
+                "audio_format": "wav",
+                "responseFormat": "base64"
+            }
+            
+            # Submit to RunPod
+            job = runpod_client.create_voice_clone(
+                name=request.title,
+                audio_base64=primary_audio,
+                audio_format="wav",
+                response_format="base64"
+            )
+            if not job:
+                raise HTTPException(status_code=500, detail="Failed to submit voice clone job to RunPod")
+            
+            # Wait for completion
+            result = runpod_client.wait_for_job_completion(
+                endpoint_id=settings.RUNPOD_ENDPOINT_ID or "",
+                job_id=job['id']
+            )
+            if not result or result.get('status') != 'COMPLETED':
+                error_msg = result.get('error', 'Unknown error') if result else 'Job failed'
+                raise HTTPException(status_code=500, detail=f"Voice clone failed: {error_msg}")
+            
+            output = result.get('output', {})
+            if output.get('status') != 'success':
+                raise HTTPException(status_code=500, detail=f"Voice clone failed: {output.get('message', 'Unknown error')}")
+            
+            # Extract file information from RunPod response
+            sample_file = output.get('metadata', {}).get('sample_file')
+            profile_path = output.get('metadata', {}).get('profile_path')
+            
+            if not sample_file:
+                raise HTTPException(status_code=500, detail="Invalid response from RunPod")
+            
+            # Extract filename from RunPod path
+            sample_filename = Path(sample_file).name
+            profile_filename = f"{voice_id}.npy" if profile_path else None
         
         # Upload user recordings to Firebase
         for i, audio_data in enumerate(request.voices):
@@ -146,12 +175,31 @@ async def create_voice_clone(request: VoiceCloneRequest):
         
         # Upload voice sample to Firebase
         if sample_filename:
-            sample_url = firebase_service.upload_runpod_voice_sample(
-                voice_id, sample_filename, language, is_kids_voice
-            )
-            if sample_url:
-                firebase_urls['samples'].append(sample_url)
-                logger.info(f"✅ Voice sample uploaded to Firebase: {sample_url}")
+            if request.generated_sample:
+                # Upload pre-generated sample directly to Firebase
+                sample_filename_with_timestamp = f"{voice_id}_sample_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+                
+                # Build Firebase path based on language and kids voice
+                if is_kids_voice:
+                    firebase_path = f"audio/voices/{language}/kids/samples/{sample_filename_with_timestamp}"
+                else:
+                    firebase_path = f"audio/voices/{language}/samples/{sample_filename_with_timestamp}"
+                
+                # Upload base64 sample data directly to Firebase
+                sample_url = firebase_service.upload_base64_audio(request.generated_sample, firebase_path)
+                if sample_url:
+                    firebase_urls['samples'].append(sample_url)
+                    logger.info(f"✅ Pre-generated voice sample uploaded to Firebase: {sample_url}")
+                else:
+                    logger.error(f"❌ Failed to upload pre-generated voice sample to Firebase")
+            else:
+                # Upload sample from RunPod directory
+                sample_url = firebase_service.upload_runpod_voice_sample(
+                    voice_id, sample_filename, language, is_kids_voice
+                )
+                if sample_url:
+                    firebase_urls['samples'].append(sample_url)
+                    logger.info(f"✅ Voice sample uploaded to Firebase: {sample_url}")
         
         # Upload voice profile to Firebase
         if profile_filename and profile_path:
@@ -174,10 +222,13 @@ async def create_voice_clone(request: VoiceCloneRequest):
             else:
                 logger.warning(f"⚠️ No profile_base64 data in RunPod response")
         else:
-            logger.warning(f"⚠️ No profile_filename or profile_path available")
+            if request.generated_sample:
+                logger.info(f"ℹ️ No voice profile available when using pre-generated sample")
+            else:
+                logger.warning(f"⚠️ No profile_filename or profile_path available")
         
-        # Clean up RunPod files after successful upload
-        if sample_filename:
+        # Clean up RunPod files after successful upload (only if we called RunPod)
+        if sample_filename and not request.generated_sample:
             firebase_service.cleanup_runpod_file(f"/voice_samples/{sample_filename}")
         
         # Prepare response with organized Firebase URLs
@@ -197,7 +248,9 @@ async def create_voice_clone(request: VoiceCloneRequest):
                 "user_id": user_id,
                 "visibility": request.visibility,
                 "title": request.title,
-                "recordings_count": len(request.voices)
+                "recordings_count": len(request.voices),
+                "optimization_used": bool(request.generated_sample),
+                "runpod_calls_saved": 1 if request.generated_sample else 0
             }
         }
         

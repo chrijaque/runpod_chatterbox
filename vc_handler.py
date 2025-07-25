@@ -64,6 +64,11 @@ def initialize_model():
             logger.warning(f"⚠️ Could not verify repository: {e}")
         
         model = ChatterboxTTS.from_pretrained(device='cuda')
+        # Attach the T3 text‑to‑token encoder to S3Gen so that
+        # s3gen.inference_from_text() works
+        if hasattr(model, "s3gen") and hasattr(model, "t3"):
+            model.s3gen.text_encoder = model.t3
+            logger.info("📌 Attached text_encoder (model.t3) to model.s3gen")
         logger.info("✅ Model initialized on CUDA")
     except Exception as e:
         logger.error(f"Failed to initialize model: {str(e)}")
@@ -222,22 +227,39 @@ def handle_voice_clone_request(input, responseFormat):
             
             # Try different method names that might exist in the forked repository
             audio_tensor = None
-            
-            # Method 1: Try the new inference_from_text method (PREFERRED)
-            try:
-                audio_tensor = model.inference_from_text(template_message, ref_dict=profile)
-                generation_method = "profile_based_inference_from_text"
-                logger.info("✅ Used model.inference_from_text() - PROFILE-BASED GENERATION SUCCESS!")
-            except AttributeError:
-                logger.info("❌ model.inference_from_text() not available")
-            except RuntimeError as e:
-                if "no `text_encoder` attached" in str(e):
-                    logger.warning("⚠️ model.inference_from_text() requires text_encoder - trying other methods")
-                else:
-                    logger.warning(f"⚠️ model.inference_from_text() failed: {e}")
-            except Exception as e:
-                logger.warning(f"⚠️ model.inference_from_text() failed: {e}")
-            
+
+            # Method 1: S3Gen text‑level inference (preferred)
+            if audio_tensor is None:
+                try:
+                    # Build a proper ref_dict from the VoiceProfile
+                    ref_dict = {
+                        "embedding": profile.embedding.to(model.device),
+                        "prompt_token": profile.prompt_token.to(model.device)
+                            if getattr(profile, "prompt_token", None) is not None
+                            else torch.zeros(1, 1, dtype=torch.long, device=model.device),
+                        "prompt_token_len": profile.prompt_token_len.to(model.device)
+                            if getattr(profile, "prompt_token_len", None) is not None
+                            else torch.tensor([1], device=model.device),
+                        "prompt_feat": profile.prompt_feat.to(model.device)
+                            if getattr(profile, "prompt_feat", None) is not None
+                            else torch.zeros(1, 2, 80, device=model.device),
+                        "prompt_feat_len": getattr(profile, "prompt_feat_len", None),
+                    }
+
+                    audio_tensor = model.s3gen.inference_from_text(
+                        template_message,
+                        ref_dict=ref_dict,
+                        finalize=True,
+                    )
+                    generation_method = "s3gen_inference_from_text"
+                    logger.info("✅ Used model.s3gen.inference_from_text()")
+                except AttributeError:
+                    logger.info("❌ model.s3gen.inference_from_text() not available")
+                except RuntimeError as e:
+                    logger.warning(f"⚠️ inference_from_text() runtime error: {e}")
+                except Exception as e:
+                    logger.warning(f"⚠️ inference_from_text() failed: {e}")
+
             # Method 2: Try inference with ref_dict (if inference_from_text not available)
             if audio_tensor is None:
                 try:
@@ -255,7 +277,7 @@ def handle_voice_clone_request(input, responseFormat):
                     logger.info("❌ model.inference() not available")
                 except Exception as e:
                     logger.warning(f"⚠️ model.inference() failed: {e}")
-            
+
             # Method 3: Try generate with profile parameter
             if audio_tensor is None:
                 try:
@@ -266,7 +288,7 @@ def handle_voice_clone_request(input, responseFormat):
                     logger.info("❌ model.generate() doesn't accept voice_profile")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with voice_profile failed: {e}")
-            
+
             # Method 4: Try generate with embedding parameter
             if audio_tensor is None:
                 try:
@@ -277,7 +299,7 @@ def handle_voice_clone_request(input, responseFormat):
                     logger.info("❌ model.generate() doesn't accept embedding")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with embedding failed: {e}")
-            
+
             # Method 5: Try generate with ref_dict parameter
             if audio_tensor is None:
                 try:
@@ -295,7 +317,7 @@ def handle_voice_clone_request(input, responseFormat):
                     logger.info("❌ model.generate() doesn't accept ref_dict")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with ref_dict failed: {e}")
-            
+
             # Fallback: Use original audio file method
             if audio_tensor is None:
                 logger.warning("⚠️ Using fallback generation method (no profile-based method found)")
