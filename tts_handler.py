@@ -57,7 +57,7 @@ model = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
-TTS_GENERATED_DIR = Path("/tts_generated")
+TTS_GENERATED_DIR = Path("/voice_samples")  # Use same directory as voice cloning for persistence
 TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
@@ -523,7 +523,7 @@ def handler(event, responseFormat="base64"):
         
         # Create output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+        tts_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix
         
         try:
             logger.info("🔄 Starting TTS processing...")
@@ -576,7 +576,7 @@ def handler(event, responseFormat="base64"):
             logger.info(f"🔍 DEBUG: timestamp: {timestamp}")
             
             # Save directly to local directory (same as voice cloning)
-            local_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+            local_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix to distinguish from voice cloning
             logger.info(f"🔍 DEBUG: Full file path: {local_filename.absolute()}")
             logger.info(f"🔍 DEBUG: Parent directory exists: {local_filename.parent.exists()}")
             
@@ -743,7 +743,7 @@ def list_available_files():
     
     try:
         if TTS_GENERATED_DIR.exists():
-            files = list(TTS_GENERATED_DIR.glob("*.wav"))
+            files = list(TTS_GENERATED_DIR.glob("TTS_*.wav"))  # Look for TTS_ prefixed files
             logger.info(f"📂 Found {len(files)} TTS files:")
             
             for file in files:
