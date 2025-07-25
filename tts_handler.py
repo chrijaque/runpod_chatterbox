@@ -66,7 +66,7 @@ logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
-# Chunking and processing class
+# Chunking and processing class right
 class TTSProcessor:
     def __init__(self, model: ChatterboxTTS, voice_profile_path: str, pause_ms: int = 100, max_chars: int = 500):
         """
