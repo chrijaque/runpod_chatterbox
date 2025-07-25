@@ -155,12 +155,26 @@ async def create_voice_clone(request: VoiceCloneRequest):
         
         # Upload voice profile to Firebase
         if profile_filename and profile_path:
-            profile_url = firebase_service.upload_voice_profile(
-                voice_id, profile_filename, language, is_kids_voice
-            )
-            if profile_url:
-                firebase_urls['profiles'].append(profile_url)
-                logger.info(f"✅ Voice profile uploaded to Firebase: {profile_url}")
+            # Use the profile_base64 data from RunPod response instead of file access
+            profile_base64 = output.get('profile_base64')
+            if profile_base64:
+                # Build Firebase path based on language and kids voice
+                if is_kids_voice:
+                    firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}_{profile_filename}"
+                else:
+                    firebase_path = f"audio/voices/{language}/profiles/{voice_id}_{profile_filename}"
+                
+                # Upload base64 profile data directly to Firebase
+                profile_url = firebase_service.upload_base64_profile(profile_base64, firebase_path)
+                if profile_url:
+                    firebase_urls['profiles'].append(profile_url)
+                    logger.info(f"✅ Voice profile uploaded to Firebase: {profile_url}")
+                else:
+                    logger.error(f"❌ Failed to upload voice profile to Firebase")
+            else:
+                logger.warning(f"⚠️ No profile_base64 data in RunPod response")
+        else:
+            logger.warning(f"⚠️ No profile_filename or profile_path available")
         
         # Clean up RunPod files after successful upload
         if sample_filename:

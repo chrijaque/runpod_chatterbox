@@ -216,6 +216,52 @@ class FirebaseService:
         
         return self.upload_from_runpod_directory(runpod_path, firebase_path)
 
+    def upload_base64_profile(self, profile_base64: str, firebase_path: str) -> Optional[str]:
+        """
+        Upload base64 encoded profile data directly to Firebase
+        
+        :param profile_base64: Base64 encoded profile data
+        :param firebase_path: Destination path in Firebase
+        :return: Public URL or None if failed
+        """
+        if not self.bucket:
+            logger.error("Firebase not initialized")
+            return None
+        
+        try:
+            import base64
+            import tempfile
+            from pathlib import Path
+            
+            # Decode base64 data
+            profile_data = base64.b64decode(profile_base64)
+            
+            # Create temporary file with .npy extension
+            with tempfile.NamedTemporaryFile(suffix='.npy', delete=False) as temp_file:
+                temp_file.write(profile_data)
+                temp_path = Path(temp_file.name)
+            
+            try:
+                # Upload to Firebase
+                blob = self.bucket.blob(firebase_path)
+                blob.upload_from_filename(str(temp_path))
+                blob.make_public()
+                
+                public_url = blob.public_url
+                logger.info(f"✅ Base64 profile uploaded to Firebase: {public_url}")
+                return public_url
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to clean up temp file: {e}")
+            
+        except Exception as e:
+            logger.error(f"❌ Firebase base64 profile upload failed: {e}")
+            return None
+
     def upload_voice_profile(self, voice_id: str, profile_filename: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
         """
         Upload voice profile from RunPod to Firebase
