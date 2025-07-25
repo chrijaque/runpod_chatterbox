@@ -15,6 +15,15 @@ from typing import List, Dict
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Import the handler from the forked repository
+try:
+    from chatterbox.handlers.vc import VoiceCloneHandler
+    FORKED_HANDLER_AVAILABLE = True
+    logger.info("✅ Successfully imported VoiceCloneHandler from forked repository")
+except ImportError as e:
+    FORKED_HANDLER_AVAILABLE = False
+    logger.warning(f"⚠️ Could not import VoiceCloneHandler from forked repository: {e}")
+
 # Try to import optional dependencies
 try:
     import nltk
@@ -54,6 +63,7 @@ except ImportError:
     logger.warning("⚠️ pydub not available - will use torchaudio for audio processing")
 
 model = None
+forked_handler = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
@@ -68,7 +78,7 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 # Chunking and processing class right
 class TTSProcessor:
-    def __init__(self, model: ChatterboxTTS, voice_profile_path: str, pause_ms: int = 100, max_chars: int = 500):
+    def __init__(self, model: ChatterboxTTS, voice_profile_path: str, pause_ms: int = 100, max_chars: int = 500, forked_handler=None):
         """
         Initializes the TTSProcessor with a TTS model and a voice profile.
 
@@ -76,14 +86,21 @@ class TTSProcessor:
         :param voice_profile_path: Path to the voice profile (.npy)
         :param pause_ms: Milliseconds of silence between chunks
         :param max_chars: Maximum number of characters per chunk
+        :param forked_handler: Optional VoiceCloneHandler from forked repository
         """
         self.model = model
+        self.forked_handler = forked_handler
         self.pause_ms = pause_ms
         self.max_chars = max_chars
         
-        # Load the voice profile as ref_dict for the new inference_from_text method
+        # Load the voice profile using the best available method
         try:
-            if hasattr(model, 'load_voice_profile'):
+            if forked_handler is not None and hasattr(forked_handler, 'load_voice_profile'):
+                # Use forked repository handler
+                self.voice_profile = forked_handler.load_voice_profile(voice_profile_path)
+                logger.info(f"✅ Voice profile loaded using forked handler from: {voice_profile_path}")
+            elif hasattr(model, 'load_voice_profile'):
+                # Use enhanced method from forked repository
                 self.voice_profile = model.load_voice_profile(voice_profile_path)
                 logger.info(f"✅ Voice profile loaded as ref_dict from: {voice_profile_path}")
             else:
@@ -172,8 +189,7 @@ class TTSProcessor:
         """
         wav_paths = []
         
-        # Voice profile is already loaded as ref_dict in __init__
-        # No need to call prepare_conditionals_with_voice_profile anymore
+        # Voice profile is already loaded in __init__
         
         for i, chunk in enumerate(chunks):
             logger.info(f"🔄 Generating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
@@ -189,14 +205,28 @@ class TTSProcessor:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
-                    # Generate audio tensor using the new profile-based method
-                    try:
-                        # Try the new inference_from_text method first (profile-based)
-                        audio_tensor = self.model.inference_from_text(chunk, ref_dict=self.voice_profile)
-                        logger.info(f"✅ Chunk {i+1} generated using profile-based inference_from_text")
-                    except (AttributeError, RuntimeError) as e:
-                        # Fallback to the old generate method
-                        logger.info(f"🔄 Falling back to generate method for chunk {i+1}: {e}")
+                    # Generate audio tensor using the best available method
+                    audio_tensor = None
+                    
+                    # Method 1: Try forked repository handler first
+                    if self.forked_handler is not None and hasattr(self.forked_handler, 'generate_voice_clone'):
+                        try:
+                            audio_tensor = self.forked_handler.generate_voice_clone(chunk, self.voice_profile)
+                            logger.info(f"✅ Chunk {i+1} generated using forked handler")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Forked handler failed for chunk {i+1}: {e}")
+                    
+                    # Method 2: Try the new inference_from_text method (profile-based)
+                    if audio_tensor is None:
+                        try:
+                            audio_tensor = self.model.inference_from_text(chunk, ref_dict=self.voice_profile)
+                            logger.info(f"✅ Chunk {i+1} generated using profile-based inference_from_text")
+                        except (AttributeError, RuntimeError) as e:
+                            logger.info(f"🔄 inference_from_text failed for chunk {i+1}: {e}")
+                    
+                    # Method 3: Fallback to the old generate method
+                    if audio_tensor is None:
+                        logger.info(f"🔄 Falling back to generate method for chunk {i+1}")
                         audio_tensor = self.model.generate(chunk, temperature=0.7)
                         logger.info(f"✅ Chunk {i+1} generated using fallback generate method")
                     
@@ -319,29 +349,20 @@ class TTSProcessor:
         return audio_tensor, sample_rate, metadata
 
 def initialize_model():
-    global model
-    
-    logger.info("🔧 ===== MODEL INITIALIZATION =====")
+    global model, forked_handler
     
     if model is not None:
-        logger.info("✅ Model already initialized")
-        logger.info(f"✅ Model type: {type(model)}")
+        logger.info("Model already initialized")
         return model
     
-    logger.info("🔄 Initializing ChatterboxTTS model for TTS generation...")
+    logger.info("Initializing S3Token2Wav model...")
     
     # Check CUDA availability
-    logger.info("🔍 Checking CUDA availability...")
-    cuda_available = torch.cuda.is_available()
-    logger.info(f"🔍 CUDA available: {cuda_available}")
-    
-    if not cuda_available:
-        logger.error("❌ CUDA is required but not available")
+    if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required but not available")
     
-    logger.info(f"✅ CUDA device count: {torch.cuda.device_count()}")
-    logger.info(f"✅ CUDA device name: {torch.cuda.get_device_name(0)}")
-    logger.info(f"✅ CUDA device capability: {torch.cuda.get_device_capability(0)}")
+    logger.info(f"CUDA available: {torch.cuda.is_available()}")
+    logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
         # Debug: Check which chatterbox repository is being used
@@ -408,6 +429,23 @@ def initialize_model():
         logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
 
+        # Initialize the forked repository handler if available
+        if FORKED_HANDLER_AVAILABLE:
+            logger.info("🔧 Initializing VoiceCloneHandler from forked repository...")
+            try:
+                forked_handler = VoiceCloneHandler(model)
+                logger.info("✅ VoiceCloneHandler initialized successfully")
+                
+                # Log handler capabilities
+                handler_methods = [method for method in dir(forked_handler) if not method.startswith('_')]
+                logger.info(f"📋 Available handler methods: {handler_methods}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize VoiceCloneHandler: {e}")
+                forked_handler = None
+        else:
+            logger.warning("⚠️ VoiceCloneHandler not available - will use fallback methods")
+
         # Additional model introspection logs
         import inspect
         logger.info(f"📦 Model class: {model.__class__}")
@@ -462,19 +500,15 @@ def initialize_model():
             logger.warning("⚠️ Model does not have s3gen attribute")
         
         logger.info("🔍 ===== END S3GEN VERIFICATION =====")
-
-        # Check model capabilities
-        logger.info("🔍 Checking model capabilities:")
-        logger.info(f"  - has load_voice_profile: {hasattr(model, 'load_voice_profile')}")
-        logger.info(f"  - has generate: {hasattr(model, 'generate')}")
-        logger.info(f"  - has save_voice_profile: {hasattr(model, 'save_voice_profile')}")
         
+        # Attach the T3 text‑to‑token encoder to S3Gen so that
+        # s3gen.inference_from_text() works
+        if hasattr(model, "s3gen") and hasattr(model, "t3"):
+            model.s3gen.text_encoder = model.t3
+            logger.info("📌 Attached text_encoder (model.t3) to model.s3gen")
+        logger.info("✅ Model initialized on CUDA")
     except Exception as e:
-        logger.error("❌ Failed to initialize model")
-        logger.error(f"❌ Error type: {type(e)}")
-        logger.error(f"❌ Error message: {str(e)}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        logger.error(f"Failed to initialize model: {str(e)}")
         raise
 
 def list_files_for_debug():
@@ -489,7 +523,7 @@ def list_files_for_debug():
 
 def handler(event, responseFormat="base64"):
     """Handle TTS generation requests using saved voice embeddings"""
-    global model
+    global model, forked_handler
     
     logger.info("🚀 ===== TTS HANDLER STARTED =====")
     logger.info(f"📥 Received event: {type(event)}")
@@ -540,6 +574,7 @@ def handler(event, responseFormat="base64"):
         logger.info(f"✅ Model is initialized: {type(model)}")
         logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
         logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
+        logger.info(f"✅ Forked handler available: {forked_handler is not None}")
         
         # Decode the voice profile data
         logger.info("🔄 Decoding voice profile data...")
@@ -568,21 +603,27 @@ def handler(event, responseFormat="base64"):
         logger.info(f"  - has load_voice_profile: {hasattr(model, 'load_voice_profile')}")
         logger.info(f"  - has generate: {hasattr(model, 'generate')}")
         logger.info(f"  - has save_voice_profile: {hasattr(model, 'save_voice_profile')}")
+        logger.info(f"  - forked handler available: {forked_handler is not None}")
         
-        # Load the profile using the forked repository method
-        if hasattr(model, 'load_voice_profile'):
-            logger.info("🔄 Loading profile using load_voice_profile method...")
+        # Load the profile using the best available method
+        if forked_handler is not None and hasattr(forked_handler, 'load_voice_profile'):
+            logger.info("🔄 Loading profile using forked handler load_voice_profile method...")
+            profile = forked_handler.load_voice_profile(str(temp_profile_path))
+            logger.info(f"✅ Voice profile loaded using forked handler")
+        elif hasattr(model, 'load_voice_profile'):
+            logger.info("🔄 Loading profile using model load_voice_profile method...")
             profile = model.load_voice_profile(str(temp_profile_path))
             logger.info(f"✅ Voice profile loaded successfully")
-            logger.info(f"✅ Profile type: {type(profile)}")
-            if hasattr(profile, 'shape'):
-                logger.info(f"✅ Profile shape: {profile.shape}")
-            if hasattr(profile, 'dtype'):
-                logger.info(f"✅ Profile dtype: {profile.dtype}")
         else:
             logger.error("❌ Model doesn't have load_voice_profile method")
             logger.error("❌ This suggests the forked repository features are not available")
             return {"status": "error", "message": "Voice profile support not available"}
+        
+        logger.info(f"✅ Profile type: {type(profile)}")
+        if hasattr(profile, 'shape'):
+            logger.info(f"✅ Profile shape: {profile.shape}")
+        if hasattr(profile, 'dtype'):
+            logger.info(f"✅ Profile dtype: {profile.dtype}")
         
         # Generate speech using the profile
         logger.info(f"🎵 TTS: {voice_id} | Text length: {len(text)}")
@@ -616,7 +657,8 @@ def handler(event, responseFormat="base64"):
                 model=model,
                 voice_profile_path=str(temp_profile_path),
                 pause_ms=150,  # Slightly longer pause for better flow
-                max_chars=600   # Conservative chunk size to avoid CUDA errors
+                max_chars=600,   # Conservative chunk size to avoid CUDA errors
+                forked_handler=forked_handler  # Pass the forked handler
             )
             logger.info(f"🔍 DEBUG: TTSProcessor initialized successfully")
             
@@ -648,7 +690,6 @@ def handler(event, responseFormat="base64"):
             logger.error(f"❌ Failed to generate TTS after {generation_time:.2f}s")
             logger.error(f"❌ Error type: {type(e)}")
             logger.error(f"❌ Error message: {str(e)}")
-            logger.error(f"❌ Error details: {e}")
             
             # Try with even smaller chunks if it's a CUDA error
             if "CUDA error" in str(e) and len(text) > 300:

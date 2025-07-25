@@ -28,12 +28,77 @@ class FirebaseService:
                 })
                 logger.info("✅ Firebase initialized successfully")
             
-            self.bucket = storage.bucket()
-            logger.info(f"✅ Connected to Firebase bucket: {self.bucket_name}")
+            # Try to get the bucket
+            try:
+                self.bucket = storage.bucket()
+                
+                # Test if the bucket actually exists by trying to list blobs
+                try:
+                    # This will fail if the bucket doesn't exist
+                    list(self.bucket.list_blobs(max_results=1))
+                    logger.info(f"✅ Connected to Firebase bucket: {self.bucket_name}")
+                except Exception as list_error:
+                    logger.warning(f"⚠️ Bucket exists but not accessible: {list_error}")
+                    logger.info(f"🔧 Attempting to create bucket: {self.bucket_name}")
+                    
+                    # Try to create the bucket
+                    if self._create_bucket():
+                        self.bucket = storage.bucket()
+                        logger.info(f"✅ Successfully created and connected to bucket: {self.bucket_name}")
+                    else:
+                        logger.error(f"❌ Failed to create bucket: {self.bucket_name}")
+                        self.bucket = None
+                        
+            except Exception as bucket_error:
+                logger.warning(f"⚠️ Bucket not found: {bucket_error}")
+                logger.info(f"🔧 Attempting to create bucket: {self.bucket_name}")
+                
+                # Try to create the bucket
+                if self._create_bucket():
+                    self.bucket = storage.bucket()
+                    logger.info(f"✅ Successfully created and connected to bucket: {self.bucket_name}")
+                else:
+                    logger.error(f"❌ Failed to create bucket: {self.bucket_name}")
+                    self.bucket = None
             
         except Exception as e:
             logger.error(f"❌ Firebase initialization failed: {e}")
             self.bucket = None
+    
+    def _create_bucket(self) -> bool:
+        """Create Firebase Storage bucket if it doesn't exist"""
+        try:
+            from google.cloud import storage as gcs_storage
+            
+            # Create a client using the same credentials
+            client = gcs_storage.Client.from_service_account_json(self.credentials_file)
+            
+            # Extract project ID from bucket name
+            # Firebase bucket names are typically: project-id.appspot.com
+            # But for creation, we need just the project ID
+            if '.appspot.com' in self.bucket_name:
+                project_id = self.bucket_name.replace('.appspot.com', '')
+            else:
+                project_id = self.bucket_name
+            
+            logger.info(f"🔧 Creating bucket with project ID: {project_id}")
+            logger.info(f"🔧 Full bucket name will be: {self.bucket_name}")
+            
+            # Create the bucket
+            bucket = client.create_bucket(self.bucket_name, project=project_id)
+            logger.info(f"✅ Successfully created bucket: {self.bucket_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create bucket {self.bucket_name}: {e}")
+            logger.error(f"❌ Error type: {type(e).__name__}")
+            
+            # Check if bucket already exists
+            if "already exists" in str(e).lower():
+                logger.info(f"ℹ️ Bucket {self.bucket_name} already exists")
+                return True
+            
+            return False
     
     def upload_file(self, file_path: Path, destination_blob_name: str) -> Optional[str]:
         """
@@ -161,6 +226,9 @@ class FirebaseService:
             return None
         
         try:
+            # Ensure the directory structure exists
+            self._ensure_directory_structure(firebase_path)
+            
             blob = self.bucket.blob(firebase_path)
             blob.upload_from_filename(str(runpod_path))
             blob.make_public()
@@ -299,6 +367,9 @@ class FirebaseService:
             import tempfile
             from pathlib import Path
             
+            # Ensure the directory structure exists
+            self._ensure_directory_structure(firebase_path)
+            
             # Decode base64 data
             audio_data = base64.b64decode(audio_base64)
             
@@ -327,6 +398,40 @@ class FirebaseService:
         except Exception as e:
             logger.error(f"❌ Firebase base64 upload failed: {e}")
             return None
+    
+    def _ensure_directory_structure(self, firebase_path: str):
+        """
+        Ensure the directory structure exists in Firebase Storage
+        Creates placeholder files to establish the directory structure
+        
+        :param firebase_path: Full path to the file (e.g., 'audio/voices/en/samples/file.wav')
+        """
+        try:
+            # Extract directory path
+            path_parts = firebase_path.split('/')
+            if len(path_parts) <= 1:
+                return  # No directory to create
+            
+            # Create each level of the directory structure
+            for i in range(1, len(path_parts)):
+                directory_path = '/'.join(path_parts[:i])
+                placeholder_path = f"{directory_path}/.placeholder"
+                
+                # Check if placeholder already exists
+                placeholder_blob = self.bucket.blob(placeholder_path)
+                if not placeholder_blob.exists():
+                    # Create placeholder file
+                    placeholder_blob.upload_from_string(
+                        f"Directory placeholder for {directory_path}", 
+                        content_type="text/plain"
+                    )
+                    logger.info(f"📁 Created directory: {directory_path}")
+                else:
+                    logger.debug(f"📁 Directory already exists: {directory_path}")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Could not ensure directory structure for {firebase_path}: {e}")
+            # Don't fail the upload if directory creation fails
 
     def upload_user_recording(self, voice_id: str, recording_filename: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
         """

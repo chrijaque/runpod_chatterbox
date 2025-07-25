@@ -9,7 +9,7 @@ load_dotenv()
 class Settings:
     # Firebase Configuration
     FIREBASE_CREDENTIALS_FILE: str = "firebase_creds.json"
-    FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET", "godnathistorie-a25fa.appspot.com")
+    FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET", "godnathistorie-a25fa.firebasestorage.app")
     
     # API Configuration
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
@@ -82,4 +82,19 @@ class Settings:
         
         return missing
 
-settings = Settings() 
+settings = Settings()
+
+# Debug: Log configuration on startup
+import logging
+logger = logging.getLogger(__name__)
+
+logger.info("🔍 ===== CONFIGURATION DEBUG =====")
+logger.info(f"📋 RUNPOD_API_KEY: {'SET' if settings.RUNPOD_API_KEY else 'NOT SET'}")
+logger.info(f"📋 RUNPOD_ENDPOINT_ID: {settings.RUNPOD_ENDPOINT_ID}")
+logger.info(f"📋 TTS_ENDPOINT_ID: {settings.TTS_ENDPOINT_ID}")
+logger.info(f"📋 FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
+logger.info(f"📋 FIREBASE_CREDENTIALS_FILE: {settings.FIREBASE_CREDENTIALS_FILE}")
+logger.info(f"📋 FIREBASE_CREDENTIALS_EXISTS: {Path(settings.FIREBASE_CREDENTIALS_FILE).exists()}")
+logger.info(f"📋 RunPod config valid: {settings.validate_runpod_config()}")
+logger.info(f"📋 Firebase config valid: {settings.validate_firebase_config()}")
+logger.info("🔍 ===== END CONFIGURATION DEBUG =====") 

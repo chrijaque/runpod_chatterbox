@@ -26,11 +26,21 @@ firebase_service = FirebaseService(
     bucket_name=settings.get_firebase_bucket_name()
 )
 
+logger.info("🔍 ===== RUNPOD CLIENT CREATION DEBUG =====")
+logger.info(f"📞 Creating RunPod client with:")
+logger.info(f"   API Key: {'SET' if settings.RUNPOD_API_KEY else 'NOT SET'}")
+logger.info(f"   Voice Endpoint ID: {settings.RUNPOD_ENDPOINT_ID}")
+logger.info(f"   TTS Endpoint ID: {settings.TTS_ENDPOINT_ID}")
+
 runpod_client = RunPodClient(
     api_key=settings.RUNPOD_API_KEY or "",
     voice_endpoint_id=settings.RUNPOD_ENDPOINT_ID or "",
     tts_endpoint_id=settings.TTS_ENDPOINT_ID or ""
 )
+
+logger.info(f"📞 RunPod client created: {type(runpod_client)}")
+logger.info(f"📞 RunPod client configured: {runpod_client.is_configured()}")
+logger.info("🔍 ===== END RUNPOD CLIENT CREATION DEBUG =====")
 
 @router.get("/", response_model=VoiceLibraryResponse)
 async def list_voices():
@@ -54,6 +64,13 @@ async def list_voices():
 async def create_voice_clone(request: VoiceCloneRequest):
     """Create a new voice clone using RunPod with organized Firebase storage"""
     try:
+        logger.info("🔍 ===== VOICE CLONE REQUEST DEBUG =====")
+        logger.info(f"📥 Request type: {type(request)}")
+        logger.info(f"📥 Request title: {request.title}")
+        logger.info(f"📥 Request voices count: {len(request.voices) if request.voices else 0}")
+        logger.info(f"📥 Request generated_sample: {bool(request.generated_sample)}")
+        logger.info(f"📥 Request metadata: {request.metadata}")
+        
         if not request.voices or len(request.voices) == 0:
             raise HTTPException(status_code=400, detail="At least one voice audio is required")
         
@@ -113,6 +130,22 @@ async def create_voice_clone(request: VoiceCloneRequest):
         else:
             logger.info(f"🔄 No pre-generated sample - calling RunPod for: {request.title}")
             
+            # Debug RunPod client call
+            logger.info("🔍 ===== RUNPOD CLIENT DEBUG =====")
+            logger.info(f"📞 RunPod client type: {type(runpod_client)}")
+            logger.info(f"📞 RunPod client methods: {[m for m in dir(runpod_client) if not m.startswith('_')]}")
+            logger.info(f"📞 RunPod client configured: {runpod_client.is_configured()}")
+            
+            # Check if create_voice_clone method exists
+            if hasattr(runpod_client, 'create_voice_clone'):
+                logger.info("✅ create_voice_clone method exists")
+                import inspect
+                sig = inspect.signature(runpod_client.create_voice_clone)
+                logger.info(f"📞 Method signature: {sig}")
+            else:
+                logger.error("❌ create_voice_clone method does NOT exist")
+                raise HTTPException(status_code=500, detail="RunPod client missing create_voice_clone method")
+            
             # Prepare RunPod request
             runpod_request = {
                 "name": request.title,
@@ -121,13 +154,27 @@ async def create_voice_clone(request: VoiceCloneRequest):
                 "responseFormat": "base64"
             }
             
+            logger.info(f"📤 Calling RunPod with parameters:")
+            logger.info(f"   name: {request.title}")
+            logger.info(f"   audio_base64 length: {len(primary_audio) if primary_audio else 0}")
+            logger.info(f"   audio_format: wav")
+            logger.info(f"   response_format: base64")
+            
             # Submit to RunPod
-            job = runpod_client.create_voice_clone(
-                name=request.title,
-                audio_base64=primary_audio,
-                audio_format="wav",
-                response_format="base64"
-            )
+            try:
+                job = runpod_client.create_voice_clone(
+                    name=request.title,
+                    audio_base64=primary_audio,
+                    audio_format="wav",
+                    response_format="base64"
+                )
+                logger.info(f"✅ RunPod call successful, job: {job}")
+            except Exception as e:
+                logger.error(f"❌ RunPod call failed: {e}")
+                logger.error(f"❌ Exception type: {type(e).__name__}")
+                import traceback
+                logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                raise HTTPException(status_code=500, detail=f"RunPod call failed: {str(e)}")
             if not job:
                 raise HTTPException(status_code=500, detail="Failed to submit voice clone job to RunPod")
             

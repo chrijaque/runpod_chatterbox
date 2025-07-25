@@ -10,6 +10,12 @@ class RunPodClient:
     """RunPod API client for voice cloning and TTS operations"""
     
     def __init__(self, api_key: str, voice_endpoint_id: str, tts_endpoint_id: str):
+        logger.info("🔍 ===== RUNPOD CLIENT INITIALIZATION =====")
+        logger.info(f"📞 API Key provided: {bool(api_key)}")
+        logger.info(f"📞 API Key length: {len(api_key) if api_key else 0}")
+        logger.info(f"📞 Voice Endpoint ID: {voice_endpoint_id}")
+        logger.info(f"📞 TTS Endpoint ID: {tts_endpoint_id}")
+        
         self.api_key = api_key
         self.voice_endpoint_id = voice_endpoint_id
         self.tts_endpoint_id = tts_endpoint_id
@@ -18,6 +24,10 @@ class RunPodClient:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
+        
+        logger.info(f"📞 Base URL: {self.base_url}")
+        logger.info(f"📞 Headers configured: {bool(self.headers)}")
+        logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
     def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64") -> Dict[str, Any]:
         """
@@ -30,6 +40,14 @@ class RunPodClient:
         :return: RunPod response
         """
         try:
+            logger.info("🔍 ===== RUNPOD CLIENT INTERNAL DEBUG =====")
+            logger.info(f"📞 Method called with parameters:")
+            logger.info(f"   name: {name}")
+            logger.info(f"   audio_base64 type: {type(audio_base64)}")
+            logger.info(f"   audio_base64 length: {len(audio_base64) if audio_base64 else 0}")
+            logger.info(f"   audio_format: {audio_format}")
+            logger.info(f"   response_format: {response_format}")
+            
             url = f"{self.base_url}/{self.voice_endpoint_id}/run"
             
             payload = {
@@ -43,8 +61,13 @@ class RunPodClient:
             
             logger.info(f"🚀 Creating voice clone for: {name}")
             logger.info(f"📡 Calling RunPod API: {url}")
+            logger.info(f"📡 Endpoint ID: {self.voice_endpoint_id}")
+            logger.info(f"📡 Headers: {self.headers}")
             
             response = requests.post(url, json=payload, headers=self.headers)
+            
+            logger.info(f"📡 Response status: {response.status_code}")
+            logger.info(f"📡 Response headers: {dict(response.headers)}")
             
             if response.status_code != 200:
                 logger.error(f"❌ RunPod voice clone API error: {response.status_code} - {response.text}")
@@ -52,11 +75,15 @@ class RunPodClient:
             
             result = response.json()
             logger.info(f"✅ Voice clone created successfully")
+            logger.info(f"✅ Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
             
             return result
             
         except Exception as e:
             logger.error(f"❌ Error creating voice clone: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
             raise
     
     def generate_tts(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64") -> Dict[str, Any]:

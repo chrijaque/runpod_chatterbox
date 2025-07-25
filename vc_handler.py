@@ -15,7 +15,17 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Import the handler from the forked repository
+try:
+    from chatterbox.handlers.vc import VoiceCloneHandler
+    FORKED_HANDLER_AVAILABLE = True
+    logger.info("✅ Successfully imported VoiceCloneHandler from forked repository")
+except ImportError as e:
+    FORKED_HANDLER_AVAILABLE = False
+    logger.warning(f"⚠️ Could not import VoiceCloneHandler from forked repository: {e}")
+
 model = None
+forked_handler = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
@@ -33,7 +43,7 @@ logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 def initialize_model():
-    global model
+    global model, forked_handler
     
     if model is not None:
         logger.info("Model already initialized")
@@ -106,6 +116,23 @@ def initialize_model():
         logger.info("🔍 ===== END REPOSITORY VERIFICATION =====")
         
         model = ChatterboxTTS.from_pretrained(device='cuda')
+        
+        # Initialize the forked repository handler if available
+        if FORKED_HANDLER_AVAILABLE:
+            logger.info("🔧 Initializing VoiceCloneHandler from forked repository...")
+            try:
+                forked_handler = VoiceCloneHandler(model)
+                logger.info("✅ VoiceCloneHandler initialized successfully")
+                
+                # Log handler capabilities
+                handler_methods = [method for method in dir(forked_handler) if not method.startswith('_')]
+                logger.info(f"📋 Available handler methods: {handler_methods}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize VoiceCloneHandler: {e}")
+                forked_handler = None
+        else:
+            logger.warning("⚠️ VoiceCloneHandler not available - will use fallback methods")
         
         # Verify s3gen module source
         logger.info("🔍 ===== S3GEN VERIFICATION =====")
@@ -180,7 +207,7 @@ def generate_template_message(name):
 
 def save_voice_profile(temp_voice_file, voice_id):
     """Save voice profile directly to target location"""
-    global model
+    global model, forked_handler
     
     # Get final profile path
     profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
@@ -192,7 +219,12 @@ def save_voice_profile(temp_voice_file, voice_id):
         return profile_path
     
     try:
-        if hasattr(model, 'save_voice_profile'):
+        # Use forked repository handler if available
+        if forked_handler is not None and hasattr(forked_handler, 'save_voice_profile'):
+            logger.info(f"📁 Using forked repository VoiceCloneHandler.save_voice_profile method")
+            forked_handler.save_voice_profile(str(temp_voice_file), str(profile_path))
+            logger.info(f"✅ Voice profile saved using forked handler to: {profile_path}")
+        elif hasattr(model, 'save_voice_profile'):
             logger.info(f"📁 Using enhanced save_voice_profile method")
             
             # Pass the audio file path directly (not the loaded tensor)
@@ -201,20 +233,19 @@ def save_voice_profile(temp_voice_file, voice_id):
             # Save profile using file path
             model.save_voice_profile(str(temp_voice_file), str(profile_path))
             logger.info(f"✅ Voice profile saved directly to: {profile_path}")
-            
-            # Verify the file was created
-            if profile_path.exists():
-                file_size = profile_path.stat().st_size
-                logger.info(f"✅ Verified profile file: {profile_path} ({file_size} bytes)")
-            else:
-                logger.error(f"❌ Profile file not created: {profile_path}")
-                
         else:
             # Fallback: create a placeholder 
             logger.warning(f"Enhanced profile saving not available, creating placeholder for {voice_id}")
             with open(profile_path, 'w') as f:
                 f.write(f"voice_id: {voice_id}")
             logger.info(f"📝 Created placeholder: {profile_path}")
+            
+        # Verify the file was created
+        if profile_path.exists():
+            file_size = profile_path.stat().st_size
+            logger.info(f"✅ Verified profile file: {profile_path} ({file_size} bytes)")
+        else:
+            logger.error(f"❌ Profile file not created: {profile_path}")
                 
         return profile_path
         
@@ -224,7 +255,7 @@ def save_voice_profile(temp_voice_file, voice_id):
 
 def load_voice_profile(voice_id):
     """Load existing voice profile"""
-    global model
+    global model, forked_handler
     
     # Get profile path
     profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
@@ -234,7 +265,13 @@ def load_voice_profile(voice_id):
         raise FileNotFoundError(f"No voice profile found for {voice_id}")
     
     try:
-        if hasattr(model, 'load_voice_profile'):
+        # Use forked repository handler if available
+        if forked_handler is not None and hasattr(forked_handler, 'load_voice_profile'):
+            logger.info(f"📁 Using forked repository VoiceCloneHandler.load_voice_profile method")
+            profile = forked_handler.load_voice_profile(str(profile_path))
+            logger.info(f"✅ Loaded voice profile using forked handler from {profile_path}")
+            return profile
+        elif hasattr(model, 'load_voice_profile'):
             # Use enhanced method from forked repository
             profile = model.load_voice_profile(str(profile_path))
             logger.info(f"✅ Loaded voice profile from {profile_path}")
@@ -256,6 +293,8 @@ def handler(event, responseFormat="base64"):
 
 def handle_voice_clone_request(input, responseFormat):
     """Handle voice cloning requests"""
+    global forked_handler
+    
     # Handle voice generation request only
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
@@ -304,70 +343,129 @@ def handle_voice_clone_request(input, responseFormat):
             logger.info("🔄 Using profile-based generation")
             generation_method = "profile_based"
             
-            # Debug: Check what methods are available on the model
-            available_methods = [method for method in dir(model) if not method.startswith('_')]
-            logger.info(f"🔍 Available model methods: {available_methods}")
-            
-            # Try different method names that might exist in the forked repository
+            # Try forked repository handler first
             audio_tensor = None
-
-            # Method 1: S3Gen text‑level inference (preferred)
-            if audio_tensor is None:
-                logger.info("🔍 Trying Method 1: model.s3gen.inference_from_text()")
+            
+            if forked_handler is not None and hasattr(forked_handler, 'generate_voice_clone'):
+                logger.info("🔍 Trying forked repository VoiceCloneHandler.generate_voice_clone()")
                 try:
-                    # Check if the method exists
-                    if not hasattr(model.s3gen, 'inference_from_text'):
-                        logger.info("❌ model.s3gen.inference_from_text() method does not exist")
-                        logger.info(f"📋 Available s3gen methods: {[m for m in dir(model.s3gen) if not m.startswith('_')]}")
-                    else:
-                        logger.info("✅ model.s3gen.inference_from_text() method exists")
-                        
-                        # Check if text_encoder is attached
-                        if not hasattr(model.s3gen, 'text_encoder'):
-                            logger.warning("⚠️ model.s3gen.text_encoder is not attached")
-                        else:
-                            logger.info("✅ model.s3gen.text_encoder is attached")
-                        
-                        # Build a proper ref_dict from the VoiceProfile
-                        logger.info("🔧 Building ref_dict from VoiceProfile...")
-                        ref_dict = {
-                            "embedding": profile.embedding.to(model.device),
-                            "prompt_token": profile.prompt_token.to(model.device)
-                                if getattr(profile, "prompt_token", None) is not None
-                                else torch.zeros(1, 1, dtype=torch.long, device=model.device),
-                            "prompt_token_len": profile.prompt_token_len.to(model.device)
-                                if getattr(profile, "prompt_token_len", None) is not None
-                                else torch.tensor([1], device=model.device),
-                            "prompt_feat": profile.prompt_feat.to(model.device)
-                                if getattr(profile, "prompt_feat", None) is not None
-                                else torch.zeros(1, 2, 80, device=model.device),
-                            "prompt_feat_len": getattr(profile, "prompt_feat_len", None),
-                        }
-                        logger.info(f"🔧 ref_dict built with keys: {list(ref_dict.keys())}")
-
-                        audio_tensor = model.s3gen.inference_from_text(
-                            template_message,
-                            ref_dict=ref_dict,
-                            finalize=True,
-                        )
-                        generation_method = "s3gen_inference_from_text"
-                        logger.info("✅ Used model.s3gen.inference_from_text()")
-                except AttributeError as e:
-                    logger.info(f"❌ model.s3gen.inference_from_text() AttributeError: {e}")
-                except RuntimeError as e:
-                    logger.warning(f"⚠️ inference_from_text() RuntimeError: {e}")
+                    audio_tensor = forked_handler.generate_voice_clone(template_message, profile)
+                    generation_method = "forked_handler_generate"
+                    logger.info("✅ Used forked repository VoiceCloneHandler.generate_voice_clone()")
                 except Exception as e:
-                    logger.warning(f"⚠️ inference_from_text() failed with exception: {e}")
+                    logger.warning(f"⚠️ forked_handler.generate_voice_clone() failed: {e}")
                     logger.warning(f"⚠️ Exception type: {type(e).__name__}")
-
-            # Method 2: Try inference with ref_dict (if inference_from_text not available)
+            
+            # Fallback to direct model methods if forked handler failed
             if audio_tensor is None:
-                logger.info("🔍 Trying Method 2: model.inference() with ref_dict")
-                try:
-                    if not hasattr(model, 'inference'):
-                        logger.info("❌ model.inference() method does not exist")
-                    else:
-                        logger.info("✅ model.inference() method exists")
+                # Debug: Check what methods are available on the model
+                available_methods = [method for method in dir(model) if not method.startswith('_')]
+                logger.info(f"🔍 Available model methods: {available_methods}")
+                
+                # Try different method names that might exist in the forked repository
+                # Method 1: S3Gen text‑level inference (preferred)
+                if audio_tensor is None:
+                    logger.info("🔍 Trying Method 1: model.s3gen.inference_from_text()")
+                    try:
+                        # Check if the method exists
+                        if not hasattr(model.s3gen, 'inference_from_text'):
+                            logger.info("❌ model.s3gen.inference_from_text() method does not exist")
+                            logger.info(f"📋 Available s3gen methods: {[m for m in dir(model.s3gen) if not m.startswith('_')]}")
+                        else:
+                            logger.info("✅ model.s3gen.inference_from_text() method exists")
+                            
+                            # Check if text_encoder is attached
+                            if not hasattr(model.s3gen, 'text_encoder'):
+                                logger.warning("⚠️ model.s3gen.text_encoder is not attached")
+                            else:
+                                logger.info("✅ model.s3gen.text_encoder is attached")
+                            
+                            # Build a proper ref_dict from the VoiceProfile
+                            logger.info("🔧 Building ref_dict from VoiceProfile...")
+                            ref_dict = {
+                                "embedding": profile.embedding.to(model.device),
+                                "prompt_token": profile.prompt_token.to(model.device)
+                                    if getattr(profile, "prompt_token", None) is not None
+                                    else torch.zeros(1, 1, dtype=torch.long, device=model.device),
+                                "prompt_token_len": profile.prompt_token_len.to(model.device)
+                                    if getattr(profile, "prompt_token_len", None) is not None
+                                    else torch.tensor([1], device=model.device),
+                                "prompt_feat": profile.prompt_feat.to(model.device)
+                                    if getattr(profile, "prompt_feat", None) is not None
+                                    else torch.zeros(1, 2, 80, device=model.device),
+                                "prompt_feat_len": getattr(profile, "prompt_feat_len", None),
+                            }
+                            logger.info(f"🔧 ref_dict built with keys: {list(ref_dict.keys())}")
+
+                            audio_tensor = model.s3gen.inference_from_text(
+                                template_message,
+                                ref_dict=ref_dict,
+                                finalize=True,
+                            )
+                            generation_method = "s3gen_inference_from_text"
+                            logger.info("✅ Used model.s3gen.inference_from_text()")
+                    except AttributeError as e:
+                        logger.info(f"❌ model.s3gen.inference_from_text() AttributeError: {e}")
+                    except RuntimeError as e:
+                        logger.warning(f"⚠️ inference_from_text() RuntimeError: {e}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ inference_from_text() failed with exception: {e}")
+                        logger.warning(f"⚠️ Exception type: {type(e).__name__}")
+
+                # Method 2: Try inference with ref_dict (if inference_from_text not available)
+                if audio_tensor is None:
+                    logger.info("🔍 Trying Method 2: model.inference() with ref_dict")
+                    try:
+                        if not hasattr(model, 'inference'):
+                            logger.info("❌ model.inference() method does not exist")
+                        else:
+                            logger.info("✅ model.inference() method exists")
+                            ref_dict = {
+                                "embedding": profile,
+                                "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
+                                "prompt_token_len": torch.tensor([1]).to(model.device),
+                                "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
+                                "prompt_feat_len": None,
+                            }
+                            audio_tensor = model.inference(template_message, ref_dict=ref_dict)
+                            generation_method = "profile_based_inference"
+                            logger.info("✅ Used model.inference() with ref_dict")
+                    except AttributeError as e:
+                        logger.info(f"❌ model.inference() AttributeError: {e}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ model.inference() failed: {e}")
+                        logger.warning(f"⚠️ Exception type: {type(e).__name__}")
+
+                # Method 3: Try generate with profile parameter
+                if audio_tensor is None:
+                    logger.info("🔍 Trying Method 3: model.generate() with voice_profile")
+                    try:
+                        audio_tensor = model.generate(template_message, voice_profile=profile)
+                        generation_method = "profile_based_generate"
+                        logger.info("✅ Used model.generate() with voice_profile")
+                    except TypeError as e:
+                        logger.info(f"❌ model.generate() doesn't accept voice_profile: {e}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ model.generate() with voice_profile failed: {e}")
+                        logger.warning(f"⚠️ Exception type: {type(e).__name__}")
+
+                # Method 4: Try generate with embedding parameter
+                if audio_tensor is None:
+                    logger.info("🔍 Trying Method 4: model.generate() with embedding")
+                    try:
+                        audio_tensor = model.generate(template_message, embedding=profile)
+                        generation_method = "profile_based_embedding"
+                        logger.info("✅ Used model.generate() with embedding")
+                    except TypeError as e:
+                        logger.info(f"❌ model.generate() doesn't accept embedding: {e}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ model.generate() with embedding failed: {e}")
+                        logger.warning(f"⚠️ Exception type: {type(e).__name__}")
+
+                # Method 5: Try generate with ref_dict parameter
+                if audio_tensor is None:
+                    logger.info("🔍 Trying Method 5: model.generate() with ref_dict")
+                    try:
                         ref_dict = {
                             "embedding": profile,
                             "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
@@ -375,66 +473,20 @@ def handle_voice_clone_request(input, responseFormat):
                             "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
                             "prompt_feat_len": None,
                         }
-                        audio_tensor = model.inference(template_message, ref_dict=ref_dict)
-                        generation_method = "profile_based_inference"
-                        logger.info("✅ Used model.inference() with ref_dict")
-                except AttributeError as e:
-                    logger.info(f"❌ model.inference() AttributeError: {e}")
-                except Exception as e:
-                    logger.warning(f"⚠️ model.inference() failed: {e}")
-                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
+                        audio_tensor = model.generate(template_message, ref_dict=ref_dict)
+                        generation_method = "profile_based_generate_ref"
+                        logger.info("✅ Used model.generate() with ref_dict")
+                    except TypeError as e:
+                        logger.info(f"❌ model.generate() doesn't accept ref_dict: {e}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ model.generate() with ref_dict failed: {e}")
+                        logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
-            # Method 3: Try generate with profile parameter
-            if audio_tensor is None:
-                logger.info("🔍 Trying Method 3: model.generate() with voice_profile")
-                try:
-                    audio_tensor = model.generate(template_message, voice_profile=profile)
-                    generation_method = "profile_based_generate"
-                    logger.info("✅ Used model.generate() with voice_profile")
-                except TypeError as e:
-                    logger.info(f"❌ model.generate() doesn't accept voice_profile: {e}")
-                except Exception as e:
-                    logger.warning(f"⚠️ model.generate() with voice_profile failed: {e}")
-                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
-
-            # Method 4: Try generate with embedding parameter
-            if audio_tensor is None:
-                logger.info("🔍 Trying Method 4: model.generate() with embedding")
-                try:
-                    audio_tensor = model.generate(template_message, embedding=profile)
-                    generation_method = "profile_based_embedding"
-                    logger.info("✅ Used model.generate() with embedding")
-                except TypeError as e:
-                    logger.info(f"❌ model.generate() doesn't accept embedding: {e}")
-                except Exception as e:
-                    logger.warning(f"⚠️ model.generate() with embedding failed: {e}")
-                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
-
-            # Method 5: Try generate with ref_dict parameter
-            if audio_tensor is None:
-                logger.info("🔍 Trying Method 5: model.generate() with ref_dict")
-                try:
-                    ref_dict = {
-                        "embedding": profile,
-                        "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
-                        "prompt_token_len": torch.tensor([1]).to(model.device),
-                        "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
-                        "prompt_feat_len": None,
-                    }
-                    audio_tensor = model.generate(template_message, ref_dict=ref_dict)
-                    generation_method = "profile_based_generate_ref"
-                    logger.info("✅ Used model.generate() with ref_dict")
-                except TypeError as e:
-                    logger.info(f"❌ model.generate() doesn't accept ref_dict: {e}")
-                except Exception as e:
-                    logger.warning(f"⚠️ model.generate() with ref_dict failed: {e}")
-                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
-
-            # Fallback: Use original audio file method
-            if audio_tensor is None:
-                logger.warning("⚠️ Using fallback generation method (no profile-based method found)")
-                audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
-                generation_method = "profile_fallback"
+                # Fallback: Use original audio file method
+                if audio_tensor is None:
+                    logger.warning("⚠️ Using fallback generation method (no profile-based method found)")
+                    audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
+                    generation_method = "profile_fallback"
         else:
             # Use original audio file method (fallback)
             logger.info("🔄 Using audio file method")
@@ -480,6 +532,7 @@ def handle_voice_clone_request(input, responseFormat):
     # Log final summary
     logger.info(f"🎯 Final generation method: {generation_method}")
     logger.info(f"📂 Repository used: {'FORKED' if 'chatterbox_embed' in str(model.s3gen.__class__.__module__) else 'ORIGINAL'}")
+    logger.info(f"🔧 Forked handler used: {'YES' if forked_handler is not None else 'NO'}")
     
     if responseFormat == "base64":
         # Return base64 - ALWAYS return structured JSON, never raw strings
@@ -497,7 +550,8 @@ def handle_voice_clone_request(input, responseFormat):
                 "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
                 "generation_method": generation_method,
                 "sample_file": str(sample_filename),
-                "template_message": template_message
+                "template_message": template_message,
+                "forked_handler_used": forked_handler is not None
             }
         }
         logger.info(f"📤 Voice clone completed successfully")
@@ -520,7 +574,8 @@ def handle_voice_clone_request(input, responseFormat):
                 "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
                 "generation_method": generation_method,
                 "sample_file": str(sample_filename),
-                "template_message": template_message
+                "template_message": template_message,
+                "forked_handler_used": forked_handler is not None
             }
         }
         logger.info(f"📤 Voice clone completed successfully")
@@ -541,7 +596,8 @@ def handle_voice_clone_request(input, responseFormat):
             "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
             "generation_method": generation_method,
             "sample_file": str(sample_filename),
-            "template_message": template_message
+            "template_message": template_message,
+            "forked_handler_used": forked_handler is not None
         }
     }
     
