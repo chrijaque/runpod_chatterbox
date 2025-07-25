@@ -57,7 +57,7 @@ model = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
-TTS_GENERATED_DIR = Path("/voice_samples")  # Use same directory as voice cloning for persistence
+TTS_GENERATED_DIR = Path("/tts_generated")  # Back to original directory
 TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
@@ -205,13 +205,13 @@ class TTSProcessor:
         
         return wav_paths
 
-    def stitch_and_normalize(self, wav_paths: List[str], output_path: str) -> float:
+    def stitch_and_normalize(self, wav_paths: List[str], output_path: str) -> tuple:
         """
         Stitches WAV chunks together with pause and normalizes audio levels.
 
         :param wav_paths: List of temporary WAV file paths
         :param output_path: Final path to export the combined WAV file
-        :return: Total duration of the final audio in seconds
+        :return: Tuple of (audio_tensor, sample_rate, duration_seconds)
         """
         if PYDUB_AVAILABLE:
             # Use pydub for professional audio processing
@@ -221,12 +221,19 @@ class TTSProcessor:
                 final += seg + AudioSegment.silent(self.pause_ms)
             normalized = effects.normalize(final)
             normalized.export(output_path, format="wav")
-            return len(normalized) / 1000.0  # Convert ms to seconds
+            
+            # Load the saved file to get the tensor
+            audio_tensor, sample_rate = torchaudio.load(output_path)
+            duration = len(normalized) / 1000.0  # Convert ms to seconds
+            return audio_tensor, sample_rate, duration
         else:
             # Fallback to torchaudio concatenation
             audio_chunks = []
+            sample_rate = None
             for wav_path in wav_paths:
-                audio_tensor, sample_rate = torchaudio.load(wav_path)
+                audio_tensor, sr = torchaudio.load(wav_path)
+                if sample_rate is None:
+                    sample_rate = sr
                 audio_chunks.append(audio_tensor)
                 
                 # Add silence between chunks
@@ -238,7 +245,8 @@ class TTSProcessor:
             if audio_chunks:
                 final_audio = torch.cat(audio_chunks, dim=-1)
                 torchaudio.save(output_path, final_audio, sample_rate)
-                return final_audio.shape[-1] / sample_rate
+                duration = final_audio.shape[-1] / sample_rate
+                return final_audio, sample_rate, duration
             else:
                 raise RuntimeError("No audio chunks to concatenate")
 
@@ -273,7 +281,7 @@ class TTSProcessor:
             raise RuntimeError("Failed to generate any audio chunks")
         
         logger.info(f"🔗 Stitching {len(wav_paths)} audio chunks...")
-        total_duration = self.stitch_and_normalize(wav_paths, output_path)
+        audio_tensor, sample_rate, total_duration = self.stitch_and_normalize(wav_paths, output_path)
         
         self.cleanup(wav_paths)
         
@@ -283,7 +291,9 @@ class TTSProcessor:
             "chunk_count": len(chunks),
             "output_path": output_path,
             "duration_sec": total_duration,
-            "successful_chunks": len(wav_paths)
+            "successful_chunks": len(wav_paths),
+            "audio_tensor": audio_tensor.tolist(), # Return tensor as list for JSON
+            "sample_rate": sample_rate
         }
 
 def initialize_model():
@@ -523,7 +533,7 @@ def handler(event, responseFormat="base64"):
         
         # Create output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix
+        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"  # Back to original pattern
         
         try:
             logger.info("🔄 Starting TTS processing...")
@@ -555,46 +565,18 @@ def handler(event, responseFormat="base64"):
             logger.info(f"✅ TTS generated in {generation_time:.2f}s")
             logger.info(f"📊 Processing stats: {result}")
             
-            # Load the generated audio for base64 conversion
-            logger.info(f"🔍 DEBUG: Loading generated audio file...")
-            logger.info(f"🔍 DEBUG: Audio file path: {tts_filename}")
-            logger.info(f"🔍 DEBUG: Audio file exists: {tts_filename.exists()}")
-            if tts_filename.exists():
-                logger.info(f"🔍 DEBUG: Audio file size: {tts_filename.stat().st_size} bytes")
+            # Get audio tensor directly from TTSProcessor (same as voice cloning)
+            audio_tensor = torch.tensor(result['audio_tensor'])
+            sample_rate = result['sample_rate']
             
-            audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
-            logger.info(f"🔍 DEBUG: Audio loaded successfully")
             logger.info(f"🔍 DEBUG: Audio tensor shape: {audio_tensor.shape}")
             logger.info(f"🔍 DEBUG: Audio tensor dtype: {audio_tensor.dtype}")
             logger.info(f"🔍 DEBUG: Sample rate: {sample_rate}")
             
-            # Save TTS file locally (same pattern as voice cloning)
-            logger.info(f"🔍 DEBUG: Starting local file save process")
-            logger.info(f"🔍 DEBUG: audio_tensor shape: {audio_tensor.shape}")
-            logger.info(f"🔍 DEBUG: sample_rate: {sample_rate}")
-            logger.info(f"🔍 DEBUG: voice_id: {voice_id}")
-            logger.info(f"🔍 DEBUG: timestamp: {timestamp}")
-            
-            # Save directly to local directory (same as voice cloning)
-            local_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix to distinguish from voice cloning
-            logger.info(f"🔍 DEBUG: Full file path: {local_filename.absolute()}")
-            logger.info(f"🔍 DEBUG: Parent directory exists: {local_filename.parent.exists()}")
-            
-            try:
-                torchaudio.save(local_filename, audio_tensor, sample_rate)
-                logger.info(f"💾 Saved TTS locally: {local_filename}")
-                logger.info(f"🔍 DEBUG: File exists after save: {local_filename.exists()}")
-                logger.info(f"🔍 DEBUG: File size: {local_filename.stat().st_size} bytes")
-                
-                # File saved successfully - no complex download logic needed
-                logger.info("✅ TTS file saved to local directory successfully")
-                
-            except Exception as save_error:
-                logger.error(f"❌ ERROR saving TTS file: {save_error}")
-                logger.error(f"🔍 DEBUG: audio_tensor dtype: {audio_tensor.dtype}")
-                logger.error(f"🔍 DEBUG: audio_tensor device: {audio_tensor.device}")
-                logger.error(f"🔍 DEBUG: sample_rate type: {type(sample_rate)}")
-                raise save_error
+            # Save file immediately after generation (same as voice cloning)
+            local_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+            torchaudio.save(local_filename, audio_tensor, sample_rate)
+            logger.info(f"💾 Saved TTS: {local_filename.name}")
             
         except Exception as e:
             generation_time = time.time() - start_time
@@ -743,7 +725,7 @@ def list_available_files():
     
     try:
         if TTS_GENERATED_DIR.exists():
-            files = list(TTS_GENERATED_DIR.glob("TTS_*.wav"))  # Look for TTS_ prefixed files
+            files = list(TTS_GENERATED_DIR.glob("tts_*.wav"))  # Back to original pattern
             logger.info(f"📂 Found {len(files)} TTS files:")
             
             for file in files:
