@@ -24,7 +24,7 @@ CORS(app)  # Enable CORS for frontend
 VOICE_PROFILES_DIR = Path("./voice_profiles")
 VOICE_SAMPLES_DIR = Path("./voice_samples")
 TEMP_VOICE_DIR = Path("./temp_voice")
-TTS_GENERATED_DIR = Path("./tts_generated")  # Back to original directory
+TTS_GENERATED_DIR = Path("./voice_samples")  # Use same directory as voice cloning for persistence
 
 # Create directories if they don't exist (local development only)
 print(f"🔍 Checking local directories...")
@@ -108,7 +108,7 @@ def get_tts_generations() -> List[Dict[str, Any]]:
             return generations
         
         # Get all TTS files
-        tts_files = list(TTS_GENERATED_DIR.glob("tts_*.wav"))  # Back to original pattern
+        tts_files = list(TTS_GENERATED_DIR.glob("TTS_*.wav"))  # Look for TTS_ prefixed files
         
         for tts_file in tts_files:
             try:

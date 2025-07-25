@@ -57,7 +57,7 @@ model = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
-TTS_GENERATED_DIR = Path("/tts_generated")  # Back to original directory
+TTS_GENERATED_DIR = Path("/voice_samples")  # Use same directory as voice cloning for persistence
 TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
@@ -263,13 +263,13 @@ class TTSProcessor:
             except Exception as e:
                 logger.warning(f"⚠️ Failed to delete {path} — {e}")
 
-    def process(self, text: str, output_path: str) -> Dict:
+    def process(self, text: str, output_path: str) -> tuple:
         """
         Full TTS pipeline: chunk → generate → stitch → clean.
 
         :param text: Input text to synthesize
         :param output_path: Path to save the final audio file
-        :return: Dictionary with metadata including duration, chunk count, and file paths
+        :return: Tuple of (audio_tensor, sample_rate, metadata_dict)
         """
         logger.info(f"🎵 Starting TTS processing for {len(text)} characters")
         
@@ -287,14 +287,15 @@ class TTSProcessor:
         
         logger.info(f"✅ TTS processing completed | Duration: {total_duration:.2f}s")
         
-        return {
+        metadata = {
             "chunk_count": len(chunks),
             "output_path": output_path,
             "duration_sec": total_duration,
             "successful_chunks": len(wav_paths),
-            "audio_tensor": audio_tensor.tolist(), # Return tensor as list for JSON
             "sample_rate": sample_rate
         }
+        
+        return audio_tensor, sample_rate, metadata
 
 def initialize_model():
     global model
@@ -533,7 +534,7 @@ def handler(event, responseFormat="base64"):
         
         # Create output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"  # Back to original pattern
+        tts_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix
         
         try:
             logger.info("🔄 Starting TTS processing...")
@@ -557,7 +558,7 @@ def handler(event, responseFormat="base64"):
             logger.info(f"🔍 DEBUG: Input text length: {len(text)}")
             logger.info(f"🔍 DEBUG: Output filename: {tts_filename}")
             
-            result = processor.process(text, str(tts_filename))
+            audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
             logger.info(f"🔍 DEBUG: Text processing completed")
             logger.info(f"🔍 DEBUG: Processing result: {result}")
             
@@ -566,15 +567,12 @@ def handler(event, responseFormat="base64"):
             logger.info(f"📊 Processing stats: {result}")
             
             # Get audio tensor directly from TTSProcessor (same as voice cloning)
-            audio_tensor = torch.tensor(result['audio_tensor'])
-            sample_rate = result['sample_rate']
-            
             logger.info(f"🔍 DEBUG: Audio tensor shape: {audio_tensor.shape}")
             logger.info(f"🔍 DEBUG: Audio tensor dtype: {audio_tensor.dtype}")
             logger.info(f"🔍 DEBUG: Sample rate: {sample_rate}")
             
             # Save file immediately after generation (same as voice cloning)
-            local_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
+            local_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix to distinguish from voice cloning
             torchaudio.save(local_filename, audio_tensor, sample_rate)
             logger.info(f"💾 Saved TTS: {local_filename.name}")
             
@@ -595,8 +593,7 @@ def handler(event, responseFormat="base64"):
                         pause_ms=100,
                         max_chars=300  # Even smaller chunks
                     )
-                    result = processor.process(text, str(tts_filename))
-                    audio_tensor, sample_rate = torchaudio.load(str(tts_filename))
+                    audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
                     generation_time = time.time() - start_time
                     logger.info(f"✅ TTS generated with smaller chunks in {generation_time:.2f}s")
                 except Exception as retry_error:
@@ -725,7 +722,7 @@ def list_available_files():
     
     try:
         if TTS_GENERATED_DIR.exists():
-            files = list(TTS_GENERATED_DIR.glob("tts_*.wav"))  # Back to original pattern
+            files = list(TTS_GENERATED_DIR.glob("TTS_*.wav"))  # Look for TTS_ prefixed files
             logger.info(f"📂 Found {len(files)} TTS files:")
             
             for file in files:
