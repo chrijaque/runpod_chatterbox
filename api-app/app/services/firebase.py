@@ -236,6 +236,52 @@ class FirebaseService:
         
         return self.upload_from_runpod_directory(runpod_path, firebase_path)
 
+    def upload_base64_audio(self, audio_base64: str, firebase_path: str) -> Optional[str]:
+        """
+        Upload base64 encoded audio data directly to Firebase
+        
+        :param audio_base64: Base64 encoded audio data
+        :param firebase_path: Destination path in Firebase
+        :return: Public URL or None if failed
+        """
+        if not self.bucket:
+            logger.error("Firebase not initialized")
+            return None
+        
+        try:
+            import base64
+            import tempfile
+            from pathlib import Path
+            
+            # Decode base64 data
+            audio_data = base64.b64decode(audio_base64)
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                temp_file.write(audio_data)
+                temp_path = Path(temp_file.name)
+            
+            try:
+                # Upload to Firebase
+                blob = self.bucket.blob(firebase_path)
+                blob.upload_from_filename(str(temp_path))
+                blob.make_public()
+                
+                public_url = blob.public_url
+                logger.info(f"✅ Base64 audio uploaded to Firebase: {public_url}")
+                return public_url
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to clean up temp file: {e}")
+            
+        except Exception as e:
+            logger.error(f"❌ Firebase base64 upload failed: {e}")
+            return None
+
     def upload_user_recording(self, voice_id: str, recording_filename: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
         """
         Upload user's raw recording to Firebase

@@ -216,21 +216,89 @@ def handle_voice_clone_request(input, responseFormat):
             logger.info("🔄 Using profile-based generation")
             generation_method = "profile_based"
             
-            # Create reference dictionary for inference
-            ref_dict = {
-                "embedding": profile,
-                "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
-                "prompt_token_len": torch.tensor([1]).to(model.device),
-                "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
-                "prompt_feat_len": None,
-            }
+            # Debug: Check what methods are available on the model
+            available_methods = [method for method in dir(model) if not method.startswith('_')]
+            logger.info(f"🔍 Available model methods: {available_methods}")
             
+            # Try different method names that might exist in the forked repository
+            audio_tensor = None
+            
+            # Method 1: Try the new inference_from_text method (PREFERRED)
             try:
-                # Use the inference method with profiles
-                audio_tensor = model.inference(template_message, ref_dict=ref_dict)
+                audio_tensor = model.inference_from_text(template_message, ref_dict=profile)
+                generation_method = "profile_based_inference_from_text"
+                logger.info("✅ Used model.inference_from_text() - PROFILE-BASED GENERATION SUCCESS!")
             except AttributeError:
-                # Fallback to generate method if inference doesn't exist
-                logger.warning("⚠️ Using fallback generation method")
+                logger.info("❌ model.inference_from_text() not available")
+            except RuntimeError as e:
+                if "no `text_encoder` attached" in str(e):
+                    logger.warning("⚠️ model.inference_from_text() requires text_encoder - trying other methods")
+                else:
+                    logger.warning(f"⚠️ model.inference_from_text() failed: {e}")
+            except Exception as e:
+                logger.warning(f"⚠️ model.inference_from_text() failed: {e}")
+            
+            # Method 2: Try inference with ref_dict (if inference_from_text not available)
+            if audio_tensor is None:
+                try:
+                    ref_dict = {
+                        "embedding": profile,
+                        "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
+                        "prompt_token_len": torch.tensor([1]).to(model.device),
+                        "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
+                        "prompt_feat_len": None,
+                    }
+                    audio_tensor = model.inference(template_message, ref_dict=ref_dict)
+                    generation_method = "profile_based_inference"
+                    logger.info("✅ Used model.inference() with ref_dict")
+                except AttributeError:
+                    logger.info("❌ model.inference() not available")
+                except Exception as e:
+                    logger.warning(f"⚠️ model.inference() failed: {e}")
+            
+            # Method 3: Try generate with profile parameter
+            if audio_tensor is None:
+                try:
+                    audio_tensor = model.generate(template_message, voice_profile=profile)
+                    generation_method = "profile_based_generate"
+                    logger.info("✅ Used model.generate() with voice_profile")
+                except TypeError:
+                    logger.info("❌ model.generate() doesn't accept voice_profile")
+                except Exception as e:
+                    logger.warning(f"⚠️ model.generate() with voice_profile failed: {e}")
+            
+            # Method 4: Try generate with embedding parameter
+            if audio_tensor is None:
+                try:
+                    audio_tensor = model.generate(template_message, embedding=profile)
+                    generation_method = "profile_based_embedding"
+                    logger.info("✅ Used model.generate() with embedding")
+                except TypeError:
+                    logger.info("❌ model.generate() doesn't accept embedding")
+                except Exception as e:
+                    logger.warning(f"⚠️ model.generate() with embedding failed: {e}")
+            
+            # Method 5: Try generate with ref_dict parameter
+            if audio_tensor is None:
+                try:
+                    ref_dict = {
+                        "embedding": profile,
+                        "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
+                        "prompt_token_len": torch.tensor([1]).to(model.device),
+                        "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
+                        "prompt_feat_len": None,
+                    }
+                    audio_tensor = model.generate(template_message, ref_dict=ref_dict)
+                    generation_method = "profile_based_generate_ref"
+                    logger.info("✅ Used model.generate() with ref_dict")
+                except TypeError:
+                    logger.info("❌ model.generate() doesn't accept ref_dict")
+                except Exception as e:
+                    logger.warning(f"⚠️ model.generate() with ref_dict failed: {e}")
+            
+            # Fallback: Use original audio file method
+            if audio_tensor is None:
+                logger.warning("⚠️ Using fallback generation method (no profile-based method found)")
                 audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
                 generation_method = "profile_fallback"
         else:

@@ -78,9 +78,22 @@ class TTSProcessor:
         :param max_chars: Maximum number of characters per chunk
         """
         self.model = model
-        self.voice_profile = voice_profile_path
         self.pause_ms = pause_ms
         self.max_chars = max_chars
+        
+        # Load the voice profile as ref_dict for the new inference_from_text method
+        try:
+            if hasattr(model, 'load_voice_profile'):
+                self.voice_profile = model.load_voice_profile(voice_profile_path)
+                logger.info(f"✅ Voice profile loaded as ref_dict from: {voice_profile_path}")
+            else:
+                # Fallback: store path for old method
+                self.voice_profile = voice_profile_path
+                logger.warning(f"⚠️ Model doesn't have load_voice_profile - using path: {voice_profile_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to load voice profile: {e}")
+            # Fallback: store path for old method
+            self.voice_profile = voice_profile_path
 
     def chunk_text(self, text: str) -> List[str]:
         """
@@ -159,8 +172,8 @@ class TTSProcessor:
         """
         wav_paths = []
         
-        # Prepare voice profile once
-        self.model.prepare_conditionals_with_voice_profile(self.voice_profile, exaggeration=0.6)
+        # Voice profile is already loaded as ref_dict in __init__
+        # No need to call prepare_conditionals_with_voice_profile anymore
         
         for i, chunk in enumerate(chunks):
             logger.info(f"🔄 Generating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
@@ -176,8 +189,16 @@ class TTSProcessor:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
-                    # Generate audio tensor
-                    audio_tensor = self.model.generate(chunk, temperature=0.7)
+                    # Generate audio tensor using the new profile-based method
+                    try:
+                        # Try the new inference_from_text method first (profile-based)
+                        audio_tensor = self.model.inference_from_text(chunk, ref_dict=self.voice_profile)
+                        logger.info(f"✅ Chunk {i+1} generated using profile-based inference_from_text")
+                    except (AttributeError, RuntimeError) as e:
+                        # Fallback to the old generate method
+                        logger.info(f"🔄 Falling back to generate method for chunk {i+1}: {e}")
+                        audio_tensor = self.model.generate(chunk, temperature=0.7)
+                        logger.info(f"✅ Chunk {i+1} generated using fallback generate method")
                     
                     # Save to temporary file
                     temp_wav = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.wav", delete=False)

@@ -93,12 +93,20 @@ async def create_voice_clone(request: VoiceCloneRequest):
         }
         
         # Submit to RunPod
-        job = await runpod_client.create_voice_clone(runpod_request)
+        job = runpod_client.create_voice_clone(
+            name=request.title,
+            audio_base64=primary_audio,
+            audio_format="wav",
+            response_format="base64"
+        )
         if not job:
             raise HTTPException(status_code=500, detail="Failed to submit voice clone job to RunPod")
         
         # Wait for completion
-        result = await runpod_client.wait_for_job_completion(job['id'])
+        result = runpod_client.wait_for_job_completion(
+            endpoint_id=settings.RUNPOD_ENDPOINT_ID or "",
+            job_id=job['id']
+        )
         if not result or result.get('status') != 'COMPLETED':
             error_msg = result.get('error', 'Unknown error') if result else 'Job failed'
             raise HTTPException(status_code=500, detail=f"Voice clone failed: {error_msg}")
@@ -122,13 +130,19 @@ async def create_voice_clone(request: VoiceCloneRequest):
         for i, audio_data in enumerate(request.voices):
             recording_filename = f"recording_{i+1}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
             
-            # Upload directly to Firebase without saving locally
-            recording_url = firebase_service.upload_user_recording(
-                voice_id, recording_filename, language, is_kids_voice
-            )
+            # Build Firebase path based on language and kids voice
+            if is_kids_voice:
+                firebase_path = f"audio/voices/{language}/kids/recorded/{voice_id}_{recording_filename}"
+            else:
+                firebase_path = f"audio/voices/{language}/recorded/{voice_id}_{recording_filename}"
+            
+            # Upload base64 audio data directly to Firebase
+            recording_url = firebase_service.upload_base64_audio(audio_data, firebase_path)
             if recording_url:
                 firebase_urls['recorded'].append(recording_url)
                 logger.info(f"✅ User recording uploaded to Firebase: {recording_url}")
+            else:
+                logger.error(f"❌ Failed to upload user recording {i+1}")
         
         # Upload voice sample to Firebase
         if sample_filename:
