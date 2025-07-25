@@ -27,14 +27,16 @@ COPY requirements.txt /requirements.txt
 # Debug: Show what's in requirements.txt
 RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 
-# Install forked repository FIRST to prevent dependency conflicts
-RUN echo "🔧 Installing forked repository..." && \
+# Clone the forked repository and install in editable mode
+RUN echo "🔧 Cloning forked repository..." && \
     echo "🔍 Testing repository access..." && \
     curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
     echo "🔧 Uninstalling existing PyTorch packages to prevent conflicts..." && \
     pip uninstall -y torch torchvision torchaudio chatterbox-tts || true && \
-    echo "🔧 Installing forked repository with dependencies..." && \
-    pip install --no-cache-dir --force-reinstall git+https://github.com/chrijaque/chatterbox_embed.git@master#egg=chatterbox-tts && \
+    echo "🔧 Cloning forked repository..." && \
+    git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    echo "🔧 Installing forked repository in editable mode..." && \
+    pip install -e /workspace/chatterbox_embed/src && \
     echo "🔍 Verifying forked repository installation..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)" && \
     python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
@@ -58,6 +60,7 @@ RUN echo "🔧 Pre-downloading NLTK data..." && \
 
 # Copy TTS handler files
 COPY tts_handler.py /
+COPY verify_editable_install.py /
 
 
 # Create required directories
@@ -67,7 +70,13 @@ RUN mkdir -p /voice_profiles /tts_generated /temp_voice
 
 # Final verification after all installations
 RUN echo "🔍 Final verification after all installations..." && \
-    pip show chatterbox-tts
+    pip show chatterbox-tts && \
+    echo "🔍 Final editable install check..." && \
+    python -c "import chatterbox; print('📂 Final chatterbox.__file__:', chatterbox.__file__); print('📂 Is editable:', 'site-packages' not in chatterbox.__file__)" && \
+    echo "🔍 Checking s3gen module..." && \
+    python -c "import chatterbox.models.s3gen.s3gen as s3gen; print('📂 s3gen.__file__:', s3gen.__file__); print('📂 Has inference_from_text:', hasattr(s3gen.S3Token2Wav, 'inference_from_text'))" && \
+    echo "🔍 Running verification script..." && \
+    python verify_editable_install.py
 
 # Expose port (if needed for health checks)
 EXPOSE 8000

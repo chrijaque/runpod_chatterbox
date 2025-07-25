@@ -380,6 +380,12 @@ def initialize_model():
             import subprocess
             pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
             logger.info(f"📋 Pip package info:\n{pip_info}")
+            
+            # Check if it's from the forked repository
+            if 'chrijaque/chatterbox_embed' in pip_info:
+                logger.info("✅ Pip shows forked repository")
+            else:
+                logger.warning("⚠️ Pip shows original repository")
         except Exception as e:
             logger.warning(f"⚠️ Could not get pip info: {e}")
         
@@ -418,9 +424,23 @@ def initialize_model():
         assert hasattr(model, 'load_voice_profile'), "🚨 Loaded model is missing `load_voice_profile`. Wrong class?"
 
         # Verify s3gen module source
+        logger.info("🔍 ===== S3GEN VERIFICATION =====")
         if hasattr(model, "s3gen"):
             logger.info(f"📂 s3gen module path: {model.s3gen.__class__.__module__}")
             logger.info(f"📂 s3gen class: {model.s3gen.__class__}")
+            logger.info(f"📂 s3gen class file: {model.s3gen.__class__.__module__}")
+            
+            # Check s3gen module file path
+            try:
+                import chatterbox.models.s3gen.s3gen as s3gen_module
+                logger.info(f"📂 s3gen module file: {s3gen_module.__file__}")
+                
+                if 'chatterbox_embed' in s3gen_module.__file__:
+                    logger.info("🎯 s3gen module is from FORKED repository")
+                else:
+                    logger.warning("⚠️ s3gen module is from ORIGINAL repository")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not check s3gen module file: {e}")
             
             # Check if inference_from_text exists and its source
             if hasattr(model.s3gen, 'inference_from_text'):
@@ -429,13 +449,19 @@ def initialize_model():
                 logger.info(f"📂 inference_from_text line: {method.__code__.co_firstlineno}")
                 
                 if 'chatterbox_embed' in method.__code__.co_filename:
-                    logger.info("🎯 Using FORKED repository (chatterbox_embed)")
+                    logger.info("🎯 inference_from_text is from FORKED repository")
                 else:
-                    logger.warning("⚠️ Using ORIGINAL repository")
+                    logger.warning("⚠️ inference_from_text is from ORIGINAL repository")
             else:
                 logger.warning("⚠️ inference_from_text method does NOT exist")
+                
+            # List all methods on s3gen
+            s3gen_methods = [method for method in dir(model.s3gen) if not method.startswith('_')]
+            logger.info(f"📋 Available s3gen methods: {s3gen_methods}")
         else:
             logger.warning("⚠️ Model does not have s3gen attribute")
+        
+        logger.info("🔍 ===== END S3GEN VERIFICATION =====")
 
         # Check model capabilities
         logger.info("🔍 Checking model capabilities:")

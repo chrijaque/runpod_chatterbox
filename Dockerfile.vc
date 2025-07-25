@@ -44,7 +44,7 @@ RUN echo "🔧 Cloning forked repository..." && \
     echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
     echo "🔧 Installing forked repository in editable mode..." && \
-    pip install -e /workspace/chatterbox_embed/src && \
+    pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)" && \
     python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
