@@ -49,21 +49,104 @@ def initialize_model():
     logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
-        # Quick check for forked repository
+        # Comprehensive repository verification
         import chatterbox
         import subprocess
+        import os
         
-        # Check if it's the forked repository
+        logger.info("🔍 ===== REPOSITORY VERIFICATION =====")
+        logger.info(f"📂 chatterbox module path: {chatterbox.__file__}")
+        logger.info(f"📂 chatterbox module location: {os.path.dirname(chatterbox.__file__)}")
+        
+        # Check if it's from the forked repository
+        if 'chatterbox_embed' in chatterbox.__file__:
+            logger.info("🎯 chatterbox module is from FORKED repository")
+        else:
+            logger.warning("⚠️ chatterbox module is from ORIGINAL repository")
+        
+        # Check pip package info
         try:
             pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
+            logger.info("📦 Pip package info:")
+            for line in pip_info.split('\n'):
+                if line.strip():
+                    logger.info(f"   {line}")
+            
             if 'chrijaque/chatterbox_embed' in pip_info:
-                logger.info("✅ Using forked repository")
+                logger.info("✅ Pip shows forked repository")
             else:
-                logger.warning("⚠️ Not using forked repository")
+                logger.warning("⚠️ Pip shows original repository")
         except Exception as e:
-            logger.warning(f"⚠️ Could not verify repository: {e}")
+            logger.warning(f"⚠️ Could not get pip info: {e}")
+        
+        # Check git repository info if available
+        try:
+            repo_path = os.path.dirname(chatterbox.__file__)
+            git_path = os.path.join(repo_path, '.git')
+            
+            if os.path.exists(git_path):
+                logger.info(f"📁 Found git repository at: {repo_path}")
+                try:
+                    commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
+                    logger.info(f"🔢 Git commit: {commit_hash}")
+                    remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin']).decode().strip()
+                    logger.info(f"🌐 Git remote: {remote_url}")
+                    
+                    if 'chrijaque/chatterbox_embed' in remote_url:
+                        logger.info("✅ Git confirms forked repository")
+                    else:
+                        logger.warning("⚠️ Git shows original repository")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not get git info: {e}")
+            else:
+                logger.info("📁 No git repository found (PyPI package installation)")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check git info: {e}")
+        
+        logger.info("🔍 ===== END REPOSITORY VERIFICATION =====")
         
         model = ChatterboxTTS.from_pretrained(device='cuda')
+        
+        # Verify s3gen module source
+        logger.info("🔍 ===== S3GEN VERIFICATION =====")
+        if hasattr(model, "s3gen"):
+            logger.info(f"📂 s3gen module path: {model.s3gen.__class__.__module__}")
+            logger.info(f"📂 s3gen class: {model.s3gen.__class__}")
+            logger.info(f"📂 s3gen class file: {model.s3gen.__class__.__module__}")
+            
+            # Check s3gen module file path
+            try:
+                import chatterbox.models.s3gen.s3gen as s3gen_module
+                logger.info(f"📂 s3gen module file: {s3gen_module.__file__}")
+                
+                if 'chatterbox_embed' in s3gen_module.__file__:
+                    logger.info("🎯 s3gen module is from FORKED repository")
+                else:
+                    logger.warning("⚠️ s3gen module is from ORIGINAL repository")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not check s3gen module file: {e}")
+            
+            # Check if inference_from_text exists and its source
+            if hasattr(model.s3gen, 'inference_from_text'):
+                method = getattr(model.s3gen, 'inference_from_text')
+                logger.info(f"📂 inference_from_text source: {method.__code__.co_filename}")
+                logger.info(f"📂 inference_from_text line: {method.__code__.co_firstlineno}")
+                
+                if 'chatterbox_embed' in method.__code__.co_filename:
+                    logger.info("🎯 inference_from_text is from FORKED repository")
+                else:
+                    logger.warning("⚠️ inference_from_text is from ORIGINAL repository")
+            else:
+                logger.warning("⚠️ inference_from_text method does NOT exist")
+                
+            # List all methods on s3gen
+            s3gen_methods = [method for method in dir(model.s3gen) if not method.startswith('_')]
+            logger.info(f"📋 Available s3gen methods: {s3gen_methods}")
+        else:
+            logger.warning("⚠️ Model does not have s3gen attribute")
+        
+        logger.info("🔍 ===== END S3GEN VERIFICATION =====")
+        
         # Attach the T3 text‑to‑token encoder to S3Gen so that
         # s3gen.inference_from_text() works
         if hasattr(model, "s3gen") and hasattr(model, "t3"):
@@ -230,78 +313,106 @@ def handle_voice_clone_request(input, responseFormat):
 
             # Method 1: S3Gen text‑level inference (preferred)
             if audio_tensor is None:
+                logger.info("🔍 Trying Method 1: model.s3gen.inference_from_text()")
                 try:
-                    # Build a proper ref_dict from the VoiceProfile
-                    ref_dict = {
-                        "embedding": profile.embedding.to(model.device),
-                        "prompt_token": profile.prompt_token.to(model.device)
-                            if getattr(profile, "prompt_token", None) is not None
-                            else torch.zeros(1, 1, dtype=torch.long, device=model.device),
-                        "prompt_token_len": profile.prompt_token_len.to(model.device)
-                            if getattr(profile, "prompt_token_len", None) is not None
-                            else torch.tensor([1], device=model.device),
-                        "prompt_feat": profile.prompt_feat.to(model.device)
-                            if getattr(profile, "prompt_feat", None) is not None
-                            else torch.zeros(1, 2, 80, device=model.device),
-                        "prompt_feat_len": getattr(profile, "prompt_feat_len", None),
-                    }
+                    # Check if the method exists
+                    if not hasattr(model.s3gen, 'inference_from_text'):
+                        logger.info("❌ model.s3gen.inference_from_text() method does not exist")
+                        logger.info(f"📋 Available s3gen methods: {[m for m in dir(model.s3gen) if not m.startswith('_')]}")
+                    else:
+                        logger.info("✅ model.s3gen.inference_from_text() method exists")
+                        
+                        # Check if text_encoder is attached
+                        if not hasattr(model.s3gen, 'text_encoder'):
+                            logger.warning("⚠️ model.s3gen.text_encoder is not attached")
+                        else:
+                            logger.info("✅ model.s3gen.text_encoder is attached")
+                        
+                        # Build a proper ref_dict from the VoiceProfile
+                        logger.info("🔧 Building ref_dict from VoiceProfile...")
+                        ref_dict = {
+                            "embedding": profile.embedding.to(model.device),
+                            "prompt_token": profile.prompt_token.to(model.device)
+                                if getattr(profile, "prompt_token", None) is not None
+                                else torch.zeros(1, 1, dtype=torch.long, device=model.device),
+                            "prompt_token_len": profile.prompt_token_len.to(model.device)
+                                if getattr(profile, "prompt_token_len", None) is not None
+                                else torch.tensor([1], device=model.device),
+                            "prompt_feat": profile.prompt_feat.to(model.device)
+                                if getattr(profile, "prompt_feat", None) is not None
+                                else torch.zeros(1, 2, 80, device=model.device),
+                            "prompt_feat_len": getattr(profile, "prompt_feat_len", None),
+                        }
+                        logger.info(f"🔧 ref_dict built with keys: {list(ref_dict.keys())}")
 
-                    audio_tensor = model.s3gen.inference_from_text(
-                        template_message,
-                        ref_dict=ref_dict,
-                        finalize=True,
-                    )
-                    generation_method = "s3gen_inference_from_text"
-                    logger.info("✅ Used model.s3gen.inference_from_text()")
-                except AttributeError:
-                    logger.info("❌ model.s3gen.inference_from_text() not available")
+                        audio_tensor = model.s3gen.inference_from_text(
+                            template_message,
+                            ref_dict=ref_dict,
+                            finalize=True,
+                        )
+                        generation_method = "s3gen_inference_from_text"
+                        logger.info("✅ Used model.s3gen.inference_from_text()")
+                except AttributeError as e:
+                    logger.info(f"❌ model.s3gen.inference_from_text() AttributeError: {e}")
                 except RuntimeError as e:
-                    logger.warning(f"⚠️ inference_from_text() runtime error: {e}")
+                    logger.warning(f"⚠️ inference_from_text() RuntimeError: {e}")
                 except Exception as e:
-                    logger.warning(f"⚠️ inference_from_text() failed: {e}")
+                    logger.warning(f"⚠️ inference_from_text() failed with exception: {e}")
+                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
             # Method 2: Try inference with ref_dict (if inference_from_text not available)
             if audio_tensor is None:
+                logger.info("🔍 Trying Method 2: model.inference() with ref_dict")
                 try:
-                    ref_dict = {
-                        "embedding": profile,
-                        "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
-                        "prompt_token_len": torch.tensor([1]).to(model.device),
-                        "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
-                        "prompt_feat_len": None,
-                    }
-                    audio_tensor = model.inference(template_message, ref_dict=ref_dict)
-                    generation_method = "profile_based_inference"
-                    logger.info("✅ Used model.inference() with ref_dict")
-                except AttributeError:
-                    logger.info("❌ model.inference() not available")
+                    if not hasattr(model, 'inference'):
+                        logger.info("❌ model.inference() method does not exist")
+                    else:
+                        logger.info("✅ model.inference() method exists")
+                        ref_dict = {
+                            "embedding": profile,
+                            "prompt_token": torch.zeros(1, 1, dtype=torch.long).to(model.device),
+                            "prompt_token_len": torch.tensor([1]).to(model.device),
+                            "prompt_feat": torch.zeros(1, 2, 80).to(model.device),
+                            "prompt_feat_len": None,
+                        }
+                        audio_tensor = model.inference(template_message, ref_dict=ref_dict)
+                        generation_method = "profile_based_inference"
+                        logger.info("✅ Used model.inference() with ref_dict")
+                except AttributeError as e:
+                    logger.info(f"❌ model.inference() AttributeError: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ model.inference() failed: {e}")
+                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
             # Method 3: Try generate with profile parameter
             if audio_tensor is None:
+                logger.info("🔍 Trying Method 3: model.generate() with voice_profile")
                 try:
                     audio_tensor = model.generate(template_message, voice_profile=profile)
                     generation_method = "profile_based_generate"
                     logger.info("✅ Used model.generate() with voice_profile")
-                except TypeError:
-                    logger.info("❌ model.generate() doesn't accept voice_profile")
+                except TypeError as e:
+                    logger.info(f"❌ model.generate() doesn't accept voice_profile: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with voice_profile failed: {e}")
+                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
             # Method 4: Try generate with embedding parameter
             if audio_tensor is None:
+                logger.info("🔍 Trying Method 4: model.generate() with embedding")
                 try:
                     audio_tensor = model.generate(template_message, embedding=profile)
                     generation_method = "profile_based_embedding"
                     logger.info("✅ Used model.generate() with embedding")
-                except TypeError:
-                    logger.info("❌ model.generate() doesn't accept embedding")
+                except TypeError as e:
+                    logger.info(f"❌ model.generate() doesn't accept embedding: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with embedding failed: {e}")
+                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
             # Method 5: Try generate with ref_dict parameter
             if audio_tensor is None:
+                logger.info("🔍 Trying Method 5: model.generate() with ref_dict")
                 try:
                     ref_dict = {
                         "embedding": profile,
@@ -313,10 +424,11 @@ def handle_voice_clone_request(input, responseFormat):
                     audio_tensor = model.generate(template_message, ref_dict=ref_dict)
                     generation_method = "profile_based_generate_ref"
                     logger.info("✅ Used model.generate() with ref_dict")
-                except TypeError:
-                    logger.info("❌ model.generate() doesn't accept ref_dict")
+                except TypeError as e:
+                    logger.info(f"❌ model.generate() doesn't accept ref_dict: {e}")
                 except Exception as e:
                     logger.warning(f"⚠️ model.generate() with ref_dict failed: {e}")
+                    logger.warning(f"⚠️ Exception type: {type(e).__name__}")
 
             # Fallback: Use original audio file method
             if audio_tensor is None:
@@ -365,6 +477,10 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception as e:
             logger.error(f"Failed to read profile file: {e}")
 
+    # Log final summary
+    logger.info(f"🎯 Final generation method: {generation_method}")
+    logger.info(f"📂 Repository used: {'FORKED' if 'chatterbox_embed' in str(model.s3gen.__class__.__module__) else 'ORIGINAL'}")
+    
     if responseFormat == "base64":
         # Return base64 - ALWAYS return structured JSON, never raw strings
         response = {

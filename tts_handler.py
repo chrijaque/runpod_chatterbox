@@ -417,6 +417,26 @@ def initialize_model():
         # Fast-fail check for required method
         assert hasattr(model, 'load_voice_profile'), "🚨 Loaded model is missing `load_voice_profile`. Wrong class?"
 
+        # Verify s3gen module source
+        if hasattr(model, "s3gen"):
+            logger.info(f"📂 s3gen module path: {model.s3gen.__class__.__module__}")
+            logger.info(f"📂 s3gen class: {model.s3gen.__class__}")
+            
+            # Check if inference_from_text exists and its source
+            if hasattr(model.s3gen, 'inference_from_text'):
+                method = getattr(model.s3gen, 'inference_from_text')
+                logger.info(f"📂 inference_from_text source: {method.__code__.co_filename}")
+                logger.info(f"📂 inference_from_text line: {method.__code__.co_firstlineno}")
+                
+                if 'chatterbox_embed' in method.__code__.co_filename:
+                    logger.info("🎯 Using FORKED repository (chatterbox_embed)")
+                else:
+                    logger.warning("⚠️ Using ORIGINAL repository")
+            else:
+                logger.warning("⚠️ inference_from_text method does NOT exist")
+        else:
+            logger.warning("⚠️ Model does not have s3gen attribute")
+
         # Check model capabilities
         logger.info("🔍 Checking model capabilities:")
         logger.info(f"  - has load_voice_profile: {hasattr(model, 'load_voice_profile')}")
