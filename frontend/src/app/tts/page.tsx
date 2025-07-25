@@ -21,6 +21,7 @@ interface TTSResult {
         generation_time: number;
         tts_file: string;
         timestamp: string;
+        local_file?: string; // Added for large files
     };
 }
 
@@ -416,11 +417,35 @@ export default function TTSPage() {
                             <div className="space-y-4">
                                 <div>
                                     <h3 className="form-label mb-2">Generated Speech</h3>
-                                    <audio
-                                        src={`data:audio/wav;base64,${result.audio_base64}`}
-                                        controls
-                                        className="w-full"
-                                    />
+                                    
+                                    {result.audio_base64 ? (
+                                        // Small file - play directly from base64
+                                        <audio
+                                            src={`data:audio/wav;base64,${result.audio_base64}`}
+                                            controls
+                                            className="w-full"
+                                        />
+                                    ) : (
+                                        // Large file - saved locally, show success message
+                                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                                            <div className="flex items-center">
+                                                <div className="flex-shrink-0">
+                                                    <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                                    </svg>
+                                                </div>
+                                                <div className="ml-3">
+                                                    <h3 className="text-sm font-medium text-green-800">
+                                                        TTS Generation Complete!
+                                                    </h3>
+                                                    <div className="mt-2 text-sm text-green-700">
+                                                        <p>The audio file has been saved to your local directory.</p>
+                                                        <p className="mt-1">You can find it in the TTS Generations Library below.</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {result.metadata && (
@@ -432,6 +457,9 @@ export default function TTSPage() {
                                             <p>Text: "{result.metadata.text_input}"</p>
                                             {result.metadata.generation_time && (
                                                 <p>Generation Time: {result.metadata.generation_time.toFixed(2)}s</p>
+                                            )}
+                                            {result.metadata.local_file && (
+                                                <p>Saved to: {result.metadata.local_file}</p>
                                             )}
                                         </div>
                                     </div>

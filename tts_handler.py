@@ -575,12 +575,8 @@ def handler(event, responseFormat="base64"):
             logger.info(f"🔍 DEBUG: voice_id: {voice_id}")
             logger.info(f"🔍 DEBUG: timestamp: {timestamp}")
             
-            local_tts_dir = Path("./tts_generated")
-            logger.info(f"🔍 DEBUG: Creating directory: {local_tts_dir.absolute()}")
-            local_tts_dir.mkdir(exist_ok=True)
-            logger.info(f"🔍 DEBUG: Directory exists: {local_tts_dir.exists()}")
-            
-            local_filename = local_tts_dir / f"tts_{voice_id}_{timestamp}.wav"
+            # Save directly to local directory (same as voice cloning)
+            local_filename = TTS_GENERATED_DIR / f"tts_{voice_id}_{timestamp}.wav"
             logger.info(f"🔍 DEBUG: Full file path: {local_filename.absolute()}")
             logger.info(f"🔍 DEBUG: Parent directory exists: {local_filename.parent.exists()}")
             
@@ -589,6 +585,10 @@ def handler(event, responseFormat="base64"):
                 logger.info(f"💾 Saved TTS locally: {local_filename}")
                 logger.info(f"🔍 DEBUG: File exists after save: {local_filename.exists()}")
                 logger.info(f"🔍 DEBUG: File size: {local_filename.stat().st_size} bytes")
+                
+                # File saved successfully - no complex download logic needed
+                logger.info("✅ TTS file saved to local directory successfully")
+                
             except Exception as save_error:
                 logger.error(f"❌ ERROR saving TTS file: {save_error}")
                 logger.error(f"🔍 DEBUG: audio_tensor dtype: {audio_tensor.dtype}")
