@@ -207,10 +207,14 @@ def handle_voice_clone_request(input, responseFormat):
             save_voice_profile(temp_voice_file, voice_id)
             profile = load_voice_profile(voice_id)
         
+        # Track which generation method was used
+        generation_method = "unknown"
+        
         # Generate speech with the template message
         if profile is not None:
             # Use profile-based generation (forked repository method)
             logger.info("🔄 Using profile-based generation")
+            generation_method = "profile_based"
             
             # Create reference dictionary for inference
             ref_dict = {
@@ -228,10 +232,12 @@ def handle_voice_clone_request(input, responseFormat):
                 # Fallback to generate method if inference doesn't exist
                 logger.warning("⚠️ Using fallback generation method")
                 audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
+                generation_method = "profile_fallback"
         else:
             # Use original audio file method (fallback)
             logger.info("🔄 Using audio file method")
             audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
+            generation_method = "audio_file"
 
         # Generate output filename in voice_samples directory
         sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"

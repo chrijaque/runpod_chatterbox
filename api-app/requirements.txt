@@ -1,15 +1,4 @@
-# Voice Library API - Requirements
-# 
-# This file is for reference only. The actual requirements are in api-app/requirements.txt
-# 
-# To install dependencies for the FastAPI server:
-# cd api-app
-# pip install -r requirements.txt
-#
-# To install dependencies for RunPod handlers:
-# pip install -r requirements.txt
-
-# Core dependencies (same as api-app/requirements.txt)
+# FastAPI and production dependencies
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6

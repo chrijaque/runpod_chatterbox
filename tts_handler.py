@@ -624,7 +624,6 @@ def handler(event, responseFormat="base64"):
                         "sample_rate": model.sr,
                         "audio_shape": list(audio_tensor.shape),
                         "tts_file": str(tts_filename),
-                        "local_file": str(local_filename),
                         "timestamp": timestamp,
                         "response_type": "file_path_only"
                     }
@@ -642,7 +641,6 @@ def handler(event, responseFormat="base64"):
                         "sample_rate": model.sr,
                         "audio_shape": list(audio_tensor.shape),
                         "tts_file": str(tts_filename),
-                        "local_file": str(local_filename),
                         "timestamp": timestamp,
                         "response_type": "audio_data"
                     }

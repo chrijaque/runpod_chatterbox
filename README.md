@@ -1,131 +1,178 @@
-# RunPod Chatterbox Voice Cloning
+# Voice Library API - RunPod Chatterbox Integration
 
-A voice cloning application using Chatterbox TTS with persistent voice profiles, featuring a local voice library.
+A production-ready voice cloning and TTS API built with FastAPI, featuring Firebase integration and RunPod ML inference.
 
-## Architecture
+## 🏗️ Project Structure
 
-- **Frontend**: Next.js/React app for voice recording, library management, and TTS generation
-- **Local API**: Flask server for voice library, TTS library, and audio file serving  
-- **Voice Cloning Handler**: RunPod serverless handler for creating voice profiles
-- **TTS Generation Handler**: RunPod serverless handler for text-to-speech generation
-- **Local Storage**: Voice profiles (`.npy`), audio samples (`.wav`), and TTS generations (`.wav`)
+```
+runpod_chatterbox/
+├── api-app/                    ← **NEW: Modular FastAPI Application**
+│   ├── app/
+│   │   ├── main.py            ← FastAPI application initialization
+│   │   ├── api/
+│   │   │   ├── voices.py      ← Voice management endpoints
+│   │   │   ├── tts.py         ← TTS generation endpoints
+│   │   │   └── health.py      ← Health and debug endpoints
+│   │   ├── services/
+│   │   │   ├── firebase.py    ← Firebase Storage operations
+│   │   │   └── runpod_client.py ← RunPod API client
+│   │   ├── models/
+│   │   │   └── schemas.py     ← Pydantic models and schemas
+│   │   └── config.py          ← Application configuration
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── README.md
+├── frontend/                   ← Next.js Frontend Application
+├── rp_handler.py              ← RunPod Voice Cloning Handler
+├── tts_handler.py             ← RunPod TTS Handler
+├── firebase_creds.json        ← Firebase Credentials
+└── README.md                  ← This file
+```
 
-### Handler Separation
+## 🚀 Quick Start
 
-- **Voice Cloning** (`rp_handler.py`): Creates voice profiles from audio samples
-- **TTS Generation** (`tts_handler.py`): Uses saved profiles to generate speech
-- **Separate Endpoints**: Each handler has its own RunPod endpoint for easier debugging
-
-## Setup
-
-### 1. Install Dependencies
+### 1. Start the FastAPI Server
 
 ```bash
-# Install Python dependencies
-pip install -r requirements.txt
+cd api-app
+python start_fastapi.py
+```
 
-# Install frontend dependencies
+The API will be available at:
+- **API**: http://localhost:8000
+- **Documentation**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/health
+
+### 2. Start the Frontend
+
+```bash
 cd frontend
 npm install
-```
-
-### 2. Start Local API Server
-
-The local API serves the voice library and audio files:
-
-```bash
-python app.py
-```
-
-This will start the Flask server at `http://localhost:5001` and create the local directories:
-- `./voice_profiles/` - Voice profile files (`.npy`)
-- `./voice_samples/` - Generated audio samples (`.wav`) 
-- `./temp_voice/` - Temporary audio files
-
-### 3. Configure RunPod
-
-Create `frontend/.env.local`:
-
-```env
-NEXT_PUBLIC_RUNPOD_API_KEY=your_runpod_api_key
-NEXT_PUBLIC_RUNPOD_ENDPOINT_ID=your_voice_clone_endpoint_id
-NEXT_PUBLIC_TTS_ENDPOINT_ID=your_tts_endpoint_id
-```
-
-**Note**: You'll need to deploy both handlers separately on RunPod:
-- Voice Cloning Handler: Use `rp_handler.py` and `Dockerfile`
-- TTS Generation Handler: Use `tts_handler.py` and `Dockerfile.tts`
-
-### 4. Start Frontend
-
-```bash
-cd frontend
 npm run dev
 ```
 
-Visit `http://localhost:3000`
+The frontend will be available at: http://localhost:3000
 
-## Usage
+## 📋 API Endpoints
 
-### Creating Voice Clones
+### Voice Management
+- `GET /api/voices` - List all voices
+- `POST /api/voices/clone` - Create voice clone
+- `POST /api/voices/save` - Save voice files locally
+- `GET /api/voices/{voice_id}/sample` - Get voice sample audio
+- `GET /api/voices/{voice_id}/sample/base64` - Get voice sample as base64
+- `GET /api/voices/{voice_id}/profile` - Get voice profile
 
-1. Enter a name for the voice clone
-2. Record or upload audio sample
-3. Click "Clone Voice"
-4. RunPod generates the voice and saves files locally
+### TTS Generation
+- `GET /api/tts/generations` - List TTS generations
+- `POST /api/tts/generate` - Generate TTS
+- `POST /api/tts/save` - Save TTS generation
+- `GET /api/tts/generations/{file_id}/audio` - Get TTS audio file
 
-### Voice Library
+### System
+- `GET /health` - Health check
+- `GET /api/debug/directories` - Debug directory status
 
-- **Automatic**: Library updates after successful voice creation
-- **Manual**: Click "Refresh" to reload from local files
-- **Playback**: Click "Play Sample" to hear voice samples
+## 🔧 Configuration
 
-## API Endpoints
+### Environment Variables
 
-### Local API (Flask - Port 5001)
-
-```
-GET  /api/voices                    # List voice library
-GET  /api/voices/{id}/sample        # Get audio file
-GET  /api/voices/{id}/sample/base64 # Get base64 audio
-GET  /api/voices/{id}/profile       # Get voice profile file
-GET  /health                        # Health check
-```
-
-### RunPod APIs
-
-```
-# Voice Cloning Handler
-POST /run  # Generate voice clone
-
-# TTS Generation Handler  
-POST /run  # Generate TTS with saved voice
+Required for the FastAPI server (`api-app/`):
+```bash
+export FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
+export RUNPOD_API_KEY="your-runpod-api-key"
+export RUNPOD_ENDPOINT_ID="your-voice-clone-endpoint"
+export TTS_ENDPOINT_ID="your-tts-endpoint"
 ```
 
-## File Structure
+### Firebase Setup
 
-```
-voice_profiles/         # Voice profiles
-├── voice_emma.npy
-└── voice_christian.npy
+1. Place your `firebase_creds.json` in the root directory
+2. Update the bucket name in environment variables
+3. The API will automatically upload files to Firebase Storage
 
-voice_samples/          # Audio samples  
-├── voice_emma_sample_20240120_143022.wav
-└── voice_christian_sample_20240120_143155.wav
+## 🧪 Testing
 
-tts_generated/          # TTS generations
-├── tts_voice_emma_20240120_143022.wav
-└── tts_voice_christian_20240120_143155.wav
-
-temp_voice/             # Temporary files
+### Test the FastAPI Server
+```bash
+cd api-app
+python test_fastapi.py
 ```
 
-## Development
+### Test RunPod Handlers
+```bash
+# Test voice cloning
+python rp_handler.py
 
-The application separates concerns:
+# Test TTS generation
+python tts_handler.py
+```
 
-- **RunPod**: Heavy TTS processing with CUDA
-- **Local API**: Fast file serving and library management
-- **Frontend**: User interface and interaction
+## 🐳 Docker Deployment
 
-This design minimizes RunPod API calls and provides instant library access.
+### FastAPI Server
+```bash
+cd api-app
+docker-compose up --build
+```
+
+### RunPod Handlers
+```bash
+# Build voice cloning handler
+docker build -f Dockerfile -t voice-clone-handler .
+
+# Build TTS handler
+docker build -f Dockerfile.tts -t tts-handler .
+```
+
+## 📁 Directory Structure
+
+The application manages these directories:
+- `voice_profiles/` - Voice profile files (.npy, .json)
+- `voice_samples/` - Voice sample audio files
+- `temp_voice/` - Temporary voice processing files
+- `tts_generated/` - Generated TTS audio files
+
+## 🔄 Workflow
+
+### Voice Cloning
+1. Upload audio file → Frontend → FastAPI → RunPod
+2. RunPod processes the audio and returns voice profile
+3. Save results locally and to Firebase
+4. Voice available for TTS generation
+
+### TTS Generation
+1. Select voice and text → Frontend → FastAPI → RunPod
+2. RunPod generates TTS audio
+3. Save audio locally and to Firebase
+4. Audio available for playback and download
+
+## 🚀 Production Deployment
+
+### FastAPI Server (Recommended)
+```bash
+cd api-app
+docker-compose up -d
+```
+
+### RunPod Handlers
+Deploy to RunPod.io with the provided Dockerfiles and configuration files.
+
+## 📚 Documentation
+
+- **API Documentation**: http://localhost:8000/docs
+- **Frontend**: Next.js application with TypeScript
+- **RunPod Handlers**: Python handlers for ML inference
+- **Firebase**: Cloud storage for file persistence
+
+## 🤝 Contributing
+
+1. Follow the modular structure in `api-app/`
+2. Add tests for new features
+3. Update documentation
+4. Use type hints and Pydantic models
+
+## 📄 License
+
+This project is part of the Voice Library API system.

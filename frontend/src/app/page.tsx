@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
-import { API_ENDPOINT, RUNPOD_API_KEY } from '@/config/api';
+import { API_ENDPOINT, RUNPOD_API_KEY, VOICE_API } from '@/config/api';
 
 interface FileMetadata {
     voice_id: string;
@@ -48,8 +48,8 @@ export default function Home() {
     const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    const saveVoiceFilesLocally = async (result: any, voiceName: string) => {
-        console.log('🔍 DEBUGGING: saveVoiceFilesLocally called with:', {
+    const saveVoiceToAPI = async (result: any, voiceName: string) => {
+        console.log('🔍 DEBUGGING: saveVoiceToAPI called with:', {
             resultType: typeof result,
             resultKeys: result ? Object.keys(result) : 'NO RESULT',
             hasAudioBase64: !!(result && result.audio_base64),
@@ -59,7 +59,7 @@ export default function Home() {
         });
         
         if (!result || !result.audio_base64 || !result.metadata) {
-            console.log('⚠️ Cannot save voice files locally - missing data:', {
+            console.log('⚠️ Cannot save voice to API - missing data:', {
                 hasResult: !!result,
                 hasAudio: !!(result && result.audio_base64),
                 hasMetadata: !!(result && result.metadata)
@@ -67,7 +67,7 @@ export default function Home() {
             return;
         }
         
-        console.log('💾 Starting to save voice files locally...', { voiceName });
+        console.log('💾 Starting to save voice to FastAPI...', { voiceName });
         
         try {
             const metadata = result.metadata;
@@ -108,32 +108,34 @@ export default function Home() {
                 console.log('📎 Added profile file to form data');
             }
             
-            console.log('📤 Sending to local API...');
+            console.log('📤 Sending to FastAPI...');
             
-            // Send to local API to save
-            const response = await fetch('http://localhost:5001/api/voices/save', {
+            // Send to FastAPI to save (will handle Firebase upload)
+            const response = await fetch(`${VOICE_API}/save`, {
                 method: 'POST',
                 body: formData
             });
             
             const responseData = await response.json();
-            console.log('📥 Local API response:', responseData);
+            console.log('📥 FastAPI response:', responseData);
             
             if (response.ok) {
-                console.log(`✅ Successfully saved voice files locally for: ${voiceName}`);
+                console.log(`✅ Successfully saved voice to FastAPI/Firebase for: ${voiceName}`);
+                // Refresh the voice library to show the new voice
+                await loadVoiceLibrary();
             } else {
-                console.error(`❌ Failed to save voice files: ${responseData.message}`);
+                console.error(`❌ Failed to save voice: ${responseData.message}`);
             }
         } catch (error) {
-            console.error('❌ Error saving voice files locally:', error);
+            console.error('❌ Error saving voice to API:', error);
         }
     };
 
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
         try {
-            // Use local API server instead of RunPod
-            const response = await fetch('http://localhost:5001/api/voices', {
+            // Use FastAPI server instead of RunPod
+            const response = await fetch(VOICE_API, {
                 method: 'GET',
             });
 
@@ -155,8 +157,8 @@ export default function Home() {
     const playVoiceSample = async (voiceId: string) => {
         setPlayingVoice(voiceId);
         try {
-            // Use local API server to get audio file directly
-            const audioUrl = `http://localhost:5001/api/voices/${voiceId}/sample`;
+            // Use FastAPI server to get audio file directly
+            const audioUrl = `${VOICE_API}/${voiceId}/sample`;
             
             // Create audio element and play
             const audio = new Audio(audioUrl);
@@ -339,12 +341,12 @@ export default function Home() {
                     console.log('📋 Metadata saved:', result.metadata);
                 }
                 
-                // Save voice files locally after successful generation
+                // Save voice to FastAPI/Firebase after successful generation
                 if (result && result.audio_base64) {
-                    console.log('💾 Attempting to save voice files locally...');
-                    await saveVoiceFilesLocally(result, name);
+                    console.log('💾 Attempting to save voice to FastAPI/Firebase...');
+                    await saveVoiceToAPI(result, name);
                 } else {
-                    console.error('❌ No audio data in result - cannot save files locally', {
+                    console.error('❌ No audio data in result - cannot save voice', {
                         hasResult: !!result,
                         resultType: typeof result,
                         hasAudioBase64: !!(result && result.audio_base64),

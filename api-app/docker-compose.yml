@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  voice-library-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./voice_profiles:/app/voice_profiles
+      - ./voice_samples:/app/voice_samples
+      - ./temp_voice:/app/temp_voice
+      - ../firebase_creds.json:/app/firebase_creds.json:ro
+    environment:
+      - FIREBASE_STORAGE_BUCKET=godnathistorie-a25fa.appspot.com
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - DEBUG=False
+      - LOCAL_STORAGE_ENABLED=True
+      - FIREBASE_STORAGE_ENABLED=True
+      - RUNPOD_API_KEY=${RUNPOD_API_KEY}
+      - RUNPOD_ENDPOINT_ID=${RUNPOD_ENDPOINT_ID}
+      - TTS_ENDPOINT_ID=${TTS_ENDPOINT_ID}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s 

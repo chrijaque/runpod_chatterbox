@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { RUNPOD_API_KEY, TTS_API_ENDPOINT } from '@/config/api';
+import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_GENERATIONS_API } from '@/config/api';
 import Link from 'next/link';
 
 interface Voice {
@@ -21,7 +21,7 @@ interface TTSResult {
         generation_time: number;
         tts_file: string;
         timestamp: string;
-        local_file?: string; // Added for large files
+        firebase_url?: string; // Firebase URL for file access
     };
 }
 
@@ -58,7 +58,7 @@ export default function TTSPage() {
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
         try {
-            const response = await fetch('http://localhost:5001/api/voices', {
+            const response = await fetch(VOICE_API, {
                 method: 'GET',
             });
 
@@ -85,7 +85,7 @@ export default function TTSPage() {
     const loadTTSGenerations = async () => {
         setIsLoadingGenerations(true);
         try {
-            const response = await fetch('http://localhost:5001/api/tts/generations', {
+            const response = await fetch(TTS_GENERATIONS_API, {
                 method: 'GET',
             });
 
@@ -108,7 +108,7 @@ export default function TTSPage() {
     const playTTSGeneration = async (fileId: string) => {
         setPlayingGeneration(fileId);
         try {
-            const audioUrl = `http://localhost:5001/api/tts/generations/${fileId}/audio`;
+            const audioUrl = `${TTS_GENERATIONS_API}/${fileId}/audio`;
             
             const audio = new Audio(audioUrl);
             audio.onended = () => setPlayingGeneration(null);
@@ -202,9 +202,9 @@ export default function TTSPage() {
                 selectedVoice 
             });
 
-                    // Fetch the voice profile from local API
-        console.log('📥 Fetching voice profile from local API...');
-        const profileResponse = await fetch(`http://localhost:5001/api/voices/${selectedVoice}/profile`);
+                    // Fetch the voice profile from FastAPI
+        console.log('📥 Fetching voice profile from FastAPI...');
+        const profileResponse = await fetch(`${VOICE_API}/${selectedVoice}/profile`);
         
         if (!profileResponse.ok) {
             const errorData = await profileResponse.json().catch(() => ({}));
@@ -426,7 +426,7 @@ export default function TTSPage() {
                                             className="w-full"
                                         />
                                     ) : (
-                                        // Large file - saved locally, show success message
+                                        // Large file - saved to Firebase, show success message
                                         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                                             <div className="flex items-center">
                                                 <div className="flex-shrink-0">
@@ -439,7 +439,7 @@ export default function TTSPage() {
                                                         TTS Generation Complete!
                                                     </h3>
                                                     <div className="mt-2 text-sm text-green-700">
-                                                        <p>The audio file has been saved to your local directory.</p>
+                                                        <p>The audio file has been saved to Firebase storage.</p>
                                                         <p className="mt-1">You can find it in the TTS Generations Library below.</p>
                                                     </div>
                                                 </div>
@@ -458,8 +458,8 @@ export default function TTSPage() {
                                             {result.metadata.generation_time && (
                                                 <p>Generation Time: {result.metadata.generation_time.toFixed(2)}s</p>
                                             )}
-                                            {result.metadata.local_file && (
-                                                <p>Saved to: {result.metadata.local_file}</p>
+                                            {result.metadata.firebase_url && (
+                                                <p>Firebase URL: <a href={result.metadata.firebase_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">View File</a></p>
                                             )}
                                         </div>
                                     </div>
