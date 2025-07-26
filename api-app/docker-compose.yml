@@ -13,7 +13,7 @@ services:
       - ./temp_voice:/app/temp_voice
       - ../firebase_creds.json:/app/firebase_creds.json:ro
     environment:
-      - FIREBASE_STORAGE_BUCKET=godnathistorie-a25fa.appspot.com
+      - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - DEBUG=False

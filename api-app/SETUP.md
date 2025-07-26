@@ -13,7 +13,7 @@ RUNPOD_ENDPOINT_ID=your_voice_clone_endpoint_id_here
 TTS_ENDPOINT_ID=your_tts_endpoint_id_here
 
 # Firebase Configuration
-FIREBASE_STORAGE_BUCKET=godnathistorie-a25fa.appspot.com
+FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
 
 # API Configuration
 API_HOST=0.0.0.0
@@ -44,8 +44,8 @@ FIREBASE_STORAGE_ENABLED=True
    - This contains your Firebase service account credentials
 
 2. **Firebase Bucket**:
-   - Your bucket name is: `godnathistorie-a25fa.appspot.com`
-   - This is already configured in the `.env` file
+   - Your bucket name should be: `your-project-id.firebasestorage.app`
+   - Update this in the `.env` file with your actual bucket name
 
 ## 🚀 Installation
 
@@ -93,7 +93,7 @@ environment:
   - RUNPOD_API_KEY=your_key_here
   - RUNPOD_ENDPOINT_ID=your_endpoint_here
   - TTS_ENDPOINT_ID=your_tts_endpoint_here
-  - FIREBASE_STORAGE_BUCKET=godnathistorie-a25fa.appspot.com
+  - FIREBASE_STORAGE_BUCKET=your-project-id.firebasestorage.app
 ```
 
 ## 🔍 Troubleshooting

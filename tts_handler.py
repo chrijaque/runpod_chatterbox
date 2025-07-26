@@ -17,12 +17,12 @@ logger = logging.getLogger(__name__)
 
 # Import the handler from the forked repository
 try:
-    from chatterbox.handlers.vc import VoiceCloneHandler
+    from chatterbox.vc import ChatterboxVC
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("✅ Successfully imported VoiceCloneHandler from forked repository")
+    logger.info("✅ Successfully imported ChatterboxVC from forked repository")
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
-    logger.warning(f"⚠️ Could not import VoiceCloneHandler from forked repository: {e}")
+    logger.warning(f"⚠️ Could not import ChatterboxVC from forked repository: {e}")
 
 # Try to import optional dependencies
 try:
@@ -92,13 +92,19 @@ class TTSProcessor:
         self.forked_handler = forked_handler
         self.pause_ms = pause_ms
         self.max_chars = max_chars
+        self.voice_profile_path = voice_profile_path  # Store the path for later use
         
         # Load the voice profile using the best available method
         try:
-            if forked_handler is not None and hasattr(forked_handler, 'load_voice_profile'):
-                # Use forked repository handler
-                self.voice_profile = forked_handler.load_voice_profile(voice_profile_path)
-                logger.info(f"✅ Voice profile loaded using forked handler from: {voice_profile_path}")
+            if forked_handler is not None and hasattr(forked_handler, 'set_target_voice'):
+                # ChatterboxVC doesn't have load_voice_profile, so use model method
+                if hasattr(model, 'load_voice_profile'):
+                    self.voice_profile = model.load_voice_profile(voice_profile_path)
+                    logger.info(f"✅ Voice profile loaded using model method from: {voice_profile_path}")
+                else:
+                    # Fallback: store path for old method
+                    self.voice_profile = voice_profile_path
+                    logger.warning(f"⚠️ Model doesn't have load_voice_profile - using path: {voice_profile_path}")
             elif hasattr(model, 'load_voice_profile'):
                 # Use enhanced method from forked repository
                 self.voice_profile = model.load_voice_profile(voice_profile_path)
@@ -208,24 +214,25 @@ class TTSProcessor:
                     # Generate audio tensor using the best available method
                     audio_tensor = None
                     
-                    # Method 1: Try forked repository handler first
-                    if self.forked_handler is not None and hasattr(self.forked_handler, 'generate_voice_clone'):
-                        try:
-                            audio_tensor = self.forked_handler.generate_voice_clone(chunk, self.voice_profile)
-                            logger.info(f"✅ Chunk {i+1} generated using forked handler")
-                        except Exception as e:
-                            logger.warning(f"⚠️ Forked handler failed for chunk {i+1}: {e}")
-                    
-                    # Method 2: Try the new inference_from_text method (profile-based)
-                    if audio_tensor is None:
-                        try:
-                            audio_tensor = self.model.inference_from_text(chunk, ref_dict=self.voice_profile)
-                            logger.info(f"✅ Chunk {i+1} generated using profile-based inference_from_text")
-                        except (AttributeError, RuntimeError) as e:
-                            logger.info(f"🔄 inference_from_text failed for chunk {i+1}: {e}")
-                    
-                    # Method 3: Fallback to the old generate method
-                    if audio_tensor is None:
+                    # Use the correct high-level method: ChatterboxTTS.generate() with voice_profile_path
+                    try:
+                        # For TTS, we'll use the standard generate method with the voice profile path
+                        # Since we're in the TTSProcessor, we need to pass the voice profile path
+                        # that was used to initialize this processor
+                        
+                        audio_tensor = self.model.generate(
+                            text=chunk,
+                            voice_profile_path=self.voice_profile_path,  # Use the path passed to __init__
+                            temperature=0.8,
+                            exaggeration=0.5,
+                            cfg_weight=0.5
+                        )
+                        logger.info(f"✅ Chunk {i+1} generated using standard generate with voice_profile_path")
+                        
+                    except Exception as e:
+                        logger.warning(f"⚠️ Standard generate with voice_profile_path failed for chunk {i+1}: {e}")
+                        
+                        # Fallback: Use the old generate method
                         logger.info(f"🔄 Falling back to generate method for chunk {i+1}")
                         audio_tensor = self.model.generate(chunk, temperature=0.7)
                         logger.info(f"✅ Chunk {i+1} generated using fallback generate method")
@@ -431,20 +438,24 @@ def initialize_model():
 
         # Initialize the forked repository handler if available
         if FORKED_HANDLER_AVAILABLE:
-            logger.info("🔧 Initializing VoiceCloneHandler from forked repository...")
+            logger.info("🔧 Initializing ChatterboxVC from forked repository...")
             try:
-                forked_handler = VoiceCloneHandler(model)
-                logger.info("✅ VoiceCloneHandler initialized successfully")
+                # ChatterboxVC needs to be initialized with the s3gen model and device
+                forked_handler = ChatterboxVC(
+                    s3gen=model.s3gen,
+                    device=model.device
+                )
+                logger.info("✅ ChatterboxVC initialized successfully")
                 
                 # Log handler capabilities
                 handler_methods = [method for method in dir(forked_handler) if not method.startswith('_')]
                 logger.info(f"📋 Available handler methods: {handler_methods}")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to initialize VoiceCloneHandler: {e}")
+                logger.error(f"❌ Failed to initialize ChatterboxVC: {e}")
                 forked_handler = None
         else:
-            logger.warning("⚠️ VoiceCloneHandler not available - will use fallback methods")
+            logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
 
         # Additional model introspection logs
         import inspect
@@ -606,10 +617,14 @@ def handler(event, responseFormat="base64"):
         logger.info(f"  - forked handler available: {forked_handler is not None}")
         
         # Load the profile using the best available method
-        if forked_handler is not None and hasattr(forked_handler, 'load_voice_profile'):
-            logger.info("🔄 Loading profile using forked handler load_voice_profile method...")
-            profile = forked_handler.load_voice_profile(str(temp_profile_path))
-            logger.info(f"✅ Voice profile loaded using forked handler")
+        if forked_handler is not None and hasattr(forked_handler, 'set_target_voice'):
+            logger.info("🔄 Loading profile using model method (ChatterboxVC doesn't have load_voice_profile)...")
+            if hasattr(model, 'load_voice_profile'):
+                profile = model.load_voice_profile(str(temp_profile_path))
+                logger.info(f"✅ Voice profile loaded using model method")
+            else:
+                logger.error("❌ Model doesn't have load_voice_profile method")
+                return {"status": "error", "message": "Voice profile support not available"}
         elif hasattr(model, 'load_voice_profile'):
             logger.info("🔄 Loading profile using model load_voice_profile method...")
             profile = model.load_voice_profile(str(temp_profile_path))

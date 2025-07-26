@@ -4,12 +4,14 @@ from typing import Optional
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+# Look for .env file in the api-app directory
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
 
 class Settings:
     # Firebase Configuration
     FIREBASE_CREDENTIALS_FILE: str = "firebase_creds.json"
-    FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET", "godnathistorie-a25fa.firebasestorage.app")
+    FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET")
     
     # API Configuration
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

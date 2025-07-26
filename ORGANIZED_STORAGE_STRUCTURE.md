@@ -7,7 +7,7 @@ This document describes the new organized storage structure for the voice AI API
 ## **📁 Firebase Storage Structure**
 
 ```
-gs://godnathistorie-a25fa.firebasestorage.app/audio/voices/
+gs://your-project-id.firebasestorage.app/audio/voices/
 ├── en/                          # English voices
 │   ├── recorded/                # User raw recordings
 │   │   ├── voice_john_doe_recording_1_20250725_163000.wav

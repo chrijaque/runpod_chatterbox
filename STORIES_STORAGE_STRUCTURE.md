@@ -7,7 +7,7 @@ This document describes the new organized storage structure for TTS-generated st
 ## **📁 Firebase Storage Structure**
 
 ```
-gs://godnathistorie-a25fa.firebasestorage.app/audio/stories/
+gs://your-project-id.firebasestorage.app/audio/stories/
 ├── en/                          # English stories
 │   ├── user/                    # User-generated stories
 │   │   ├── gen_20250725_163000_TTS_voice_john_doe_20250725_163000.wav
