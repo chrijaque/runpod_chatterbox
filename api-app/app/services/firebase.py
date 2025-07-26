@@ -23,14 +23,16 @@ class FirebaseService:
             # Check if Firebase is already initialized
             if not firebase_admin._apps:
                 cred = credentials.Certificate(self.credentials_file)
-                firebase_admin.initialize_app(cred, {
-                    'storageBucket': self.bucket_name
-                })
+                logger.info(f"🔍 Initializing Firebase with storageBucket: {self.bucket_name}")
+                # Don't specify storageBucket in the config, let it use the default
+                firebase_admin.initialize_app(cred)
                 logger.info("✅ Firebase initialized successfully")
             
             # Try to get the bucket
             try:
+                logger.info(f"🔍 Getting bucket with name: {self.bucket_name}")
                 self.bucket = storage.bucket(self.bucket_name)
+                logger.info(f"🔍 Bucket object created: {self.bucket.name}")
                 
                 # Test if the bucket actually exists by trying to list blobs
                 try:
@@ -72,6 +74,7 @@ class FirebaseService:
             
             # Create a client using the same credentials
             client = gcs_storage.Client.from_service_account_json(self.credentials_file)
+            logger.info(f"🔍 Google Cloud Storage client created")
             
             # Extract project ID from bucket name
             # Our bucket format is: project-id.firebasestorage.app
@@ -82,6 +85,7 @@ class FirebaseService:
             logger.info(f"🔧 Full bucket name will be: {self.bucket_name}")
             
             # Create the bucket
+            logger.info(f"🔍 Creating bucket with name: {self.bucket_name} and project: {project_id}")
             bucket = client.create_bucket(self.bucket_name, project=project_id)
             logger.info(f"✅ Successfully created bucket: {self.bucket_name}")
             return True
@@ -377,6 +381,8 @@ class FirebaseService:
             
             try:
                 # Upload to Firebase
+                logger.info(f"🔍 Uploading to Firebase path: {firebase_path}")
+                logger.info(f"🔍 Using bucket: {self.bucket.name}")
                 blob = self.bucket.blob(firebase_path)
                 blob.upload_from_filename(str(temp_path))
                 blob.make_public()
