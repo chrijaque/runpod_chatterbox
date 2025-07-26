@@ -55,7 +55,7 @@ async def list_tts_generations():
                     display_name = voice_id.replace("voice_", "").replace("_", " ").title()
                     
                     # Try to get Firebase URL
-                    firebase_url = firebase_service.get_public_url(f"tts_generations/{tts_file.name}")
+                    firebase_url = firebase_service.get_public_url(f"audio/stories/en/user/{tts_file.name}")
                     
                     generation = TTSGeneration(
                         file_id=tts_file.stem,
@@ -221,7 +221,7 @@ async def save_tts_generation(
         if firebase_service.is_connected():
             firebase_url = firebase_service.upload_file(
                 tts_filename,
-                f"tts_generations/{tts_filename.name}"
+                f"audio/stories/en/user/{tts_filename.name}"
             )
             if firebase_url:
                 logger.info(f"✅ Uploaded TTS to Firebase: {firebase_url}")
@@ -278,7 +278,7 @@ async def get_tts_firebase_url(generation_id: str):
     """Get TTS generation from Firebase (shared access)"""
     try:
         # Get the TTS URL from Firebase
-        tts_url = firebase_service.get_public_url(f"tts/{generation_id}")
+        tts_url = firebase_service.get_public_url(f"audio/stories/en/user/{generation_id}")
         
         if not tts_url:
             raise HTTPException(status_code=404, detail=f"TTS generation not found: {generation_id}")

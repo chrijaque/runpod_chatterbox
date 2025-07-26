@@ -46,7 +46,7 @@ class Settings:
             return True
         if not Path(cls.FIREBASE_CREDENTIALS_FILE).exists():
             return False
-        if cls.FIREBASE_STORAGE_BUCKET == "your-project-id.appspot.com":
+        if not cls.FIREBASE_STORAGE_BUCKET:
             return False
         return True
 

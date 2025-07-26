@@ -30,7 +30,7 @@ class FirebaseService:
             
             # Try to get the bucket
             try:
-                self.bucket = storage.bucket()
+                self.bucket = storage.bucket(self.bucket_name)
                 
                 # Test if the bucket actually exists by trying to list blobs
                 try:
@@ -43,7 +43,7 @@ class FirebaseService:
                     
                     # Try to create the bucket
                     if self._create_bucket():
-                        self.bucket = storage.bucket()
+                        self.bucket = storage.bucket(self.bucket_name)
                         logger.info(f"✅ Successfully created and connected to bucket: {self.bucket_name}")
                     else:
                         logger.error(f"❌ Failed to create bucket: {self.bucket_name}")
@@ -55,7 +55,7 @@ class FirebaseService:
                 
                 # Try to create the bucket
                 if self._create_bucket():
-                    self.bucket = storage.bucket()
+                    self.bucket = storage.bucket(self.bucket_name)
                     logger.info(f"✅ Successfully created and connected to bucket: {self.bucket_name}")
                 else:
                     logger.error(f"❌ Failed to create bucket: {self.bucket_name}")
@@ -74,12 +74,9 @@ class FirebaseService:
             client = gcs_storage.Client.from_service_account_json(self.credentials_file)
             
             # Extract project ID from bucket name
-            # Firebase bucket names are typically: project-id.appspot.com
-            # But for creation, we need just the project ID
-            if '.appspot.com' in self.bucket_name:
-                project_id = self.bucket_name.replace('.appspot.com', '')
-            else:
-                project_id = self.bucket_name
+            # Our bucket format is: project-id.firebasestorage.app
+            # For creation, we need just the project ID
+            project_id = self.bucket_name.replace('.firebasestorage.app', '')
             
             logger.info(f"🔧 Creating bucket with project ID: {project_id}")
             logger.info(f"🔧 Full bucket name will be: {self.bucket_name}")

@@ -67,15 +67,23 @@ tts_generations/
 ### **Firebase Storage (Persistence):**
 ```
 gs://your-bucket/
-├── voice_samples/
-│   ├── voice_chrisrepo1_sample_20250725_123456.wav
-│   └── voice_newvoice_sample_20250725_124500.wav
-├── voice_profiles/
-│   ├── voice_chrisrepo1.npy
-│   └── voice_newvoice.npy
-└── tts_generations/
-    ├── TTS_voice_chrisrepo1_20250725_130000.wav
-    └── TTS_voice_newvoice_20250725_131500.wav
+├── audio/
+│   ├── voices/
+│   │   ├── en/
+│   │   │   ├── samples/
+│   │   │   │   ├── voice_chrisrepo1_sample_20250725_123456.wav
+│   │   │   │   └── voice_newvoice_sample_20250725_124500.wav
+│   │   │   └── profiles/
+│   │   │       ├── voice_chrisrepo1.npy
+│   │   │       └── voice_newvoice.npy
+│   │   └── [other_languages]/
+│   └── stories/
+│       ├── en/
+│       │   ├── user/
+│       │   │   ├── TTS_voice_chrisrepo1_20250725_130000.wav
+│       │   │   └── TTS_voice_newvoice_20250725_131500.wav
+│       │   └── app/
+│       └── [other_languages]/
 ```
 
 ## 🔧 Key Changes Made
