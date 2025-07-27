@@ -51,7 +51,16 @@ def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
     try:
-        storage_client = storage.Client()  # auto-reads credentials from GOOGLE_APPLICATION_CREDENTIALS
+        # Check if we're in RunPod and have the secret
+        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
+        if firebase_secret_path and os.path.exists(firebase_secret_path):
+            logger.info(f"✅ Using RunPod Firebase secret: {firebase_secret_path}")
+            storage_client = storage.Client.from_service_account_json(firebase_secret_path)
+        else:
+            # Fallback to GOOGLE_APPLICATION_CREDENTIALS
+            logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+            storage_client = storage.Client()
+        
         bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
         logger.info("✅ Firebase storage client initialized successfully")
         return True

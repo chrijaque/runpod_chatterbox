@@ -10,8 +10,8 @@ ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Set Firebase credentials path
-ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase.json
+# Firebase credentials will be provided via RunPod secrets
+# ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase.json
 
 # Install system dependencies including FFmpeg
 RUN apt-get update && \
