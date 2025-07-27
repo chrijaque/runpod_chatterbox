@@ -13,7 +13,7 @@ interface Voice {
 }
 
 interface TTSResult {
-    audio_base64: string;
+    audio_path: string;
     metadata: {
         voice_id: string;
         voice_name: string;
@@ -184,11 +184,11 @@ export default function TTSPage() {
                     if (data.output?.status === 'error') {
                         throw new Error(data.output.message);
                     }
-                    if (data.output?.audio_base64) {
-                        console.log('TTS Found audio_base64 in output, returning output object');
+                    if (data.output?.audio_path) {
+                        console.log('TTS Found audio_path in output, returning output object');
                         return data.output;
                     }
-                    console.log('TTS No audio_base64 found, returning raw output');
+                    console.log('TTS No audio_path found, returning raw output');
                     return data.output;
                 } else if (data.status === 'FAILED') {
                     throw new Error(data.error || 'Job failed');
@@ -255,7 +255,7 @@ export default function TTSPage() {
             console.log('📨 FastAPI TTS response received:', {
                 status: data.status,
                 hasGenerationId: !!data.generation_id,
-                hasAudioBase64: !!data.audio_base64,
+                hasAudioPath: !!data.audio_path,
                 hasMetadata: !!data.metadata,
                 keys: Object.keys(data)
             });
@@ -267,13 +267,13 @@ export default function TTSPage() {
             if (data.status === 'success') {
                 console.log('🏁 TTS generation completed successfully:', {
                     generation_id: data.generation_id,
-                    hasAudioBase64: !!data.audio_base64,
+                    hasAudioPath: !!data.audio_path,
                     firebase_urls: data.metadata?.firebase_urls
                 });
                 
                 // Set the result for display
                 setResult({
-                    audio_base64: data.audio_base64,
+                    audio_path: data.audio_path,
                     metadata: {
                         voice_id: data.voice_id,
                         voice_name: data.metadata?.voice_name || selectedVoice,
@@ -500,15 +500,8 @@ export default function TTSPage() {
                                 <div>
                                     <h3 className="form-label mb-2">Generated Speech</h3>
                                     
-                                    {result.audio_base64 ? (
-                                        // Small file - play directly from base64
-                                        <audio
-                                            src={`data:audio/wav;base64,${result.audio_base64}`}
-                                            controls
-                                            className="w-full"
-                                        />
-                                    ) : (
-                                        // Large file - saved to Firebase, show success message
+                                    {result.audio_path ? (
+                                        // File saved to Firebase - show success message with path
                                         <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                                             <div className="flex items-center">
                                                 <div className="flex-shrink-0">
@@ -522,7 +515,27 @@ export default function TTSPage() {
                                                     </h3>
                                                     <div className="mt-2 text-sm text-green-700">
                                                         <p>The audio file has been saved to Firebase storage.</p>
+                                                        <p className="mt-1">Path: {result.audio_path}</p>
                                                         <p className="mt-1">You can find it in the TTS Generations Library below.</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        // No audio path - show error
+                                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                                            <div className="flex items-center">
+                                                <div className="flex-shrink-0">
+                                                    <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                                    </svg>
+                                                </div>
+                                                <div className="ml-3">
+                                                    <h3 className="text-sm font-medium text-red-800">
+                                                        TTS Generation Failed
+                                                    </h3>
+                                                    <div className="mt-2 text-sm text-red-700">
+                                                        <p>No audio file path received from the server.</p>
                                                     </div>
                                                 </div>
                                             </div>

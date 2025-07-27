@@ -46,8 +46,8 @@ class VoiceCloneResponse(BaseModel):
     status: str
     voice_id: str
     voice_name: str
-    audio_base64: Optional[str] = None
-    profile_base64: Optional[str] = None
+    audio_path: Optional[str] = None
+    profile_path: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 # TTS Models
@@ -76,7 +76,7 @@ class TTSGenerateResponse(BaseModel):
     generation_id: str
     voice_id: str
     text: str
-    audio_base64: Optional[str] = None
+    audio_path: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class TTSSaveRequest(BaseModel):

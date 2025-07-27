@@ -46,14 +46,32 @@ logger.info("🔍 ===== END RUNPOD CLIENT CREATION DEBUG =====")
 async def list_voices():
     """Get voice library with Firebase integration"""
     try:
-        voices: List[VoiceInfo] = []
+        # List all voices from Firebase for English (default)
+        firebase_voices = firebase_service.list_voices_by_language("en", False)
         
-        # Since we're using Firebase for storage, return empty list
-        # Voice listing should be done through Firebase endpoints
+        # Convert to VoiceInfo format
+        voices: List[VoiceInfo] = []
+        for voice_data in firebase_voices:
+            voice_info = VoiceInfo(
+                voice_id=voice_data["voice_id"],
+                name=voice_data.get("name", voice_data["voice_id"]),
+                sample_file=voice_data.get("samples", [None])[0] if voice_data.get("samples") else None,
+                profile_file=voice_data.get("profiles", [None])[0] if voice_data.get("profiles") else None,
+                created_date=voice_data.get("created_date"),
+                has_profile=len(voice_data.get("profiles", [])) > 0,
+                has_metadata=True,
+                firebase_url=voice_data.get("samples", [None])[0] if voice_data.get("samples") else None,
+                language="en",
+                is_kids_voice=False,
+                user_id="unknown",
+                visibility="private"
+            )
+            voices.append(voice_info)
+        
         return VoiceLibraryResponse(
             status="success",
-            voices=[],
-            total_voices=0
+            voices=voices,
+            total_voices=len(voices)
         )
         
     except Exception as e:
@@ -165,16 +183,19 @@ async def create_voice_clone(request: VoiceCloneRequest):
         if output.get('status') != 'success':
             raise HTTPException(status_code=500, detail=f"Voice clone failed: {output.get('message', 'Unknown error')}")
         
-        # Extract file information from RunPod response
-        sample_file = output.get('metadata', {}).get('sample_file')
-        profile_path = output.get('metadata', {}).get('profile_path')
+        # Extract file paths from RunPod response
+        profile_path = output.get('profile_path')
+        audio_path = output.get('audio_path')
         
-        if not sample_file:
-            raise HTTPException(status_code=500, detail="Invalid response from RunPod")
-        
-        # Extract filename from RunPod path
-        sample_filename = Path(sample_file).name
-        profile_filename = f"{voice_id}.npy" if profile_path else None
+        if not audio_path:
+            logger.warning("⚠️ No audio_path in RunPod response")
+        else:
+            logger.info(f"✅ Voice sample path from RunPod: {audio_path}")
+            
+        if not profile_path:
+            logger.warning("⚠️ No profile_path in RunPod response")
+        else:
+            logger.info(f"✅ Voice profile path from RunPod: {profile_path}")
         
         # Upload user recordings to Firebase
         for i, audio_data in enumerate(request.voices):
@@ -324,7 +345,13 @@ async def get_voice_sample_firebase(voice_id: str, language: str = "en", is_kids
 async def list_voices_by_language(language: str, is_kids_voice: bool = False):
     """List all voices for a specific language and type"""
     try:
+        logger.info(f"🔍 Listing voices for language: {language}, kids_voice: {is_kids_voice}")
+        
         voices = firebase_service.list_voices_by_language(language, is_kids_voice)
+        
+        logger.info(f"✅ Found {len(voices)} voices in Firebase")
+        for voice in voices:
+            logger.info(f"   - {voice.get('voice_id', 'unknown')}: {len(voice.get('samples', []))} samples, {len(voice.get('profiles', []))} profiles")
         
         return {
             "status": "success",

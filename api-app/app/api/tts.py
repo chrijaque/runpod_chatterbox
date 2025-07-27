@@ -35,42 +35,27 @@ runpod_client = RunPodClient(
 async def list_tts_generations():
     """Get TTS generations library with Firebase integration"""
     try:
+        # List all stories from Firebase for English (default)
+        firebase_stories = firebase_service.list_stories_by_language("en", "user")
+        
+        # Convert to TTSGeneration format
         generations: List[TTSGeneration] = []
-        
-        if not settings.TTS_GENERATED_DIR.exists():
-            return TTSGenerationsResponse(
-                status="success",
-                total_generations=0,
-                generations=[]
-            )
-        
-        tts_files = list(settings.TTS_GENERATED_DIR.glob("TTS_*.wav"))
-        
-        for tts_file in tts_files:
+        for story_data in firebase_stories:
             try:
-                filename_parts = tts_file.stem.split('_')
-                if len(filename_parts) >= 4:
-                    voice_id = '_'.join(filename_parts[1:-1])
-                    timestamp = filename_parts[-1]
-                    display_name = voice_id.replace("voice_", "").replace("_", " ").title()
-                    
-                    # Try to get Firebase URL
-                    firebase_url = firebase_service.get_public_url(f"audio/stories/en/user/{tts_file.name}")
-                    
-                    generation = TTSGeneration(
-                        file_id=tts_file.stem,
-                        voice_id=voice_id,
-                        voice_name=display_name,
-                        file_path=str(tts_file),
-                        created_date=tts_file.stat().st_mtime,
-                        timestamp=timestamp,
-                        file_size=tts_file.stat().st_size,
-                        firebase_url=firebase_url
-                    )
-                    generations.append(generation)
+                generation = TTSGeneration(
+                    file_id=story_data["generation_id"],
+                    voice_id=story_data.get("voice_id", "unknown"),
+                    voice_name=story_data.get("voice_name", "Unknown Voice"),
+                    file_path=story_data.get("audio_files", [None])[0] if story_data.get("audio_files") else None,
+                    created_date=story_data.get("created_date"),
+                    timestamp=story_data.get("generation_id", "").split("_")[-1] if "_" in story_data.get("generation_id", "") else "",
+                    file_size=0,  # We don't have file size from Firebase listing
+                    firebase_url=story_data.get("audio_files", [None])[0] if story_data.get("audio_files") else None
+                )
+                generations.append(generation)
                     
             except Exception as e:
-                logger.error(f"Error parsing TTS file {tts_file}: {e}")
+                logger.error(f"Error parsing story data {story_data}: {e}")
                 continue
         
         generations.sort(key=lambda x: x.created_date or 0, reverse=True)

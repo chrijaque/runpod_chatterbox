@@ -61,90 +61,37 @@ export default function Home() {
     }, [language, isKidsVoice]);
 
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
-        // This function saves the voice clone to Firebase via FastAPI
-        // OPTIMIZED Workflow: 
-        // 1. User records/uploads audio (stored in audioData state)
-        // 2. Frontend calls RunPod directly for immediate feedback
-        // 3. Frontend sends ORIGINAL recording + GENERATED SAMPLE to FastAPI
-        // 4. FastAPI uploads to Firebase WITHOUT calling RunPod again (optimization!)
+        // This function is now simplified since RunPod handles Firebase uploads directly
         console.log('🔍 DEBUGGING: saveVoiceToAPI called with:', {
             resultType: typeof result,
             resultKeys: result ? Object.keys(result) : 'NO RESULT',
-            hasAudioBase64: !!(result && result.audio_base64),
-            hasProfileBase64: !!(result && result.profile_base64),
+            hasAudioPath: !!(result && result.audio_path),
+            hasProfilePath: !!(result && result.profile_path),
             hasMetadata: !!(result && result.metadata),
             voiceName
         });
         
-        if (!result || !result.audio_base64 || !result.metadata) {
+        if (!result || !result.audio_path || !result.metadata) {
             console.log('⚠️ Cannot save voice to API - missing data:', {
                 hasResult: !!result,
-                hasAudio: !!(result && result.audio_base64),
+                hasAudioPath: !!(result && result.audio_path),
                 hasMetadata: !!(result && result.metadata)
             });
             return;
         }
         
-        console.log('💾 Starting to save voice to FastAPI with new organized workflow...', { voiceName });
+        console.log('💾 Voice already saved to Firebase by RunPod:', { 
+            voiceName,
+            audioPath: result.audio_path,
+            profilePath: result.profile_path
+        });
         
+        // Since RunPod already uploaded to Firebase, we just need to refresh the library
         try {
-            const metadata = result.metadata;
-            const voiceId = metadata.voice_id;
-            
-            console.log('📝 Voice metadata:', { 
-                voiceId, 
-                voiceName, 
-                hasProfileSupport: metadata.has_profile_support,
-                hasProfileData: !!result.profile_base64
-            });
-            
-            // Create the new organized request structure
-            // Send both original recording AND generated sample to avoid duplicate RunPod calls
-            const cloneRequest = {
-                title: voiceName,
-                voices: [audioData], // Original recording for voice profile
-                generated_sample: result.audio_base64, // Pre-generated sample for Firebase
-                visibility: "private",
-                metadata: {
-                    language: language, // Use state variable
-                    isKidsVoice: isKidsVoice, // Use state variable
-                    userId: "dev_user", // Default for development
-                    createdAt: new Date().toISOString()
-                }
-            };
-            
-            console.log('📤 Sending organized clone request to FastAPI...', {
-                title: cloneRequest.title,
-                voicesCount: cloneRequest.voices.length,
-                language: cloneRequest.metadata.language,
-                isKidsVoice: cloneRequest.metadata.isKidsVoice,
-                hasGeneratedSample: !!result.audio_base64,
-                audioDataLength: audioData ? audioData.length : 0,
-                sampleLength: result.audio_base64 ? result.audio_base64.length : 0
-            });
-            
-            // Send to FastAPI using the new organized clone endpoint
-            const response = await fetch(`${VOICE_API}/clone`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(cloneRequest)
-            });
-            
-            const responseData = await response.json();
-            console.log('📥 FastAPI response:', responseData);
-            
-            if (response.ok) {
-                console.log(`✅ Successfully saved voice to Firebase with organized structure for: ${voiceName}`);
-                console.log('📁 Firebase URLs:', responseData.firebase_urls);
-                // Refresh the voice library to show the new voice
-                await loadVoiceLibrary();
-            } else {
-                console.error(`❌ Failed to save voice: ${responseData.detail || responseData.message}`);
-            }
+            await loadVoiceLibrary();
+            console.log('✅ Voice library refreshed after RunPod upload');
         } catch (error) {
-            console.error('❌ Error saving voice to API:', error);
+            console.error('❌ Error refreshing voice library:', error);
         }
     };
 
@@ -380,14 +327,14 @@ export default function Home() {
                 }
                 
                 // Save voice to FastAPI/Firebase after successful generation
-                if (result && result.audio_base64) {
-                    console.log('💾 Attempting to save voice to FastAPI/Firebase...');
+                if (result && result.audio_path) {
+                    console.log('💾 Voice audio path available:', result.audio_path);
                     await saveVoiceToAPI(result, name);
                 } else {
-                    console.error('❌ No audio data in result - cannot save voice', {
+                    console.error('❌ No audio path in result - cannot save voice', {
                         hasResult: !!result,
                         resultType: typeof result,
-                        hasAudioBase64: !!(result && result.audio_base64),
+                        hasAudioPath: !!(result && result.audio_path),
                         resultKeys: result ? Object.keys(result) : []
                     });
                 }

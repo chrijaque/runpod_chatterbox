@@ -526,6 +526,7 @@ class FirebaseService:
         :return: List of voice information
         """
         if not self.bucket:
+            logger.warning("❌ No Firebase bucket available")
             return []
         
         try:
@@ -535,36 +536,91 @@ class FirebaseService:
             else:
                 prefix = f"audio/voices/{language}/"
             
+            logger.info(f"🔍 Searching Firebase with prefix: {prefix}")
             blobs = self.bucket.list_blobs(prefix=prefix)
+            
+            # Convert to list to get count
+            blob_list = list(blobs)
+            logger.info(f"📁 Found {len(blob_list)} blobs in Firebase with prefix: {prefix}")
+            
+            # Log first few blobs for debugging
+            for i, blob in enumerate(blob_list[:5]):
+                logger.info(f"   Blob {i+1}: {blob.name}")
+            
+            if len(blob_list) > 5:
+                logger.info(f"   ... and {len(blob_list) - 5} more blobs")
             
             voices = {}
             
-            for blob in blobs:
+            for blob in blob_list:
                 if blob.name.endswith('/'):
                     continue
                     
-                # Extract voice_id from filename
-                filename = blob.name.split('/')[-1]
-                if '_' in filename:
-                    voice_id = filename.split('_')[0]
-                    
-                    if voice_id not in voices:
-                        voices[voice_id] = {
-                            "voice_id": voice_id,
-                            "recorded": [],
-                            "samples": [],
-                            "profiles": []
-                        }
-                    
-                    url = blob.public_url
-                    if "/recorded/" in blob.name:
-                        voices[voice_id]["recorded"].append(url)
-                    elif "/samples/" in blob.name:
-                        voices[voice_id]["samples"].append(url)
-                    elif "/profiles/" in blob.name:
-                        voices[voice_id]["profiles"].append(url)
+                # Extract voice_id from path
+                # Path format: audio/voices/en/samples/voice_name_sample_timestamp.wav
+                # or: audio/voices/en/profiles/voice_name.npy
+                path_parts = blob.name.split('/')
+                
+                # Find the voice_id from the filename
+                filename = path_parts[-1]
+                
+                # Handle different file types
+                if filename.endswith('.npy'):
+                    # Profile file: voice_name.npy
+                    voice_id = filename.replace('.npy', '')
+                    logger.debug(f"   📄 Profile file: {filename} -> voice_id: {voice_id}")
+                elif '_sample_' in filename:
+                    # Sample file: voice_name_sample_timestamp.wav
+                    voice_id = filename.split('_sample_')[0]
+                    logger.debug(f"   🎵 Sample file: {filename} -> voice_id: {voice_id}")
+                elif filename.startswith('recording_'):
+                    # Recording file: recording_1_timestamp.wav
+                    # Extract voice_id from the path structure
+                    if len(path_parts) >= 4:
+                        # Path: audio/voices/en/recorded/voice_name_recording_1_timestamp.wav
+                        voice_id = path_parts[-1].split('_recording_')[0]
+                        logger.debug(f"   🎤 Recording file: {filename} -> voice_id: {voice_id}")
+                    else:
+                        logger.debug(f"   ⚠️ Skipping recording file with insufficient path parts: {blob.name}")
+                        continue
+                else:
+                    # Skip unknown file types
+                    logger.debug(f"   ⚠️ Skipping unknown file type: {filename}")
+                    continue
+                
+                if voice_id not in voices:
+                    voices[voice_id] = {
+                        "voice_id": voice_id,
+                        "name": voice_id.replace('voice_', '').replace('_', ' ').title(),
+                        "recorded": [],
+                        "samples": [],
+                        "profiles": [],
+                        "created_date": None
+                    }
+                
+                url = blob.public_url
+                if "/recorded/" in blob.name:
+                    voices[voice_id]["recorded"].append(url)
+                elif "/samples/" in blob.name:
+                    voices[voice_id]["samples"].append(url)
+                elif "/profiles/" in blob.name:
+                    voices[voice_id]["profiles"].append(url)
+                
+                # Try to extract creation time from filename
+                if '_sample_' in filename:
+                    try:
+                        timestamp_part = filename.split('_sample_')[-1].replace('.wav', '')
+                        # Parse timestamp like 20250727_153420
+                        if len(timestamp_part) >= 15:
+                            from datetime import datetime
+                            created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
+                            voices[voice_id]["created_date"] = created_date.timestamp()
+                    except Exception as e:
+                        logger.debug(f"Could not parse timestamp from {filename}: {e}")
             
-            return list(voices.values())
+            result = list(voices.values())
+            logger.info(f"✅ Processed {len(result)} voices from Firebase")
+            return result
             
         except Exception as e:
             # If bucket doesn't exist yet, return empty results instead of error
@@ -600,14 +656,20 @@ class FirebaseService:
                     
                 # Extract generation_id from filename
                 filename = blob.name.split('/')[-1]
-                if '_' in filename:
-                    generation_id = filename.split('_')[0]
+                
+                # Handle different story file naming patterns
+                if filename.endswith('.wav'):
+                    # Extract generation_id from filename
+                    # Pattern: gen_20250727_153420.wav or similar
+                    generation_id = filename.replace('.wav', '')
                     
                     if generation_id not in stories:
                         stories[generation_id] = {
                             "generation_id": generation_id,
+                            "voice_id": "unknown",  # We'll need to extract this from metadata
+                            "voice_name": "Unknown Voice",
                             "audio_files": [],
-                            "created_at": None
+                            "created_date": None
                         }
                     
                     url = blob.public_url
@@ -617,10 +679,13 @@ class FirebaseService:
                     if '_' in filename:
                         try:
                             timestamp_part = filename.split('_')[-1].replace('.wav', '')
-                            if len(timestamp_part) >= 14:  # YYYYMMDD_HHMMSS format
-                                stories[generation_id]["created_at"] = timestamp_part
-                        except:
-                            pass
+                            # Parse timestamp like 20250727_153420
+                            if len(timestamp_part) >= 15:
+                                from datetime import datetime
+                                created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
+                                stories[generation_id]["created_date"] = created_date.timestamp()
+                        except Exception as e:
+                            logger.debug(f"Could not parse timestamp from {filename}: {e}")
             
             return list(stories.values())
             

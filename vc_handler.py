@@ -219,8 +219,19 @@ def upload_to_firebase(data: bytes, dst: str, ctype: str):
         blob = bucket.blob(dst)
         logger.info(f"🔍 Upload-Debug | Blob created, uploading {len(data)} bytes...")
         
+        # Set metadata before uploading
+        blob.metadata = {
+            'Access-Control-Allow-Origin': '*',
+            'Cache-Control': 'public, max-age=3600'
+        }
+        
         blob.upload_from_string(data, content_type=ctype)
+        
+        # Make the blob public so it can be accessed via URL
+        blob.make_public()
+        
         logger.info(f"✅ Uploaded to Firebase: {dst}")
+        logger.info(f"🔍 Upload-Debug | Public URL: {blob.public_url}")
         
         # Verify upload
         try:
@@ -536,7 +547,7 @@ def handle_voice_clone_request(input, responseFormat):
         audio_uploaded = upload_to_firebase(
             wav_bytes,
             audio_path_firebase,
-            "audio/wav"
+            "audio/x-wav"
         )
         logger.info(f"🎵 Audio uploaded: {audio_path_firebase}")
     except Exception as e:
