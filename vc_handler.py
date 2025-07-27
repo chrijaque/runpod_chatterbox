@@ -102,130 +102,30 @@ def initialize_model():
     logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
-        # Comprehensive repository verification
-        import chatterbox
-        import subprocess
-        import os
-        
-        logger.info("🔍 ===== REPOSITORY VERIFICATION =====")
-        logger.info(f"📂 chatterbox module path: {chatterbox.__file__}")
-        logger.info(f"📂 chatterbox module location: {os.path.dirname(chatterbox.__file__)}")
-        
-        # Check if it's from the forked repository
-        if 'chatterbox_embed' in chatterbox.__file__:
-            logger.info("🎯 chatterbox module is from FORKED repository")
-        else:
-            logger.warning("⚠️ chatterbox module is from ORIGINAL repository")
-        
-        # Check pip package info
-        try:
-            pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
-            logger.info("📦 Pip package info:")
-            for line in pip_info.split('\n'):
-                if line.strip():
-                    logger.info(f"   {line}")
-            
-            if 'chrijaque/chatterbox_embed' in pip_info:
-                logger.info("✅ Pip shows forked repository")
-            else:
-                logger.warning("⚠️ Pip shows original repository")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get pip info: {e}")
-        
-        # Check git repository info if available
-        try:
-            repo_path = os.path.dirname(chatterbox.__file__)
-            git_path = os.path.join(repo_path, '.git')
-            
-            if os.path.exists(git_path):
-                logger.info(f"📁 Found git repository at: {repo_path}")
-                try:
-                    commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
-                    logger.info(f"🔢 Git commit: {commit_hash}")
-                    remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin']).decode().strip()
-                    logger.info(f"🌐 Git remote: {remote_url}")
-                    
-                    if 'chrijaque/chatterbox_embed' in remote_url:
-                        logger.info("✅ Git confirms forked repository")
-                    else:
-                        logger.warning("⚠️ Git shows original repository")
-                except Exception as e:
-                    logger.warning(f"⚠️ Could not get git info: {e}")
-            else:
-                logger.info("📁 No git repository found (PyPI package installation)")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not check git info: {e}")
-        
-        logger.info("🔍 ===== END REPOSITORY VERIFICATION =====")
-        
+        # Minimal initialization - focus on core functionality
         model = ChatterboxTTS.from_pretrained(device='cuda')
+        logger.info("✅ ChatterboxTTS model initialized")
         
         # Initialize the forked repository handler if available
         if FORKED_HANDLER_AVAILABLE:
-            logger.info("🔧 Initializing ChatterboxVC from forked repository...")
+            logger.info("🔧 Initializing ChatterboxVC...")
             try:
-                # ChatterboxVC needs to be initialized with the s3gen model and device
                 forked_handler = ChatterboxVC(
                     s3gen=model.s3gen,
                     device=model.device
                 )
                 logger.info("✅ ChatterboxVC initialized successfully")
-                
-                # Log handler capabilities
-                handler_methods = [method for method in dir(forked_handler) if not method.startswith('_')]
-                logger.info(f"📋 Available handler methods: {handler_methods}")
-                
             except Exception as e:
                 logger.error(f"❌ Failed to initialize ChatterboxVC: {e}")
                 forked_handler = None
         else:
             logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
         
-        # Verify s3gen module source
-        logger.info("🔍 ===== S3GEN VERIFICATION =====")
-        if hasattr(model, "s3gen"):
-            logger.info(f"📂 s3gen module path: {model.s3gen.__class__.__module__}")
-            logger.info(f"📂 s3gen class: {model.s3gen.__class__}")
-            logger.info(f"📂 s3gen class file: {model.s3gen.__class__.__module__}")
-            
-            # Check s3gen module file path
-            try:
-                import chatterbox.models.s3gen.s3gen as s3gen_module
-                logger.info(f"📂 s3gen module file: {s3gen_module.__file__}")
-                
-                if 'chatterbox_embed' in s3gen_module.__file__:
-                    logger.info("🎯 s3gen module is from FORKED repository")
-                else:
-                    logger.warning("⚠️ s3gen module is from ORIGINAL repository")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not check s3gen module file: {e}")
-            
-            # Check if inference_from_text exists and its source
-            if hasattr(model.s3gen, 'inference_from_text'):
-                method = getattr(model.s3gen, 'inference_from_text')
-                logger.info(f"📂 inference_from_text source: {method.__code__.co_filename}")
-                logger.info(f"📂 inference_from_text line: {method.__code__.co_firstlineno}")
-                
-                if 'chatterbox_embed' in method.__code__.co_filename:
-                    logger.info("🎯 inference_from_text is from FORKED repository")
-                else:
-                    logger.warning("⚠️ inference_from_text is from ORIGINAL repository")
-            else:
-                logger.warning("⚠️ inference_from_text method does NOT exist")
-                
-            # List all methods on s3gen
-            s3gen_methods = [method for method in dir(model.s3gen) if not method.startswith('_')]
-            logger.info(f"📋 Available s3gen methods: {s3gen_methods}")
-        else:
-            logger.warning("⚠️ Model does not have s3gen attribute")
-        
-        logger.info("🔍 ===== END S3GEN VERIFICATION =====")
-        
-        # Attach the T3 text‑to‑token encoder to S3Gen so that
-        # s3gen.inference_from_text() works
+        # Attach the T3 text‑to‑token encoder to S3Gen
         if hasattr(model, "s3gen") and hasattr(model, "t3"):
             model.s3gen.text_encoder = model.t3
-            logger.info("📌 Attached text_encoder (model.t3) to model.s3gen")
+            logger.info("📌 Attached text_encoder to model.s3gen")
+        
         logger.info("✅ Model initialized on CUDA")
     except Exception as e:
         logger.error(f"Failed to initialize model: {str(e)}")
@@ -491,10 +391,8 @@ def handle_voice_clone_request(input, responseFormat):
     except Exception as e:
         logger.error(f"Failed to upload audio file: {e}")
 
-    # Log final summary
-    logger.info(f"🎯 Final generation method: {generation_method}")
-    logger.info(f"📂 Repository used: {'FORKED' if 'chatterbox_embed' in str(model.s3gen.__class__.__module__) else 'ORIGINAL'}")
-    logger.info(f"🔧 Forked handler used: {'YES' if forked_handler is not None else 'NO'}")
+    # Log final summary (minimal)
+    logger.info(f"🎯 Generation method: {generation_method}")
     logger.info(f"📦 Profile uploaded: {'YES' if profile_uploaded else 'NO'}")
     logger.info(f"🎵 Audio uploaded: {'YES' if audio_uploaded else 'NO'}")
     

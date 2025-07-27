@@ -415,85 +415,19 @@ def initialize_model():
     logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     try:
-        # Debug: Check which chatterbox repository is being used
-        import chatterbox
-        import os
-        
-        logger.info(f"📦 chatterbox module loaded from: {chatterbox.__file__}")
-        
-        # Enhanced Debug: Log chatterbox installation details with dependency analysis
-        repo_path = os.path.dirname(chatterbox.__file__)
-        git_path = os.path.join(repo_path, '.git')
-        
-        # Check if it's a git repository
-        if os.path.exists(git_path):
-            logger.info(f"📁 chatterbox installed as git repo: {repo_path}")
-            try:
-                import subprocess
-                commit_hash = subprocess.check_output(['git', '-C', repo_path, 'rev-parse', 'HEAD']).decode().strip()
-                logger.info(f"🔢 Git commit: {commit_hash}")
-                remote_url = subprocess.check_output(['git', '-C', repo_path, 'remote', 'get-url', 'origin']).decode().strip()
-                logger.info(f"🌐 Git remote: {remote_url}")
-                
-                # Check if it's the forked repository
-                if 'chrijaque/chatterbox_embed' in remote_url:
-                    logger.info("✅ This is the CORRECT forked repository!")
-                else:
-                    logger.error("❌ This is NOT the forked repository - using wrong repo!")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not get git info: {e}")
-        else:
-            logger.error(f"📁 chatterbox not installed as git repo (no .git directory found)")
-            logger.error(f"❌ This indicates PyPI package installation instead of git repo")
-        
-        # Check pip installation details
-        try:
-            import subprocess
-            pip_info = subprocess.check_output(['pip', 'show', 'chatterbox-tts']).decode().strip()
-            logger.info(f"📋 Pip package info:\n{pip_info}")
-            
-            # Check if it's from the forked repository
-            if 'chrijaque/chatterbox_embed' in pip_info:
-                logger.info("✅ Pip shows forked repository")
-            else:
-                logger.warning("⚠️ Pip shows original repository")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not get pip info: {e}")
-        
-        # Check for dependency conflicts
-        try:
-            import subprocess
-            deps = subprocess.check_output(['pip', 'list']).decode().strip()
-            chatterbox_deps = [line for line in deps.split('\n') if 'chatterbox' in line.lower()]
-            if chatterbox_deps:
-                logger.info(f"🔍 Found chatterbox-related packages:\n" + '\n'.join(chatterbox_deps))
-            else:
-                logger.info("🔍 No chatterbox-related packages found in pip list")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not check dependencies: {e}")
-        
-        logger.info("🔄 Loading ChatterboxTTS model...")
+        # Minimal initialization - focus on core functionality
         model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ Model initialized successfully on CUDA device")
-        logger.info(f"✅ Model type: {type(model)}")
-        logger.info(f"✅ Model device: {getattr(model, 'device', 'Unknown')}")
-        logger.info(f"✅ Model sample rate: {getattr(model, 'sr', 'Unknown')}")
+        logger.info("✅ ChatterboxTTS model initialized")
 
         # Initialize the forked repository handler if available
         if FORKED_HANDLER_AVAILABLE:
-            logger.info("🔧 Initializing ChatterboxVC from forked repository...")
+            logger.info("🔧 Initializing ChatterboxVC...")
             try:
-                # ChatterboxVC needs to be initialized with the s3gen model and device
                 forked_handler = ChatterboxVC(
                     s3gen=model.s3gen,
                     device=model.device
                 )
                 logger.info("✅ ChatterboxVC initialized successfully")
-                
-                # Log handler capabilities
-                handler_methods = [method for method in dir(forked_handler) if not method.startswith('_')]
-                logger.info(f"📋 Available handler methods: {handler_methods}")
-                
             except Exception as e:
                 logger.error(f"❌ Failed to initialize ChatterboxVC: {e}")
                 forked_handler = None
