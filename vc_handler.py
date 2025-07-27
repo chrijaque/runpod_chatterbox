@@ -47,17 +47,148 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
+# -------------------------------------------------------------------
+# 🐞  Firebase / GCS credential debug helper
+# -------------------------------------------------------------------
+def _debug_gcs_creds():
+    import os, json, textwrap, pathlib, socket, ssl
+    from google.auth import exceptions as gauth_exc
+    logger.info("🔍 GCS-Debug | GOOGLE_APPLICATION_CREDENTIALS=%s",
+                os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+    logger.info("🔍 GCS-Debug | RUNPOD_SECRET envs: %s",
+                [k for k in os.environ if k.startswith("RUNPOD_SECRET")])
+    
+    # Check RunPod Firebase secret specifically
+    firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
+    logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase=%s", firebase_secret_path)
+    
+    # Check if it's a file path or actual JSON content
+    if firebase_secret_path:
+        if firebase_secret_path.startswith('{'):
+            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase appears to be JSON content (starts with '{')")
+            logger.info("🔍 GCS-Debug | JSON content preview: %s", firebase_secret_path[:200] + "..." if len(firebase_secret_path) > 200 else firebase_secret_path)
+        elif os.path.exists(firebase_secret_path):
+            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase appears to be a file path (exists)")
+        else:
+            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase is neither JSON content nor existing file path")
+    else:
+        logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase is None or empty")
+    
+    # 1) Does the expected file exist?
+    cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/firebase.json")
+    logger.info("🔍 GCS-Debug | Checking file %s", cred_path)
+    p = pathlib.Path(cred_path)
+    if p.exists():
+        logger.info("✅ GCS-Debug | File exists (%d bytes)", p.stat().st_size)
+        try:
+            with p.open() as fp:
+                first_line = fp.readline(256)
+            logger.info("🔍 GCS-Debug | File starts with: %s",
+                        textwrap.shorten(first_line.strip(), 120))
+        except Exception as e:
+            logger.warning("⚠️  GCS-Debug | Could not read file: %s", e)
+    else:
+        logger.error("❌ GCS-Debug | File NOT found on disk")
+
+    # Check RunPod secret file if different
+    if firebase_secret_path and firebase_secret_path != cred_path:
+        logger.info("🔍 GCS-Debug | Checking RunPod secret file %s", firebase_secret_path)
+        p2 = pathlib.Path(firebase_secret_path)
+        if p2.exists():
+            logger.info("✅ GCS-Debug | RunPod secret file exists (%d bytes)", p2.stat().st_size)
+            try:
+                with p2.open() as fp:
+                    first_line = fp.readline(256)
+                logger.info("🔍 GCS-Debug | RunPod secret file starts with: %s",
+                            textwrap.shorten(first_line.strip(), 120))
+            except Exception as e:
+                logger.warning("⚠️  GCS-Debug | Could not read RunPod secret file: %s", e)
+        else:
+            logger.error("❌ GCS-Debug | RunPod secret file NOT found on disk")
+
+    # 2) Try manual credential load from RunPod secret
+    if firebase_secret_path and os.path.exists(firebase_secret_path):
+        try:
+            from google.oauth2 import service_account
+            creds = service_account.Credentials.from_service_account_file(firebase_secret_path)
+            logger.info("✅ GCS-Debug | Loaded RunPod creds for project_id=%s, client_email=%s",
+                        creds.project_id, creds.service_account_email)
+        except FileNotFoundError:
+            logger.error("❌ GCS-Debug | FileNotFoundError for RunPod secret")
+        except gauth_exc.DefaultCredentialsError as e:
+            logger.error("❌ GCS-Debug | DefaultCredentialsError for RunPod secret: %s", e)
+        except Exception as e:
+            logger.error("❌ GCS-Debug | Unexpected error for RunPod secret: %s (%s)", e, type(e).__name__)
+
+    # 3) Try manual credential load from fallback path
+    try:
+        from google.oauth2 import service_account
+        creds = service_account.Credentials.from_service_account_file(cred_path)
+        logger.info("✅ GCS-Debug | Loaded fallback creds for project_id=%s, client_email=%s",
+                    creds.project_id, creds.service_account_email)
+    except FileNotFoundError:
+        logger.error("❌ GCS-Debug | FileNotFoundError for fallback path")
+    except gauth_exc.DefaultCredentialsError as e:
+        logger.error("❌ GCS-Debug | DefaultCredentialsError for fallback: %s", e)
+    except Exception as e:
+        logger.error("❌ GCS-Debug | Unexpected error for fallback: %s (%s)", e, type(e).__name__)
+
+    # 4) Quick network check to storage.googleapis.com
+    try:
+        sock = socket.create_connection(("storage.googleapis.com", 443), timeout=3)
+        ctx = ssl.create_default_context()
+        with ctx.wrap_socket(sock, server_hostname="storage.googleapis.com"):
+            logger.info("✅ GCS-Debug | TLS handshake to storage.googleapis.com ok")
+    except Exception as e:
+        logger.warning("⚠️  GCS-Debug | Network to GCS failed: %s", e)
+
 def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
+    
+    # Call debug helper first
+    logger.info("🔍 ===== FIREBASE INITIALIZATION DEBUG =====")
+    _debug_gcs_creds()
+    logger.info("🔍 ===== END FIREBASE INITIALIZATION DEBUG =====")
+    
     try:
         # Check if we're in RunPod and have the secret
         firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        if firebase_secret_path and os.path.exists(firebase_secret_path):
-            logger.info(f"✅ Using RunPod Firebase secret: {firebase_secret_path}")
-            storage_client = storage.Client.from_service_account_json(firebase_secret_path)
+        
+        if firebase_secret_path:
+            if firebase_secret_path.startswith('{'):
+                # It's JSON content, create a temporary file
+                logger.info("✅ Using RunPod Firebase secret as JSON content")
+                import tempfile
+                import json
+                
+                # Validate JSON first
+                try:
+                    creds_data = json.loads(firebase_secret_path)
+                    logger.info(f"✅ Valid JSON with project_id: {creds_data.get('project_id', 'unknown')}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Invalid JSON in RUNPOD_SECRET_Firebase: {e}")
+                    raise
+                
+                # Create temporary file with the JSON content
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                    json.dump(creds_data, tmp_file)
+                    tmp_path = tmp_file.name
+                
+                logger.info(f"✅ Created temporary credentials file: {tmp_path}")
+                storage_client = storage.Client.from_service_account_json(tmp_path)
+                
+            elif os.path.exists(firebase_secret_path):
+                # It's a file path
+                logger.info(f"✅ Using RunPod Firebase secret file: {firebase_secret_path}")
+                storage_client = storage.Client.from_service_account_json(firebase_secret_path)
+            else:
+                logger.warning(f"⚠️ RUNPOD_SECRET_Firebase exists but is not JSON content or valid file path")
+                # Fallback to GOOGLE_APPLICATION_CREDENTIALS
+                logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+                storage_client = storage.Client()
         else:
-            # Fallback to GOOGLE_APPLICATION_CREDENTIALS
+            # No RunPod secret, fallback to GOOGLE_APPLICATION_CREDENTIALS
             logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
             storage_client = storage.Client()
         
@@ -71,18 +202,36 @@ def initialize_firebase():
 def upload_to_firebase(data: bytes, dst: str, ctype: str):
     """Upload data to Firebase and return success status"""
     global bucket
+    
+    logger.info(f"🔍 Upload-Debug | Starting upload: {dst} ({len(data)} bytes, {ctype})")
+    
     if bucket is None:
+        logger.info("🔍 Upload-Debug | Bucket is None, initializing Firebase...")
         if not initialize_firebase():
             logger.error("❌ Firebase not initialized, cannot upload")
             return False
+        logger.info("🔍 Upload-Debug | Firebase initialized, bucket: %s", bucket.name if bucket else "None")
     
     try:
+        logger.info(f"🔍 Upload-Debug | Creating blob: {dst}")
         blob = bucket.blob(dst)
+        logger.info(f"🔍 Upload-Debug | Blob created, uploading {len(data)} bytes...")
+        
         blob.upload_from_string(data, content_type=ctype)
         logger.info(f"✅ Uploaded to Firebase: {dst}")
+        
+        # Verify upload
+        try:
+            blob.reload()
+            logger.info(f"🔍 Upload-Debug | Upload verified: {blob.name} ({blob.size} bytes)")
+        except Exception as verify_error:
+            logger.warning(f"⚠️ Upload-Debug | Could not verify upload: {verify_error}")
+        
         return True
     except Exception as e:
         logger.error(f"❌ Failed to upload to Firebase: {e}")
+        logger.error(f"🔍 Upload-Debug | Error type: {type(e).__name__}")
+        logger.error(f"🔍 Upload-Debug | Error details: {str(e)}")
         return False
 
 def initialize_model():
