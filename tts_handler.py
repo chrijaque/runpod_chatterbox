@@ -8,8 +8,9 @@ import torch
 import logging
 from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
+from google.cloud import storage
 
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
@@ -75,6 +76,39 @@ logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
+
+# Initialize Firebase storage client
+storage_client = None
+bucket = None
+
+def initialize_firebase():
+    """Initialize Firebase storage client"""
+    global storage_client, bucket
+    try:
+        storage_client = storage.Client()  # auto-reads credentials from GOOGLE_APPLICATION_CREDENTIALS
+        bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
+        logger.info("✅ Firebase storage client initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Firebase storage: {e}")
+        return False
+
+def upload_to_firebase(data: bytes, dst: str, ctype: str):
+    """Upload data to Firebase and return success status"""
+    global bucket
+    if bucket is None:
+        if not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot upload")
+            return False
+    
+    try:
+        blob = bucket.blob(dst)
+        blob.upload_from_string(data, content_type=ctype)
+        logger.info(f"✅ Uploaded to Firebase: {dst}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to upload to Firebase: {e}")
+        return False
 
 # Chunking and processing class right
 class TTSProcessor:
@@ -725,53 +759,40 @@ def handler(event, responseFormat="base64"):
             else:
                 return {"status": "error", "message": f"Failed to generate TTS: {e}"}
         
-        # Check response size and handle large files
+        # Upload TTS audio to Firebase and get file path
+        audio_path_firebase = f"audio/stories/en/user/TTS_{voice_id}_{timestamp}.wav"
+        
         try:
-            audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
-            base64_size = len(audio_base64)
-            logger.info(f"📤 Base64 size: {base64_size:,} chars ({base64_size/1024/1024:.1f} MB)")
+            with open(tts_filename, 'rb') as f:
+                wav_bytes = f.read()
             
-            # If response is too large, return file path instead
-            if base64_size > 10_000_000:  # 10MB limit
-                logger.warning(f"⚠️ Response too large ({base64_size/1024/1024:.1f} MB) - returning file path only")
-                response = {
-                    "status": "success",
-                    "audio_base64": None,  # No audio data in response
-                    "file_path": str(tts_filename),
-                    "file_size_mb": base64_size/1024/1024,
-                    "metadata": {
-                        "voice_id": voice_id,
-                        "voice_name": voice_id.replace('voice_', ''),
-                        "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
-                        "generation_time": generation_time,
-                        "sample_rate": model.sr,
-                        "audio_shape": list(audio_tensor.shape),
-                        "tts_file": str(tts_filename),
-                        "timestamp": timestamp,
-                        "response_type": "file_path_only"
-                    }
+            audio_uploaded = upload_to_firebase(
+                wav_bytes,
+                audio_path_firebase,
+                "audio/wav"
+            )
+            logger.info(f"🎵 TTS audio uploaded: {audio_path_firebase}")
+            
+            # Return file path instead of URL
+            response = {
+                "status": "success",
+                "audio_path": audio_path_firebase if audio_uploaded else None,
+                "metadata": {
+                    "voice_id": voice_id,
+                    "voice_name": voice_id.replace('voice_', ''),
+                    "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
+                    "generation_time": generation_time,
+                    "sample_rate": model.sr,
+                    "audio_shape": list(audio_tensor.shape),
+                    "tts_file": str(tts_filename),
+                    "timestamp": timestamp,
+                    "response_type": "firebase_path"
                 }
-            else:
-                # Normal response with audio data
-                response = {
-                    "status": "success",
-                    "audio_base64": audio_base64,
-                    "metadata": {
-                        "voice_id": voice_id,
-                        "voice_name": voice_id.replace('voice_', ''),
-                        "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
-                        "generation_time": generation_time,
-                        "sample_rate": model.sr,
-                        "audio_shape": list(audio_tensor.shape),
-                        "tts_file": str(tts_filename),
-                        "timestamp": timestamp,
-                        "response_type": "audio_data"
-                    }
-                }
+            }
                 
         except Exception as e:
-            logger.error(f"❌ Failed to convert audio to base64: {e}")
-            return {"status": "error", "message": f"Failed to convert audio to base64: {e}"}
+            logger.error(f"❌ Failed to upload TTS audio to Firebase: {e}")
+            return {"status": "error", "message": f"Failed to upload TTS audio to Firebase: {e}"}
         
         logger.info(f"📤 Response ready | Time: {generation_time:.2f}s | File: {tts_filename.name}")
         
@@ -862,31 +883,7 @@ def list_available_files():
         logger.error(f"❌ Failed to list files: {e}")
         return {"status": "error", "message": f"Failed to list files: {e}"}
 
-def audio_tensor_to_base64(audio_tensor, sample_rate):
-    """Convert audio tensor to base64 encoded WAV data."""
-    try:
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            tmp_filename = tmp_file.name
-            
-            # Save audio tensor to temporary file
-            torchaudio.save(tmp_filename, audio_tensor, sample_rate)
-            
-            # Read back as binary data
-            with open(tmp_filename, 'rb') as audio_file:
-                audio_data = audio_file.read()
-            
-            # Clean up temporary file
-            os.unlink(tmp_filename)
-            
-            # Encode as base64
-            base64_data = base64.b64encode(audio_data).decode('utf-8')
-            
-            return base64_data
-            
-    except Exception as e:
-        logger.error(f"❌ Error converting audio to base64: {e}")
-        raise
+
 
 if __name__ == '__main__':
     logger.info("🚀 TTS Handler starting...")

@@ -9,7 +9,8 @@ import logging
 import hashlib
 from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
+from google.cloud import storage
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,39 @@ logger.info(f"Using directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
+
+# Initialize Firebase storage client
+storage_client = None
+bucket = None
+
+def initialize_firebase():
+    """Initialize Firebase storage client"""
+    global storage_client, bucket
+    try:
+        storage_client = storage.Client()  # auto-reads credentials from GOOGLE_APPLICATION_CREDENTIALS
+        bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
+        logger.info("✅ Firebase storage client initialized successfully")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Firebase storage: {e}")
+        return False
+
+def upload_to_firebase(data: bytes, dst: str, ctype: str):
+    """Upload data to Firebase and return success status"""
+    global bucket
+    if bucket is None:
+        if not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot upload")
+            return False
+    
+    try:
+        blob = bucket.blob(dst)
+        blob.upload_from_string(data, content_type=ctype)
+        logger.info(f"✅ Uploaded to Firebase: {dst}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to upload to Firebase: {e}")
+        return False
 
 def initialize_model():
     global model, forked_handler
@@ -331,7 +365,7 @@ def handle_voice_clone_request(input, responseFormat):
         # Save the uploaded audio to temp directory for embedding extraction
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
-        audio_bytes = base64.b64decode(audio_data)
+        audio_bytes = base64.b64decode(audio_data)  # Still need this for now since FastAPI sends base64
         with open(temp_voice_file, 'wb') as f:
             f.write(audio_bytes)
         logger.info(f"Saved temporary voice file to {temp_voice_file}")
@@ -413,83 +447,59 @@ def handle_voice_clone_request(input, responseFormat):
                 pass
         return {"status": "error", "message": str(e)}
 
-    # Convert to base64 string
-    audio_base64 = audio_tensor_to_base64(audio_tensor, model.sr)
+    # Upload files to Firebase and get file paths
+    profile_path_firebase = f"audio/voices/en/profiles/{voice_id}.npy"
+    audio_path_firebase = f"audio/voices/en/samples/{voice_id}_sample_{timestamp}.wav"
     
-    # Read the profile file to include in response
-    profile_base64 = None
+    # Upload profile file
+    profile_uploaded = False
     if profile_path.exists():
         try:
             with open(profile_path, 'rb') as f:
                 profile_data = f.read()
-            profile_base64 = base64.b64encode(profile_data).decode('utf-8')
-            logger.info(f"📦 Profile ready: {len(profile_base64)} chars")
+            profile_uploaded = upload_to_firebase(
+                profile_data,
+                profile_path_firebase,
+                "application/octet-stream"
+            )
+            logger.info(f"📦 Profile uploaded: {profile_path_firebase}")
         except Exception as e:
-            logger.error(f"Failed to read profile file: {e}")
+            logger.error(f"Failed to upload profile file: {e}")
+    else:
+        logger.error(f"❌ Profile file does not exist: {profile_path}")
+    
+    # Upload audio sample
+    audio_uploaded = False
+    try:
+        with open(sample_filename, 'rb') as f:
+            wav_bytes = f.read()
+        audio_uploaded = upload_to_firebase(
+            wav_bytes,
+            audio_path_firebase,
+            "audio/wav"
+        )
+        logger.info(f"🎵 Audio uploaded: {audio_path_firebase}")
+    except Exception as e:
+        logger.error(f"Failed to upload audio file: {e}")
 
     # Log final summary
     logger.info(f"🎯 Final generation method: {generation_method}")
     logger.info(f"📂 Repository used: {'FORKED' if 'chatterbox_embed' in str(model.s3gen.__class__.__module__) else 'ORIGINAL'}")
     logger.info(f"🔧 Forked handler used: {'YES' if forked_handler is not None else 'NO'}")
+    logger.info(f"📦 Profile uploaded: {'YES' if profile_uploaded else 'NO'}")
+    logger.info(f"🎵 Audio uploaded: {'YES' if audio_uploaded else 'NO'}")
     
-    if responseFormat == "base64":
-        # Return base64 - ALWAYS return structured JSON, never raw strings
-        response = {
-            "status": "success",
-            "audio_base64": audio_base64,
-            "profile_base64": profile_base64,  # Include profile file
-            "metadata": {
-                "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape),
-                "voice_id": voice_id,
-                "voice_name": name,
-                "profile_path": str(profile_path),
-                "profile_exists": profile_path.exists(),
-                "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
-                "generation_method": generation_method,
-                "sample_file": str(sample_filename),
-                "template_message": template_message,
-                "forked_handler_used": forked_handler is not None
-            }
-        }
-        logger.info(f"📤 Voice clone completed successfully")
-        return response
-    elif responseFormat == "binary":
-        # Still return structured JSON, not raw data
-        with open(sample_filename, 'rb') as f:
-            audio_data = base64.b64encode(f.read()).decode('utf-8')
-        response = {
-            "status": "success", 
-            "audio_base64": audio_data,
-            "profile_base64": profile_base64,
-            "metadata": {
-                "sample_rate": model.sr,
-                "audio_shape": list(audio_tensor.shape),
-                "voice_id": voice_id,
-                "voice_name": name,
-                "profile_path": str(profile_path),
-                "profile_exists": profile_path.exists(),
-                "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
-                "generation_method": generation_method,
-                "sample_file": str(sample_filename),
-                "template_message": template_message,
-                "forked_handler_used": forked_handler is not None
-            }
-        }
-        logger.info(f"📤 Voice clone completed successfully")
-        return response
-
-    # Default response format - ALWAYS return structured JSON
+    # Return file paths instead of URLs
     response = {
         "status": "success",
-        "audio_base64": audio_base64,
-        "profile_base64": profile_base64,
+        "profile_path": profile_path_firebase if profile_uploaded else None,
+        "audio_path": audio_path_firebase if audio_uploaded else None,
         "metadata": {
             "sample_rate": model.sr,
             "audio_shape": list(audio_tensor.shape),
             "voice_id": voice_id,
             "voice_name": name,
-            "profile_path": str(profile_path),
+            "profile_path_local": str(profile_path),
             "profile_exists": profile_path.exists(),
             "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
             "generation_method": generation_method,
@@ -498,30 +508,10 @@ def handle_voice_clone_request(input, responseFormat):
             "forked_handler_used": forked_handler is not None
         }
     }
-    
     logger.info(f"📤 Voice clone completed successfully")
     return response 
 
-def audio_tensor_to_base64(audio_tensor, sample_rate):
-    """Convert audio tensor to base64 encoded WAV data."""
-    try:
-        # Save to temporary file
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
-            torchaudio.save(tmp_file.name, audio_tensor, sample_rate)
-            
-            # Read back as binary data
-            with open(tmp_file.name, 'rb') as audio_file:
-                audio_data = audio_file.read()
-            
-            # Clean up temporary file
-            os.unlink(tmp_file.name)
-            
-            # Encode as base64
-            return base64.b64encode(audio_data).decode('utf-8')
-            
-    except Exception as e:
-        logger.error(f"Error converting audio to base64: {e}")
-        raise
+
 
 if __name__ == '__main__':
     logger.info("🚀 Voice Clone Handler starting...")

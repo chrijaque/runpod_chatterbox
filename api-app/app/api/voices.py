@@ -194,53 +194,38 @@ async def create_voice_clone(request: VoiceCloneRequest):
             else:
                 logger.error(f"❌ Failed to upload user recording {i+1}")
         
-        # Upload voice sample to Firebase (from RunPod)
-        if sample_filename:
-            # Upload sample from RunPod directory
-            sample_url = firebase_service.upload_runpod_voice_sample(
-                voice_id, sample_filename, language, is_kids_voice
-            )
-            if sample_url:
-                firebase_urls['samples'].append(sample_url)
-                logger.info(f"✅ Voice sample uploaded to Firebase: {sample_url}")
+        # Voice sample is now uploaded directly by RunPod
+        # No need to upload here since RunPod handles it
         
-        # Upload voice profile to Firebase
-        if profile_filename and profile_path:
-            # Use the profile_base64 data from RunPod response instead of file access
-            profile_base64 = output.get('profile_base64')
-            if profile_base64:
-                # Build Firebase path based on language and kids voice
-                if is_kids_voice:
-                    firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}_{profile_filename}"
-                else:
-                    firebase_path = f"audio/voices/{language}/profiles/{voice_id}_{profile_filename}"
-                
-                # Upload base64 profile data directly to Firebase
-                profile_url = firebase_service.upload_base64_profile(profile_base64, firebase_path)
-                if profile_url:
-                    firebase_urls['profiles'].append(profile_url)
-                    logger.info(f"✅ Voice profile uploaded to Firebase: {profile_url}")
-                else:
-                    logger.error(f"❌ Failed to upload voice profile to Firebase")
-            else:
-                logger.warning(f"⚠️ No profile_base64 data in RunPod response")
+        # Get file paths from RunPod response
+        profile_path = output.get('profile_path')
+        audio_path = output.get('audio_path')
+        
+        if profile_path:
+            firebase_urls['profiles'].append(profile_path)
+            logger.info(f"✅ Voice profile path from RunPod: {profile_path}")
         else:
-            logger.warning(f"⚠️ No profile_filename or profile_path available")
+            logger.warning(f"⚠️ No profile_path in RunPod response")
+            
+        if audio_path:
+            firebase_urls['samples'].append(audio_path)
+            logger.info(f"✅ Voice sample path from RunPod: {audio_path}")
+        else:
+            logger.warning(f"⚠️ No audio_path in RunPod response")
         
-        # Clean up RunPod files after successful upload
-        if sample_filename:
-            firebase_service.cleanup_runpod_file(f"/voice_samples/{sample_filename}")
+        # RunPod handles its own file cleanup
+        # No need to clean up here
         
-        # Prepare response with organized Firebase URLs
+        # Prepare response with organized Firebase paths
         response_data = {
             "status": "success",
             "voice_id": voice_id,
             "voice_name": request.title,
-            "audio_base64": output.get('audio_base64'),
-            "profile_base64": output.get('profile_base64'),
+            "profile_path": profile_path,
+            "audio_path": audio_path,
             "metadata": {
                 **output.get('metadata', {}),
-                "firebase_urls": firebase_urls,
+                "firebase_paths": firebase_urls,
                 "shared_access": True,
                 "uploaded_at": datetime.now().isoformat(),
                 "language": language,

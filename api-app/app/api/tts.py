@@ -146,29 +146,28 @@ async def generate_tts(
         # Upload to Firebase for shared access
         firebase_urls = {}
         
-        # Upload TTS generation to stories directory
-        if tts_filename:
-            tts_url = firebase_service.upload_runpod_tts_generation(
-                generation_id, tts_filename, language, is_kids_voice, story_type
-            )
-            if tts_url:
-                firebase_urls['story_url'] = tts_url
-                logger.info(f"✅ TTS story uploaded to Firebase: {tts_url}")
+        # Get audio path from RunPod response
+        audio_path = output.get('audio_path')
         
-        # Clean up RunPod file after successful upload
-        if tts_filename:
-            firebase_service.cleanup_runpod_file(f"/voice_samples/{tts_filename}")
+        if audio_path:
+            firebase_urls['story_path'] = audio_path
+            logger.info(f"✅ TTS story path from RunPod: {audio_path}")
+        else:
+            logger.warning(f"⚠️ No audio_path in RunPod response")
         
-        # Prepare response with shared access URLs
+        # RunPod handles its own file cleanup
+        # No need to clean up here
+        
+        # Prepare response with shared access paths
         response_data = {
             "status": "success",
             "generation_id": generation_id,
             "voice_id": voice_id,
             "text": text,
-            "audio_base64": output.get('audio_base64'),
+            "audio_path": audio_path,
             "metadata": {
                 **output.get('metadata', {}),
-                "firebase_urls": firebase_urls,
+                "firebase_paths": firebase_urls,
                 "shared_access": True,
                 "uploaded_at": datetime.now().isoformat(),
                 "generation_id": generation_id,
