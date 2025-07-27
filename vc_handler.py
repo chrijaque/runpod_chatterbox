@@ -90,8 +90,8 @@ def _debug_gcs_creds():
     else:
         logger.error("❌ GCS-Debug | File NOT found on disk")
 
-    # Check RunPod secret file if different
-    if firebase_secret_path and firebase_secret_path != cred_path:
+    # Check RunPod secret file if different and it's actually a file path
+    if firebase_secret_path and firebase_secret_path != cred_path and not firebase_secret_path.startswith('{'):
         logger.info("🔍 GCS-Debug | Checking RunPod secret file %s", firebase_secret_path)
         p2 = pathlib.Path(firebase_secret_path)
         if p2.exists():
@@ -105,6 +105,8 @@ def _debug_gcs_creds():
                 logger.warning("⚠️  GCS-Debug | Could not read RunPod secret file: %s", e)
         else:
             logger.error("❌ GCS-Debug | RunPod secret file NOT found on disk")
+    elif firebase_secret_path and firebase_secret_path.startswith('{'):
+        logger.info("🔍 GCS-Debug | RunPod secret is JSON content, skipping file existence check")
 
     # 2) Try manual credential load from RunPod secret
     if firebase_secret_path and os.path.exists(firebase_secret_path):
