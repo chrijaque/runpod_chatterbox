@@ -68,12 +68,14 @@ forked_handler = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
-TTS_GENERATED_DIR = Path("/voice_samples")  # Use same directory as voice cloning for persistence
+VOICE_SAMPLES_DIR = Path("/voice_samples")  # For voice clone samples
+TTS_GENERATED_DIR = Path("/tts_generated")  # For TTS story generation
 TEMP_VOICE_DIR = Path("/temp_voice")
 
 # Log directory status (don't create them as they already exist in RunPod)
 logger.info(f"Using existing directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
+logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
@@ -671,6 +673,209 @@ def list_files_for_debug():
         else:
             logger.info(f"  {directory}: [DIRECTORY NOT FOUND]")
 
+def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voice, temp_profile_path, start_time):
+    """Generate voice clone sample"""
+    global model, forked_handler
+    
+    logger.info("🎤 ===== VOICE SAMPLE GENERATION =====")
+    
+    # Create output filename for voice sample
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    local_dir = VOICE_SAMPLES_DIR
+    tts_filename = local_dir / f"{voice_id}_{voice_id}_sample_{timestamp}.wav"
+    
+    logger.info(f"🎯 Voice sample local path: {tts_filename}")
+    
+    try:
+        logger.info("🔄 Starting voice sample processing...")
+        
+        # Use TTSProcessor for robust chunking and generation
+        processor = TTSProcessor(
+            model=model,
+            voice_profile_path=str(temp_profile_path),
+            pause_ms=150,
+            max_chars=600,
+            forked_handler=forked_handler
+        )
+        
+        # Process the text
+        audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
+        
+        generation_time = time.time() - start_time
+        logger.info(f"✅ Voice sample generated in {generation_time:.2f}s")
+        
+        # Save file immediately after generation
+        torchaudio.save(tts_filename, audio_tensor, sample_rate)
+        logger.info(f"💾 Saved voice sample: {tts_filename.name}")
+        
+    except Exception as e:
+        generation_time = time.time() - start_time
+        logger.error(f"❌ Failed to generate voice sample after {generation_time:.2f}s")
+        logger.error(f"❌ Error: {str(e)}")
+        
+        # Try with smaller chunks if it's a CUDA error
+        if "CUDA error" in str(e) and len(text) > 300:
+            logger.info("🔄 Retrying with smaller chunks due to CUDA error...")
+            try:
+                processor = TTSProcessor(
+                    model=model,
+                    voice_profile_path=str(temp_profile_path),
+                    pause_ms=100,
+                    max_chars=300
+                )
+                audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
+                generation_time = time.time() - start_time
+                logger.info(f"✅ Voice sample generated with smaller chunks in {generation_time:.2f}s")
+            except Exception as retry_error:
+                logger.error(f"❌ Retry also failed: {retry_error}")
+                return {"status": "error", "message": f"Failed to generate voice sample even with chunking: {retry_error}"}
+        else:
+            return {"status": "error", "message": f"Failed to generate voice sample: {e}"}
+    
+    # Upload voice sample to Firebase
+    if is_kids_voice:
+        audio_path_firebase = f"audio/voices/{language}/kids/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
+    else:
+        audio_path_firebase = f"audio/voices/{language}/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
+    
+    logger.info(f"🎯 Voice sample Firebase path: {audio_path_firebase}")
+    
+    try:
+        with open(tts_filename, 'rb') as f:
+            wav_bytes = f.read()
+        
+        audio_uploaded = upload_to_firebase(
+            wav_bytes,
+            audio_path_firebase,
+            "audio/x-wav"
+        )
+        logger.info(f"🎵 Voice sample uploaded: {audio_path_firebase}")
+        
+        # Return response
+        response = {
+            "status": "success",
+            "audio_path": audio_path_firebase if audio_uploaded else None,
+            "metadata": {
+                "voice_id": voice_id,
+                "voice_name": voice_id.replace('voice_', ''),
+                "text_input": text[:500] + "..." if len(text) > 500 else text,
+                "generation_time": generation_time,
+                "sample_rate": model.sr,
+                "audio_shape": list(audio_tensor.shape),
+                "tts_file": str(tts_filename),
+                "timestamp": timestamp,
+                "response_type": "firebase_path"
+            }
+        }
+        
+        logger.info(f"📤 Voice sample response ready | Time: {generation_time:.2f}s")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to upload voice sample to Firebase: {e}")
+        return {"status": "error", "message": f"Failed to upload voice sample to Firebase: {e}"}
+
+def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_kids_voice, temp_profile_path, start_time):
+    """Generate TTS story"""
+    global model, forked_handler
+    
+    logger.info("📖 ===== TTS STORY GENERATION =====")
+    
+    # Create output filename for TTS story
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    local_dir = TTS_GENERATED_DIR / language / story_type
+    # Create directory if it doesn't exist
+    local_dir.mkdir(parents=True, exist_ok=True)
+    tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.wav"
+    
+    logger.info(f"🎯 TTS story local path: {tts_filename}")
+    
+    try:
+        logger.info("🔄 Starting TTS story processing...")
+        
+        # Use TTSProcessor for robust chunking and generation
+        processor = TTSProcessor(
+            model=model,
+            voice_profile_path=str(temp_profile_path),
+            pause_ms=150,
+            max_chars=600,
+            forked_handler=forked_handler
+        )
+        
+        # Process the text
+        audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
+        
+        generation_time = time.time() - start_time
+        logger.info(f"✅ TTS story generated in {generation_time:.2f}s")
+        
+        # Save file immediately after generation
+        torchaudio.save(tts_filename, audio_tensor, sample_rate)
+        logger.info(f"💾 Saved TTS story: {tts_filename.name}")
+        
+    except Exception as e:
+        generation_time = time.time() - start_time
+        logger.error(f"❌ Failed to generate TTS story after {generation_time:.2f}s")
+        logger.error(f"❌ Error: {str(e)}")
+        
+        # Try with smaller chunks if it's a CUDA error
+        if "CUDA error" in str(e) and len(text) > 300:
+            logger.info("🔄 Retrying with smaller chunks due to CUDA error...")
+            try:
+                processor = TTSProcessor(
+                    model=model,
+                    voice_profile_path=str(temp_profile_path),
+                    pause_ms=100,
+                    max_chars=300
+                )
+                audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
+                generation_time = time.time() - start_time
+                logger.info(f"✅ TTS story generated with smaller chunks in {generation_time:.2f}s")
+            except Exception as retry_error:
+                logger.error(f"❌ Retry also failed: {retry_error}")
+                return {"status": "error", "message": f"Failed to generate TTS story even with chunking: {retry_error}"}
+        else:
+            return {"status": "error", "message": f"Failed to generate TTS story: {e}"}
+    
+    # Upload TTS story to Firebase
+    audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.wav"
+    
+    logger.info(f"🎯 TTS story Firebase path: {audio_path_firebase}")
+    
+    try:
+        with open(tts_filename, 'rb') as f:
+            wav_bytes = f.read()
+        
+        audio_uploaded = upload_to_firebase(
+            wav_bytes,
+            audio_path_firebase,
+            "audio/x-wav"
+        )
+        logger.info(f"🎵 TTS story uploaded: {audio_path_firebase}")
+        
+        # Return response
+        response = {
+            "status": "success",
+            "audio_path": audio_path_firebase if audio_uploaded else None,
+            "metadata": {
+                "voice_id": voice_id,
+                "voice_name": voice_id.replace('voice_', ''),
+                "text_input": text[:500] + "..." if len(text) > 500 else text,
+                "generation_time": generation_time,
+                "sample_rate": model.sr,
+                "audio_shape": list(audio_tensor.shape),
+                "tts_file": str(tts_filename),
+                "timestamp": timestamp,
+                "response_type": "firebase_path"
+            }
+        }
+        
+        logger.info(f"📤 TTS story response ready | Time: {generation_time:.2f}s")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to upload TTS story to Firebase: {e}")
+        return {"status": "error", "message": f"Failed to upload TTS story to Firebase: {e}"}
+
 def handler(event, responseFormat="base64"):
     """Handle TTS generation requests using saved voice embeddings"""
     global model, forked_handler
@@ -694,8 +899,13 @@ def handler(event, responseFormat="base64"):
     # Extract TTS parameters
     text = input.get('text')
     voice_id = input.get('voice_id')
-    profile_base64 = input.get('profile_base64')  # New: voice profile data
+    profile_base64 = input.get('profile_base64')
     responseFormat = input.get('responseFormat', 'base64')
+    
+    # Extract story context parameters
+    language = input.get('language', 'en')
+    story_type = input.get('story_type', 'user')
+    is_kids_voice = input.get('is_kids_voice', False)
     
     logger.info(f"📋 Extracted parameters:")
     logger.info(f"  - text: {text[:50]}{'...' if text and len(text) > 50 else ''} (length: {len(text) if text else 0})")
@@ -703,6 +913,9 @@ def handler(event, responseFormat="base64"):
     logger.info(f"  - has_profile_base64: {bool(profile_base64)}")
     logger.info(f"  - profile_size: {len(profile_base64) if profile_base64 else 0}")
     logger.info(f"  - responseFormat: {responseFormat}")
+    logger.info(f"  - language: {language}")
+    logger.info(f"  - story_type: {story_type}")
+    logger.info(f"  - is_kids_voice: {is_kids_voice}")
     
     if not text or not voice_id or not profile_base64:
         logger.error("❌ Missing required parameters")
@@ -794,112 +1007,13 @@ def handler(event, responseFormat="base64"):
         
         start_time = time.time()
         
-        # Create output filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        tts_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix
-        
-        try:
-            logger.info("🔄 Starting TTS processing...")
-            
-            # Use TTSProcessor for robust chunking and generation
-            logger.info(f"🔍 DEBUG: Initializing TTSProcessor...")
-            logger.info(f"🔍 DEBUG: Model type: {type(model)}")
-            logger.info(f"🔍 DEBUG: Voice profile path: {temp_profile_path}")
-            logger.info(f"🔍 DEBUG: Voice profile path exists: {temp_profile_path.exists()}")
-            
-            processor = TTSProcessor(
-                model=model,
-                voice_profile_path=str(temp_profile_path),
-                pause_ms=150,  # Slightly longer pause for better flow
-                max_chars=600,   # Conservative chunk size to avoid CUDA errors
-                forked_handler=forked_handler  # Pass the forked handler
-            )
-            logger.info(f"🔍 DEBUG: TTSProcessor initialized successfully")
-            
-            # Process the text
-            logger.info(f"🔍 DEBUG: Starting text processing...")
-            logger.info(f"🔍 DEBUG: Input text length: {len(text)}")
-            logger.info(f"🔍 DEBUG: Output filename: {tts_filename}")
-            
-            audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
-            logger.info(f"🔍 DEBUG: Text processing completed")
-            logger.info(f"🔍 DEBUG: Processing result: {result}")
-            
-            generation_time = time.time() - start_time
-            logger.info(f"✅ TTS generated in {generation_time:.2f}s")
-            logger.info(f"📊 Processing stats: {result}")
-            
-            # Get audio tensor directly from TTSProcessor (same as voice cloning)
-            logger.info(f"🔍 DEBUG: Audio tensor shape: {audio_tensor.shape}")
-            logger.info(f"🔍 DEBUG: Audio tensor dtype: {audio_tensor.dtype}")
-            logger.info(f"🔍 DEBUG: Sample rate: {sample_rate}")
-            
-            # Save file immediately after generation (same as voice cloning)
-            local_filename = TTS_GENERATED_DIR / f"TTS_{voice_id}_{timestamp}.wav"  # Use TTS_ prefix to distinguish from voice cloning
-            torchaudio.save(local_filename, audio_tensor, sample_rate)
-            logger.info(f"💾 Saved TTS: {local_filename.name}")
-            
-        except Exception as e:
-            generation_time = time.time() - start_time
-            logger.error(f"❌ Failed to generate TTS after {generation_time:.2f}s")
-            logger.error(f"❌ Error type: {type(e)}")
-            logger.error(f"❌ Error message: {str(e)}")
-            
-            # Try with even smaller chunks if it's a CUDA error
-            if "CUDA error" in str(e) and len(text) > 300:
-                logger.info("🔄 Retrying with smaller chunks due to CUDA error...")
-                try:
-                    processor = TTSProcessor(
-                        model=model,
-                        voice_profile_path=str(temp_profile_path),
-                        pause_ms=100,
-                        max_chars=300  # Even smaller chunks
-                    )
-                    audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
-                    generation_time = time.time() - start_time
-                    logger.info(f"✅ TTS generated with smaller chunks in {generation_time:.2f}s")
-                except Exception as retry_error:
-                    logger.error(f"❌ Retry also failed: {retry_error}")
-                    return {"status": "error", "message": f"Failed to generate TTS even with chunking: {retry_error}"}
-            else:
-                return {"status": "error", "message": f"Failed to generate TTS: {e}"}
-        
-        # Upload TTS audio to Firebase and get file path
-        audio_path_firebase = f"audio/stories/en/user/TTS_{voice_id}_{timestamp}.wav"
-        
-        try:
-            with open(tts_filename, 'rb') as f:
-                wav_bytes = f.read()
-            
-            audio_uploaded = upload_to_firebase(
-                wav_bytes,
-                audio_path_firebase,
-                "audio/x-wav"
-            )
-            logger.info(f"🎵 TTS audio uploaded: {audio_path_firebase}")
-            
-            # Return file path instead of URL
-            response = {
-                "status": "success",
-                "audio_path": audio_path_firebase if audio_uploaded else None,
-                "metadata": {
-                    "voice_id": voice_id,
-                    "voice_name": voice_id.replace('voice_', ''),
-                    "text_input": text[:500] + "..." if len(text) > 500 else text,  # Truncate long text
-                    "generation_time": generation_time,
-                    "sample_rate": model.sr,
-                    "audio_shape": list(audio_tensor.shape),
-                    "tts_file": str(tts_filename),
-                    "timestamp": timestamp,
-                    "response_type": "firebase_path"
-                }
-            }
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to upload TTS audio to Firebase: {e}")
-            return {"status": "error", "message": f"Failed to upload TTS audio to Firebase: {e}"}
-        
-        logger.info(f"📤 Response ready | Time: {generation_time:.2f}s | File: {tts_filename.name}")
+        # Route to appropriate generation function based on story_type
+        if story_type == "sample":
+            logger.info("🎤 Routing to voice sample generation...")
+            response = generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voice, temp_profile_path, start_time)
+        else:
+            logger.info("📖 Routing to TTS story generation...")
+            response = generate_tts_story(voice_id, text, profile_base64, language, story_type, is_kids_voice, temp_profile_path, start_time)
         
         # Clean up temporary profile file
         try:
@@ -969,7 +1083,17 @@ def list_available_files():
     
     try:
         if TTS_GENERATED_DIR.exists():
-            files = list(TTS_GENERATED_DIR.glob("TTS_*.wav"))  # Look for TTS_ prefixed files
+            # List files from both directories
+    # Voice samples (keep existing flat structure)
+    sample_files = list(VOICE_SAMPLES_DIR.glob("*_sample_*.wav"))  # Look for sample files
+    
+    # TTS files (new nested structure)
+    tts_files = []
+    if TTS_GENERATED_DIR.exists():
+        # Recursively find all TTS files in language/story_type subdirectories
+        tts_files = list(TTS_GENERATED_DIR.rglob("TTS_*.wav"))
+    
+    files = tts_files + sample_files
             logger.info(f"📂 Found {len(files)} TTS files:")
             
             for file in files:

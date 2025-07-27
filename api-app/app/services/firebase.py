@@ -749,6 +749,55 @@ class FirebaseService:
             logger.error(f"❌ Failed to cleanup RunPod file: {e}")
             return False
 
+    def get_voice_profile_base64(self, voice_id: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
+        """Get voice profile as base64 from Firebase"""
+        try:
+            if not self.is_connected():
+                logger.error("Not connected to Firebase")
+                return None
+            
+            # First, let's list all files in the profiles directory to see what's available
+            profiles_prefix = f"audio/voices/{language}/profiles/"
+            if is_kids_voice:
+                profiles_prefix = f"audio/voices/{language}/kids/profiles/"
+            
+            logger.info(f"🔍 Listing files in profiles directory: {profiles_prefix}")
+            blobs = list(self.bucket.list_blobs(prefix=profiles_prefix))
+            
+            # Log all available profile files
+            for blob in blobs:
+                if blob.name.endswith('.npy'):
+                    logger.info(f"📁 Found profile file: {blob.name}")
+            
+            # Try to find the voice profile with the correct pattern
+            # The voice profile is stored as: {voice_id}.npy
+            target_filename = f"{profiles_prefix}{voice_id}.npy"
+            logger.info(f"🔍 Looking for voice profile: {target_filename}")
+            
+            matching_blobs = [blob for blob in blobs if blob.name == target_filename]
+            
+            if not matching_blobs:
+                logger.warning(f"No voice profile found for {voice_id} in {profiles_prefix}")
+                return None
+            
+            # Use the first matching profile file
+            blob = matching_blobs[0]
+            logger.info(f"🔍 Using voice profile: {blob.name}")
+            
+            # Download the file content
+            profile_data = blob.download_as_bytes()
+            
+            # Convert to base64
+            import base64
+            profile_base64 = base64.b64encode(profile_data).decode('utf-8')
+            
+            logger.info(f"✅ Successfully retrieved voice profile for {voice_id}")
+            return profile_base64
+            
+        except Exception as e:
+            logger.error(f"Error getting voice profile for {voice_id}: {e}")
+            return None
+
     def get_storage_usage(self) -> Dict[str, int]:
         """
         Get storage usage statistics

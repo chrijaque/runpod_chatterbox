@@ -88,12 +88,36 @@ class RunPodClient:
     
     def generate_tts(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64") -> Dict[str, Any]:
         """
-        Generate TTS using RunPod
+        Generate TTS using RunPod (legacy method for voice clone samples)
         
         :param voice_id: Voice ID
         :param text: Text to synthesize
         :param profile_base64: Base64 encoded voice profile
         :param response_format: Response format (base64, binary)
+        :return: RunPod response
+        """
+        return self.generate_tts_with_context(
+            voice_id=voice_id,
+            text=text,
+            profile_base64=profile_base64,
+            response_format=response_format,
+            language="en",
+            story_type="sample",
+            is_kids_voice=False
+        )
+
+    def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
+                                 language: str = "en", story_type: str = "user", is_kids_voice: bool = False) -> Dict[str, Any]:
+        """
+        Generate TTS using RunPod with story context
+        
+        :param voice_id: Voice ID
+        :param text: Text to synthesize
+        :param profile_base64: Base64 encoded voice profile
+        :param response_format: Response format (base64, binary)
+        :param language: Language code (en, es, fr, etc.)
+        :param story_type: Story type (user, app, sample)
+        :param is_kids_voice: Whether this is a kids voice
         :return: RunPod response
         """
         try:
@@ -104,12 +128,18 @@ class RunPodClient:
                     "voice_id": voice_id,
                     "text": text,
                     "profile_base64": profile_base64,
-                    "responseFormat": response_format
+                    "responseFormat": response_format,
+                    "language": language,
+                    "story_type": story_type,
+                    "is_kids_voice": is_kids_voice
                 }
             }
             
             logger.info(f"🎵 Generating TTS for voice: {voice_id}")
             logger.info(f"📝 Text length: {len(text)} characters")
+            logger.info(f"🌍 Language: {language}")
+            logger.info(f"📚 Story Type: {story_type}")
+            logger.info(f"👶 Kids Voice: {is_kids_voice}")
             logger.info(f"📡 Calling RunPod TTS API: {url}")
             
             response = requests.post(url, json=payload, headers=self.headers)

@@ -19,6 +19,7 @@ export const TTS_API_ENDPOINT = `https://api.runpod.ai/v2/${TTS_ENDPOINT_ID}/run
 export const FASTAPI_BASE_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';
 export const VOICE_LIBRARY_API = `${FASTAPI_BASE_URL}/api`;
 export const VOICE_API = `${VOICE_LIBRARY_API}/voices`;
+export const TTS_API = `${VOICE_LIBRARY_API}/tts`;
 export const TTS_GENERATIONS_API = `${VOICE_LIBRARY_API}/tts/generations`;
 
 export interface ChatterboxRequest {

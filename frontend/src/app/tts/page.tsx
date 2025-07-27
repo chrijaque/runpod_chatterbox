@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_GENERATIONS_API } from '@/config/api';
+import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_API, TTS_GENERATIONS_API } from '@/config/api';
 import Link from 'next/link';
 
 interface Voice {
@@ -94,7 +94,7 @@ export default function TTSPage() {
         setIsLoadingGenerations(true);
         try {
             // Use the new Firebase-based endpoint to list stories by language and type
-            const response = await fetch(`${TTS_GENERATIONS_API}/stories/${language}?story_type=${storyType}`, {
+            const response = await fetch(`${TTS_API}/stories/${language}?story_type=${storyType}`, {
                 method: 'GET',
             });
 
@@ -103,7 +103,7 @@ export default function TTSPage() {
 
             if (data.status === 'success') {
                 // Transform Firebase data to match our TTSGeneration interface
-                const generations = data.stories.map((story: any) => ({
+                const generations = (data.stories || []).map((story: any) => ({
                     file_id: story.generation_id || story.file_id,
                     voice_id: story.voice_id || 'unknown',
                     voice_name: story.voice_name || 'Unknown Voice',
@@ -113,14 +113,20 @@ export default function TTSPage() {
                     file_size: story.file_size || 0
                 }));
                 setTtsGenerations(generations);
+                console.log(`✅ Loaded ${generations.length} TTS generations`);
             } else {
                 throw new Error(data.detail || data.message || 'Failed to load TTS generations');
             }
         } catch (err) {
             console.error('Error loading TTS generations:', err);
-            setError('Failed to load TTS generations');
-            // Set empty array on error to avoid breaking the UI
-            setTtsGenerations([]);
+            // Don't show error if it's just that there are no generations yet
+            if (err instanceof Error && err.message.includes('Not Found')) {
+                console.log('ℹ️ No TTS generations found yet - this is normal for a new setup');
+                setTtsGenerations([]);
+            } else {
+                setError('Failed to load TTS generations');
+                setTtsGenerations([]);
+            }
         } finally {
             setIsLoadingGenerations(false);
         }
@@ -130,7 +136,7 @@ export default function TTSPage() {
         setPlayingGeneration(fileId);
         try {
             // Use the new Firebase-based endpoint to get story audio URL
-            const response = await fetch(`${TTS_GENERATIONS_API}/stories/${language}/${storyType}/${fileId}/audio`);
+            const response = await fetch(`${TTS_API}/stories/${language}/${storyType}/${fileId}/audio`);
             
             if (!response.ok) {
                 throw new Error('Failed to get story audio URL');
@@ -246,7 +252,7 @@ export default function TTSPage() {
             });
 
             // Send to FastAPI using the new organized TTS endpoint
-            const response = await fetch(`${TTS_GENERATIONS_API}/generate`, {
+            const response = await fetch(`${TTS_API}/generate`, {
                 method: 'POST',
                 body: formData
             });

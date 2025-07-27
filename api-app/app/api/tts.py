@@ -97,48 +97,57 @@ async def generate_tts(
         logger.info(f"👶 Kids Voice: {is_kids_voice}")
         logger.info(f"📚 Story Type: {story_type}")
         
-        # Prepare RunPod request
-        runpod_request = {
-            "voice_id": voice_id,
-            "text": text,
-            "responseFormat": responseFormat
-        }
+        # Get voice profile from Firebase
+        voice_profile_base64 = None
+        try:
+            voice_profile_base64 = firebase_service.get_voice_profile_base64(voice_id)
+            if not voice_profile_base64:
+                raise HTTPException(status_code=404, detail=f"Voice profile not found for: {voice_id}")
+        except Exception as e:
+            logger.error(f"Error getting voice profile for {voice_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to get voice profile: {e}")
         
-        # Submit to RunPod
-        job = await runpod_client.generate_tts(runpod_request)
+        # Submit to RunPod with story context
+        job = runpod_client.generate_tts_with_context(
+            voice_id=voice_id, 
+            text=text, 
+            profile_base64=voice_profile_base64, 
+            response_format=responseFormat,
+            language=language,
+            story_type=story_type,
+            is_kids_voice=is_kids_voice
+        )
         if not job:
             raise HTTPException(status_code=500, detail="Failed to submit TTS job to RunPod")
         
         # Wait for completion
-        result = await runpod_client.wait_for_job_completion(job['id'])
+        result = runpod_client.wait_for_job_completion(runpod_client.tts_endpoint_id, job['id'])
         if not result or result.get('status') != 'COMPLETED':
             error_msg = result.get('error', 'Unknown error') if result else 'Job failed'
             raise HTTPException(status_code=500, detail=f"TTS generation failed: {error_msg}")
         
-        output = result.get('output', {})
+        # The RunPod response has the data at the top level, not in an 'output' field
+        output = result
         if output.get('status') != 'success':
             raise HTTPException(status_code=500, detail=f"TTS generation failed: {output.get('message', 'Unknown error')}")
         
-        # Extract file information from RunPod response
-        tts_file = output.get('metadata', {}).get('tts_file')
-        if not tts_file:
-            raise HTTPException(status_code=500, detail="Invalid response from RunPod")
-        
-        # Extract filename from RunPod path
-        tts_filename = Path(tts_file).name
-        generation_id = f"gen_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
-        # Upload to Firebase for shared access
-        firebase_urls = {}
-        
         # Get audio path from RunPod response
         audio_path = output.get('audio_path')
+        if not audio_path:
+            raise HTTPException(status_code=500, detail="No audio path returned from RunPod")
         
-        if audio_path:
-            firebase_urls['story_path'] = audio_path
-            logger.info(f"✅ TTS story path from RunPod: {audio_path}")
-        else:
-            logger.warning(f"⚠️ No audio_path in RunPod response")
+        # Extract generation ID from the audio path
+        # audio_path format: audio/stories/en/user/TTS_voice_id_timestamp.wav
+        audio_filename = Path(audio_path).name
+        generation_id = audio_filename.replace('.wav', '').replace('TTS_', 'gen_')
+        
+        # Prepare Firebase URLs
+        firebase_urls = {
+            'story_path': audio_path
+        }
+        
+        logger.info(f"✅ TTS story path from RunPod: {audio_path}")
+        logger.info(f"✅ Generated ID: {generation_id}")
         
         # RunPod handles its own file cleanup
         # No need to clean up here
@@ -386,4 +395,36 @@ async def get_story_audio(language: str, story_type: str, generation_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting story audio for generation {generation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/debug/voice-profiles/{language}")
+async def debug_voice_profiles(language: str = "en"):
+    """Debug endpoint to list voice profiles in Firebase"""
+    try:
+        if not firebase_service.is_connected():
+            raise HTTPException(status_code=500, detail="Firebase not connected")
+        
+        # List all files in the profiles directory
+        profiles_prefix = f"audio/voices/{language}/profiles/"
+        blobs = list(firebase_service.bucket.list_blobs(prefix=profiles_prefix))
+        
+        profile_files = []
+        for blob in blobs:
+            if blob.name.endswith('.npy'):
+                profile_files.append({
+                    "name": blob.name,
+                    "size": blob.size,
+                    "created": blob.time_created.isoformat() if blob.time_created else None
+                })
+        
+        return {
+            "status": "success",
+            "language": language,
+            "profiles_prefix": profiles_prefix,
+            "total_profiles": len(profile_files),
+            "profile_files": profile_files
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing voice profiles: {e}")
         raise HTTPException(status_code=500, detail=str(e)) 
