@@ -2,9 +2,14 @@
 ARG BUILD_DATE=2025-07-23
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-# Set environment variables
+# Set environment variables for logging
 ENV PYTHONUNBUFFERED=1
+ENV PYTHONFAULTHANDLER=1
+ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
+
+# Setup environment for huggingface
+ENV HF_HOME=/root/.cache/huggingface
 
 # Firebase credentials will be provided via RunPod secrets
 # ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase.json
@@ -22,8 +27,11 @@ RUN apt-get update && \
     libswscale-dev && \
     rm -rf /var/lib/apt/lists/*
 
+# Set git global config to avoid warnings
+RUN git config --global --add safe.directory '*'
+
 # Copy requirements first for better caching
-COPY requirements.txt /requirements.txt
+COPY api-app/requirements.txt /requirements.txt
 
 # Install Python dependencies with verbose pip output
 
@@ -33,24 +41,30 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 # Clone the forked repository and install in editable mode
 RUN echo "🔧 Cloning forked repository..." && \
     echo "🔍 Testing repository access..." && \
-    curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
-    echo "🔧 Uninstalling existing PyTorch packages to prevent conflicts..." && \
-    pip uninstall -y torch torchvision torchaudio chatterbox-tts || true && \
+    curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed.git && \
+    echo "🔧 Uninstalling existing packages to prevent conflicts..." && \
+    pip uninstall -y chatterbox-tts || echo "No chatterbox-tts to uninstall" && \
     echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    echo "🔧 Checking repository structure..." && \
+    ls -la /workspace/chatterbox_embed/ && \
     echo "🔧 Installing forked repository in editable mode..." && \
-    pip install -e /workspace/chatterbox_embed/src && \
+    pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)" && \
     python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
 
 # Debug: Check which repository was installed
 RUN echo "🔍 Checking installed repository..." && \
-    pip show chatterbox-tts
+    pip show chatterbox-tts && \
+    echo "🔍 Checking if it's an editable install..." && \
+    python -c "import chatterbox; print('📂 chatterbox.__file__:', chatterbox.__file__); print('📂 Is editable:', 'site-packages' not in chatterbox.__file__)"
 
 # Install other requirements (excluding chatterbox-tts since it's already installed)
 RUN echo "🔧 Installing other requirements..." && \
     pip install -v -r requirements.txt && \
+    echo "🔧 Installing RunPod SDK..." && \
+    pip install runpod>=1.5.0 && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
