@@ -33,21 +33,24 @@ RUN git config --global --add safe.directory '*'
 # Copy requirements first for better caching
 COPY api-app/requirements.txt /requirements.txt
 
-# Install Python dependencies with verbose pip output
-
-# Debug: Show what's in requirements.txt
-RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
+# Create filtered requirements without PyTorch packages
+RUN echo "🔧 Creating filtered requirements..." && \
+    grep -v "torch" requirements.txt > /filtered_requirements.txt && \
+    echo "📋 Original requirements:" && cat requirements.txt && \
+    echo "📋 Filtered requirements:" && cat /filtered_requirements.txt
 
 # Clone the forked repository and install in editable mode
 RUN echo "🔧 Cloning forked repository..." && \
     echo "🔍 Testing repository access..." && \
     curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed.git && \
     echo "🔧 Uninstalling existing packages to prevent conflicts..." && \
-    pip uninstall -y chatterbox-tts || echo "No chatterbox-tts to uninstall" && \
+    pip uninstall -y chatterbox-tts torch torchvision torchaudio || echo "No packages to uninstall" && \
     echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
     echo "🔧 Checking repository structure..." && \
     ls -la /workspace/chatterbox_embed/ && \
+    echo "🔧 Installing PyTorch 2.8.0 to match requirements..." && \
+    pip install torch==2.8.0.dev20250319 torchvision==0.22.0.dev20250319+cu128 torchaudio==2.8.0.dev20250319 --index-url https://download.pytorch.org/whl/cu128 && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
@@ -60,9 +63,9 @@ RUN echo "🔍 Checking installed repository..." && \
     echo "🔍 Checking if it's an editable install..." && \
     python -c "import chatterbox; print('📂 chatterbox.__file__:', chatterbox.__file__); print('📂 Is editable:', 'site-packages' not in chatterbox.__file__)"
 
-# Install other requirements (excluding chatterbox-tts since it's already installed)
+# Install other requirements (excluding PyTorch packages since they're already installed)
 RUN echo "🔧 Installing other requirements..." && \
-    pip install -v -r requirements.txt && \
+    pip install -v -r /filtered_requirements.txt && \
     echo "🔧 Installing RunPod SDK..." && \
     pip install runpod>=1.5.0 && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
