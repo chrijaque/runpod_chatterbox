@@ -61,37 +61,27 @@ export default function Home() {
     }, [language, isKidsVoice]);
 
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
-        // This function is now simplified since RunPod handles Firebase uploads directly
-        console.log('🔍 DEBUGGING: saveVoiceToAPI called with:', {
-            resultType: typeof result,
-            resultKeys: result ? Object.keys(result) : 'NO RESULT',
-            hasAudioPath: !!(result && result.audio_path),
-            hasProfilePath: !!(result && result.profile_path),
-            hasMetadata: !!(result && result.metadata),
-            voiceName
-        });
-        
-        if (!result || !result.audio_path || !result.metadata) {
-            console.log('⚠️ Cannot save voice to API - missing data:', {
-                hasResult: !!result,
-                hasAudioPath: !!(result && result.audio_path),
-                hasMetadata: !!(result && result.metadata)
-            });
-            return;
-        }
-        
-        console.log('💾 Voice already saved to Firebase by RunPod:', { 
-            voiceName,
-            audioPath: result.audio_path,
-            profilePath: result.profile_path
-        });
-        
-        // Since RunPod already uploaded to Firebase, we just need to refresh the library
         try {
+            console.log('💾 Saving voice to API...', { result, voiceName });
+            
+            // Check if we have the required data
+            if (!result || !result.sample_audio_path) {
+                console.error('❌ No sample audio path in result - cannot save voice', {
+                    hasResult: !!result,
+                    resultType: typeof result,
+                    hasSampleAudioPath: !!(result && result.sample_audio_path),
+                    resultKeys: result ? Object.keys(result) : []
+                });
+                return;
+            }
+            
+            // Voice is now saved directly by RunPod to Firebase
+            // We just need to refresh the voice library
+            console.log('✅ Voice saved to Firebase by RunPod, refreshing library...');
             await loadVoiceLibrary();
-            console.log('✅ Voice library refreshed after RunPod upload');
+            
         } catch (error) {
-            console.error('❌ Error refreshing voice library:', error);
+            console.error('❌ Error saving voice to API:', error);
         }
     };
 
@@ -327,14 +317,14 @@ export default function Home() {
                 }
                 
                 // Save voice to FastAPI/Firebase after successful generation
-                if (result && result.audio_path) {
-                    console.log('💾 Voice audio path available:', result.audio_path);
+                if (result && result.sample_audio_path) {
+                    console.log('💾 Voice audio path available:', result.sample_audio_path);
                     await saveVoiceToAPI(result, name);
                 } else {
                     console.error('❌ No audio path in result - cannot save voice', {
                         hasResult: !!result,
                         resultType: typeof result,
-                        hasAudioPath: !!(result && result.audio_path),
+                        hasAudioPath: !!(result && result.sample_audio_path),
                         resultKeys: result ? Object.keys(result) : []
                     });
                 }

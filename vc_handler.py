@@ -11,6 +11,7 @@ from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
 from datetime import datetime, timedelta
 from google.cloud import storage
+import numpy as np  # Added for MP3 conversion
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,105 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 # Initialize Firebase storage client
 storage_client = None
 bucket = None
+
+# -------------------------------------------------------------------
+# 🎵 MP3 Conversion Utilities
+# -------------------------------------------------------------------
+def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
+    """
+    Convert audio tensor directly to MP3 bytes.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :param bitrate: MP3 bitrate (e.g., "96k", "128k", "160k")
+    :return: MP3 bytes
+    """
+    try:
+        from pydub import AudioSegment
+        # Convert tensor to AudioSegment
+        audio_segment = tensor_to_audiosegment(audio_tensor, sample_rate)
+        # Export to MP3 bytes
+        mp3_bytes = audio_segment.export(format="mp3", bitrate=bitrate)
+        return mp3_bytes
+    except ImportError:
+        logger.warning("pydub not available, falling back to WAV")
+        return tensor_to_wav_bytes(audio_tensor, sample_rate)
+    except Exception as e:
+        logger.warning(f"Direct MP3 conversion failed: {e}, falling back to WAV")
+        return tensor_to_wav_bytes(audio_tensor, sample_rate)
+
+def tensor_to_audiosegment(audio_tensor, sample_rate):
+    """
+    Convert PyTorch audio tensor to pydub AudioSegment.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: pydub AudioSegment
+    """
+    from pydub import AudioSegment
+    
+    # Convert tensor to numpy array
+    if audio_tensor.dim() == 2:
+        # Stereo: (channels, samples)
+        audio_np = audio_tensor.numpy()
+    else:
+        # Mono: (samples,) -> (1, samples)
+        audio_np = audio_tensor.unsqueeze(0).numpy()
+    
+    # Convert to int16 for pydub
+    audio_np = (audio_np * 32767).astype(np.int16)
+    
+    # Create AudioSegment
+    audio_segment = AudioSegment(
+        audio_np.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,  # 16-bit
+        channels=audio_np.shape[0]
+    )
+    
+    return audio_segment
+
+def tensor_to_wav_bytes(audio_tensor, sample_rate):
+    """
+    Convert audio tensor to WAV bytes (fallback).
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: WAV bytes
+    """
+    # Save to temporary WAV file
+    temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    torchaudio.save(temp_wav.name, audio_tensor, sample_rate)
+    
+    # Read WAV bytes
+    with open(temp_wav.name, 'rb') as f:
+        wav_bytes = f.read()
+    
+    # Clean up temp file
+    os.unlink(temp_wav.name)
+    
+    return wav_bytes
+
+def convert_audio_file_to_mp3(input_path, output_path, bitrate="160k"):
+    """
+    Convert audio file to MP3 with specified bitrate.
+    
+    :param input_path: Path to input audio file
+    :param output_path: Path to output MP3 file
+    :param bitrate: MP3 bitrate
+    """
+    try:
+        from pydub import AudioSegment
+        # Load audio file
+        audio = AudioSegment.from_file(input_path)
+        # Export as MP3
+        audio.export(output_path, format="mp3", bitrate=bitrate)
+        logger.info(f"✅ Converted {input_path} to MP3: {output_path}")
+    except ImportError:
+        raise ImportError("pydub is required for audio conversion")
+    except Exception as e:
+        logger.error(f"❌ Failed to convert {input_path} to MP3: {e}")
+        raise
 
 # -------------------------------------------------------------------
 # 🐞  Firebase / GCS credential debug helper
@@ -417,12 +517,15 @@ def handle_voice_clone_request(input, responseFormat):
     audio_data = input.get('audio_data')  # Base64 encoded audio data
     audio_format = input.get('audio_format', 'wav')  # Format of the input audio
     responseFormat = input.get('responseFormat', 'base64')  # Response format from frontend
+    language = input.get('language', 'en')  # Language for storage organization
+    is_kids_voice = input.get('is_kids_voice', False)  # Kids voice flag
 
     if not name or not audio_data:
         return {"status": "error", "message": "Both name and audio_data are required"}
 
     logger.info(f"New request. Voice clone name: {name}")
     logger.info(f"Response format requested: {responseFormat}")
+    logger.info(f"Language: {language}, Kids voice: {is_kids_voice}")
     
     # Generate the template message
     template_message = generate_template_message(name)
@@ -441,7 +544,7 @@ def handle_voice_clone_request(input, responseFormat):
             f.write(audio_bytes)
         logger.info(f"Saved temporary voice file to {temp_voice_file}")
 
-        # Try to load existing profile, or create new one
+        # Step 1: Create voice profile (keep original quality)
         profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
         if profile_path.exists():
             logger.info(f"🎵 Loading existing profile: {voice_id}")
@@ -451,10 +554,42 @@ def handle_voice_clone_request(input, responseFormat):
             save_voice_profile(temp_voice_file, voice_id)
             profile = load_voice_profile(voice_id)
         
+        # Step 2: Convert and save recorded audio (160 kbps MP3)
+        recorded_audio_path = None
+        try:
+            # Convert original recording to 160 kbps MP3
+            temp_mp3_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}_recorded.mp3"
+            convert_audio_file_to_mp3(str(temp_voice_file), str(temp_mp3_file), "160k")
+            
+            # Upload recorded audio to Firebase
+            with open(temp_mp3_file, 'rb') as f:
+                recorded_mp3_bytes = f.read()
+            
+            if is_kids_voice:
+                recorded_firebase_path = f"audio/voices/{language}/kids/recorded/{voice_id}_{timestamp}.mp3"
+            else:
+                recorded_firebase_path = f"audio/voices/{language}/recorded/{voice_id}_{timestamp}.mp3"
+            
+            recorded_uploaded = upload_to_firebase(
+                recorded_mp3_bytes,
+                recorded_firebase_path,
+                "audio/mpeg"
+            )
+            if recorded_uploaded:
+                recorded_audio_path = recorded_firebase_path
+                logger.info(f"🎵 Recorded audio uploaded: {recorded_firebase_path}")
+            
+            # Clean up temp MP3 file
+            os.unlink(temp_mp3_file)
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to convert/upload recorded audio: {e}")
+        
         # Track which generation method was used
         generation_method = "unknown"
         
-        # Generate speech with the template message
+        # Step 3: Generate voice sample (96 kbps MP3)
+        audio_tensor = None
         if profile is not None:
             # Use profile-based generation (forked repository method)
             logger.info("🔄 Using profile-based generation")
@@ -496,13 +631,30 @@ def handle_voice_clone_request(input, responseFormat):
             audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
             generation_method = "audio_file"
 
-        # Generate output filename in voice_samples directory
-        sample_filename = VOICE_SAMPLES_DIR / f"{voice_id}_sample_{timestamp}.wav"
+        # Convert audio tensor to MP3 bytes (96 kbps)
+        sample_mp3_bytes = tensor_to_mp3_bytes(audio_tensor, model.sr, "96k")
+        logger.info(f"🎵 Generated voice sample in MP3 format: {len(sample_mp3_bytes)} bytes")
         
-        # Save as WAV directly to final location
-        torchaudio.save(sample_filename, audio_tensor, model.sr)
-        logger.info(f"💾 Saved sample: {sample_filename.name}")
-        
+        # Upload voice sample to Firebase
+        sample_audio_path = None
+        try:
+            if is_kids_voice:
+                sample_firebase_path = f"audio/voices/{language}/kids/samples/{voice_id}_sample_{timestamp}.mp3"
+            else:
+                sample_firebase_path = f"audio/voices/{language}/samples/{voice_id}_sample_{timestamp}.mp3"
+            
+            sample_uploaded = upload_to_firebase(
+                sample_mp3_bytes,
+                sample_firebase_path,
+                "audio/mpeg"
+            )
+            if sample_uploaded:
+                sample_audio_path = sample_firebase_path
+                logger.info(f"🎵 Voice sample uploaded: {sample_firebase_path}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to upload voice sample: {e}")
+
         # Clean up temporary voice file
         try:
             os.unlink(temp_voice_file)
@@ -518,63 +670,58 @@ def handle_voice_clone_request(input, responseFormat):
                 pass
         return {"status": "error", "message": str(e)}
 
-    # Upload files to Firebase and get file paths
-    profile_path_firebase = f"audio/voices/en/profiles/{voice_id}.npy"
-    audio_path_firebase = f"audio/voices/en/samples/{voice_id}_sample_{timestamp}.wav"
-    
-    # Upload profile file
-    profile_uploaded = False
+    # Upload voice profile to Firebase
+    profile_path_firebase = None
     if profile_path.exists():
         try:
             with open(profile_path, 'rb') as f:
                 profile_data = f.read()
+            
+            if is_kids_voice:
+                profile_firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}.npy"
+            else:
+                profile_firebase_path = f"audio/voices/{language}/profiles/{voice_id}.npy"
+            
             profile_uploaded = upload_to_firebase(
                 profile_data,
-                profile_path_firebase,
+                profile_firebase_path,
                 "application/octet-stream"
             )
-            logger.info(f"📦 Profile uploaded: {profile_path_firebase}")
+            if profile_uploaded:
+                profile_path_firebase = profile_firebase_path
+                logger.info(f"📦 Profile uploaded: {profile_firebase_path}")
         except Exception as e:
             logger.error(f"Failed to upload profile file: {e}")
     else:
         logger.error(f"❌ Profile file does not exist: {profile_path}")
-    
-    # Upload audio sample
-    audio_uploaded = False
-    try:
-        with open(sample_filename, 'rb') as f:
-            wav_bytes = f.read()
-        audio_uploaded = upload_to_firebase(
-            wav_bytes,
-            audio_path_firebase,
-            "audio/x-wav"
-        )
-        logger.info(f"🎵 Audio uploaded: {audio_path_firebase}")
-    except Exception as e:
-        logger.error(f"Failed to upload audio file: {e}")
 
     # Log final summary (minimal)
     logger.info(f"🎯 Generation method: {generation_method}")
-    logger.info(f"📦 Profile uploaded: {'YES' if profile_uploaded else 'NO'}")
-    logger.info(f"🎵 Audio uploaded: {'YES' if audio_uploaded else 'NO'}")
+    logger.info(f"📦 Profile uploaded: {'YES' if profile_path_firebase else 'NO'}")
+    logger.info(f"🎵 Recorded audio uploaded: {'YES' if recorded_audio_path else 'NO'}")
+    logger.info(f"🎵 Voice sample uploaded: {'YES' if sample_audio_path else 'NO'}")
     
     # Return file paths instead of URLs
     response = {
         "status": "success",
-        "profile_path": profile_path_firebase if profile_uploaded else None,
-        "audio_path": audio_path_firebase if audio_uploaded else None,
+        "profile_path": profile_path_firebase,
+        "recorded_audio_path": recorded_audio_path,
+        "sample_audio_path": sample_audio_path,
         "metadata": {
             "sample_rate": model.sr,
-            "audio_shape": list(audio_tensor.shape),
+            "audio_shape": list(audio_tensor.shape) if audio_tensor is not None else None,
             "voice_id": voice_id,
             "voice_name": name,
             "profile_path_local": str(profile_path),
             "profile_exists": profile_path.exists(),
             "has_profile_support": hasattr(model, 'save_voice_profile') and hasattr(model, 'load_voice_profile'),
             "generation_method": generation_method,
-            "sample_file": str(sample_filename),
             "template_message": template_message,
-            "forked_handler_used": forked_handler is not None
+            "forked_handler_used": forked_handler is not None,
+            "language": language,
+            "is_kids_voice": is_kids_voice,
+            "recorded_format": "160k_mp3",
+            "sample_format": "96k_mp3"
         }
     }
     logger.info(f"📤 Voice clone completed successfully")

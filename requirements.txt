@@ -32,7 +32,7 @@ requests>=2.31.0
 # Audio processing
 torchaudio>=2.1.0
 torch>=2.1.0
-pydub>=0.25.1
+pydub==0.25.1
 
 # Text processing
 nltk>=3.8.1

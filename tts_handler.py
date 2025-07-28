@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import List, Dict
 from google.cloud import storage
+import numpy as np  # Added for MP3 conversion
 
 # Configure logging first
 logging.basicConfig(level=logging.INFO)
@@ -89,6 +90,106 @@ logger.info(f"  TEMP_VOICE_DIR exists: {TEMP_VOICE_DIR.exists()}")
 # Initialize Firebase storage client
 storage_client = None
 bucket = None
+
+# -------------------------------------------------------------------
+# 🎵 MP3 Conversion Utilities
+# -------------------------------------------------------------------
+def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
+    """
+    Convert audio tensor directly to MP3 bytes.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :param bitrate: MP3 bitrate (e.g., "96k", "128k", "160k")
+    :return: MP3 bytes
+    """
+    if PYDUB_AVAILABLE:
+        try:
+            # Convert tensor to AudioSegment
+            audio_segment = tensor_to_audiosegment(audio_tensor, sample_rate)
+            # Export to MP3 bytes
+            mp3_bytes = audio_segment.export(format="mp3", bitrate=bitrate)
+            return mp3_bytes
+        except Exception as e:
+            logger.warning(f"Direct MP3 conversion failed: {e}, falling back to WAV")
+            return tensor_to_wav_bytes(audio_tensor, sample_rate)
+    else:
+        logger.warning("pydub not available, falling back to WAV")
+        return tensor_to_wav_bytes(audio_tensor, sample_rate)
+
+def tensor_to_audiosegment(audio_tensor, sample_rate):
+    """
+    Convert PyTorch audio tensor to pydub AudioSegment.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: pydub AudioSegment
+    """
+    if not PYDUB_AVAILABLE:
+        raise ImportError("pydub is required for audio conversion")
+    
+    # Convert tensor to numpy array
+    if audio_tensor.dim() == 2:
+        # Stereo: (channels, samples)
+        audio_np = audio_tensor.numpy()
+    else:
+        # Mono: (samples,) -> (1, samples)
+        audio_np = audio_tensor.unsqueeze(0).numpy()
+    
+    # Convert to int16 for pydub
+    audio_np = (audio_np * 32767).astype(np.int16)
+    
+    # Create AudioSegment
+    audio_segment = AudioSegment(
+        audio_np.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,  # 16-bit
+        channels=audio_np.shape[0]
+    )
+    
+    return audio_segment
+
+def tensor_to_wav_bytes(audio_tensor, sample_rate):
+    """
+    Convert audio tensor to WAV bytes (fallback).
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: WAV bytes
+    """
+    # Save to temporary WAV file
+    temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    torchaudio.save(temp_wav.name, audio_tensor, sample_rate)
+    
+    # Read WAV bytes
+    with open(temp_wav.name, 'rb') as f:
+        wav_bytes = f.read()
+    
+    # Clean up temp file
+    os.unlink(temp_wav.name)
+    
+    return wav_bytes
+
+def convert_audio_file_to_mp3(input_path, output_path, bitrate="160k"):
+    """
+    Convert audio file to MP3 with specified bitrate.
+    
+    :param input_path: Path to input audio file
+    :param output_path: Path to output MP3 file
+    :param bitrate: MP3 bitrate
+    """
+    if not PYDUB_AVAILABLE:
+        raise ImportError("pydub is required for audio conversion")
+    
+    try:
+        # Load audio file
+        audio = AudioSegment.from_file(input_path)
+        # Export as MP3
+        audio.export(output_path, format="mp3", bitrate=bitrate)
+        logger.info(f"✅ Converted {input_path} to MP3: {output_path}")
+    except Exception as e:
+        logger.error(f"❌ Failed to convert {input_path} to MP3: {e}")
+        raise
 
 # -------------------------------------------------------------------
 # 🐞  Firebase / GCS credential debug helper
@@ -710,10 +811,10 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
     
     logger.info("🎤 ===== VOICE SAMPLE GENERATION =====")
     
-    # Create output filename for voice sample
+    # Create output filename for voice sample (MP3)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     local_dir = VOICE_SAMPLES_DIR
-    tts_filename = local_dir / f"{voice_id}_{voice_id}_sample_{timestamp}.wav"
+    tts_filename = local_dir / f"{voice_id}_{voice_id}_sample_{timestamp}.mp3"  # Changed to .mp3
     
     logger.info(f"🎯 Voice sample local path: {tts_filename}")
     
@@ -729,15 +830,11 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
             forked_handler=forked_handler
         )
         
-        # Process the text
+        # Process the text (will generate MP3 directly)
         audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
         
         generation_time = time.time() - start_time
         logger.info(f"✅ Voice sample generated in {generation_time:.2f}s")
-        
-        # Save file immediately after generation
-        torchaudio.save(tts_filename, audio_tensor, sample_rate)
-        logger.info(f"💾 Saved voice sample: {tts_filename.name}")
         
     except Exception as e:
         generation_time = time.time() - start_time
@@ -765,20 +862,20 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
     
     # Upload voice sample to Firebase
     if is_kids_voice:
-        audio_path_firebase = f"audio/voices/{language}/kids/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
+        audio_path_firebase = f"audio/voices/{language}/kids/samples/{voice_id}_{voice_id}_sample_{timestamp}.mp3"
     else:
-        audio_path_firebase = f"audio/voices/{language}/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
+        audio_path_firebase = f"audio/voices/{language}/samples/{voice_id}_{voice_id}_sample_{timestamp}.mp3"
     
     logger.info(f"🎯 Voice sample Firebase path: {audio_path_firebase}")
     
     try:
         with open(tts_filename, 'rb') as f:
-            wav_bytes = f.read()
+            mp3_bytes = f.read()
         
         audio_uploaded = upload_to_firebase(
-            wav_bytes,
+            mp3_bytes,
             audio_path_firebase,
-            "audio/x-wav"
+            "audio/mpeg"  # Changed from "audio/x-wav"
         )
         logger.info(f"🎵 Voice sample uploaded: {audio_path_firebase}")
         
@@ -795,7 +892,8 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
                 "audio_shape": list(audio_tensor.shape),
                 "tts_file": str(tts_filename),
                 "timestamp": timestamp,
-                "response_type": "firebase_path"
+                "response_type": "firebase_path",
+                "format": "96k_mp3"
             }
         }
         
@@ -818,7 +916,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
     logger.info(f"  is_kids_voice: {is_kids_voice}")
     logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
     
-    # Create output filename for TTS story
+    # Create output filename for TTS story (MP3)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     local_dir = TTS_GENERATED_DIR / language / story_type
     logger.info(f"🔍 Local directory path: {local_dir}")
@@ -841,7 +939,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
     except Exception as e:
         logger.error(f"🔍 Write permissions: FAILED - {e}")
     
-    tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.wav"
+    tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.mp3"  # Changed to .mp3
     logger.info(f"🎯 TTS story local path: {tts_filename}")
     logger.info(f"🔍 Full absolute path: {tts_filename.absolute()}")
     
@@ -857,23 +955,16 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
             forked_handler=forked_handler
         )
         
-                    # Process the text
-            logger.info(f"🔍 Calling TTSProcessor.process with output path: {str(tts_filename)}")
-            audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
-            
-            generation_time = time.time() - start_time
-            logger.info(f"✅ TTS story generated in {generation_time:.2f}s")
-            logger.info(f"🔍 TTSProcessor result: {result}")
+        # Process the text (will generate MP3 directly)
+        logger.info(f"🔍 Calling TTSProcessor.process with output path: {str(tts_filename)}")
+        audio_tensor, sample_rate, result = processor.process(text, str(tts_filename))
         
-        # Save file immediately after generation
-        logger.info(f"🔍 About to save file to: {tts_filename}")
-        logger.info(f"🔍 File parent directory exists: {tts_filename.parent.exists()}")
-        logger.info(f"🔍 Audio tensor shape: {audio_tensor.shape}")
-        logger.info(f"🔍 Sample rate: {sample_rate}")
+        generation_time = time.time() - start_time
+        logger.info(f"✅ TTS story generated in {generation_time:.2f}s")
+        logger.info(f"🔍 TTSProcessor result: {result}")
         
-        torchaudio.save(tts_filename, audio_tensor, sample_rate)
-        logger.info(f"💾 Saved TTS story: {tts_filename.name}")
-        logger.info(f"🔍 File exists after save: {tts_filename.exists()}")
+        logger.info(f"🔍 Final output path: {tts_filename}")
+        logger.info(f"🔍 Output file exists: {tts_filename.exists()}")
         logger.info(f"🔍 File size: {tts_filename.stat().st_size if tts_filename.exists() else 'N/A'} bytes")
         
     except Exception as e:
@@ -905,7 +996,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
             return {"status": "error", "message": f"Failed to generate TTS story: {e}"}
     
     # Upload TTS story to Firebase
-    audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.wav"
+    audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.mp3"  # Changed to .mp3
     
     logger.info(f"🎯 TTS story Firebase path: {audio_path_firebase}")
     
@@ -915,14 +1006,14 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
         logger.info(f"🔍 File absolute path: {tts_filename.absolute()}")
         
         with open(tts_filename, 'rb') as f:
-            wav_bytes = f.read()
+            mp3_bytes = f.read()
         
-        logger.info(f"🔍 Successfully read {len(wav_bytes)} bytes from file")
+        logger.info(f"🔍 Successfully read {len(mp3_bytes)} bytes from file")
         
         audio_uploaded = upload_to_firebase(
-            wav_bytes,
+            mp3_bytes,
             audio_path_firebase,
-            "audio/x-wav"
+            "audio/mpeg"  # Changed from "audio/x-wav"
         )
         logger.info(f"🎵 TTS story uploaded: {audio_path_firebase}")
         
@@ -939,7 +1030,8 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
                 "audio_shape": list(audio_tensor.shape),
                 "tts_file": str(tts_filename),
                 "timestamp": timestamp,
-                "response_type": "firebase_path"
+                "response_type": "firebase_path",
+                "format": "96k_mp3"
             }
         }
         
@@ -1182,16 +1274,16 @@ def list_available_files():
     try:
         if TTS_GENERATED_DIR.exists():
             # List files from both directories
-    # Voice samples (keep existing flat structure)
-    sample_files = list(VOICE_SAMPLES_DIR.glob("*_sample_*.wav"))  # Look for sample files
-    
-    # TTS files (new nested structure)
-    tts_files = []
-    if TTS_GENERATED_DIR.exists():
-        # Recursively find all TTS files in language/story_type subdirectories
-        tts_files = list(TTS_GENERATED_DIR.rglob("TTS_*.wav"))
-    
-    files = tts_files + sample_files
+            # Voice samples (keep existing flat structure)
+            sample_files = list(VOICE_SAMPLES_DIR.glob("*_sample_*.wav"))  # Look for sample files
+            
+            # TTS files (new nested structure)
+            tts_files = []
+            if TTS_GENERATED_DIR.exists():
+                # Recursively find all TTS files in language/story_type subdirectories
+                tts_files = list(TTS_GENERATED_DIR.rglob("TTS_*.wav"))
+            
+            files = tts_files + sample_files
             logger.info(f"📂 Found {len(files)} TTS files:")
             
             for file in files:

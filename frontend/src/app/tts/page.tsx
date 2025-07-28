@@ -13,15 +13,20 @@ interface Voice {
 }
 
 interface TTSResult {
-    audio_path: string;
-    metadata: {
+    status: string;
+    audio_path?: string;  // Changed from audio_base64
+    metadata?: {
         voice_id: string;
         voice_name: string;
         text_input: string;
         generation_time: number;
+        sample_rate: number;
+        audio_shape: number[];
         tts_file: string;
         timestamp: string;
-        firebase_url?: string; // Firebase URL for file access
+        response_type: string;
+        format: string;  // New: indicates MP3 format
+        audio_path?: string;  // Add audio_path to metadata
     };
 }
 
@@ -279,15 +284,20 @@ export default function TTSPage() {
                 
                 // Set the result for display
                 setResult({
+                    status: data.status,
                     audio_path: data.audio_path,
                     metadata: {
                         voice_id: data.voice_id,
                         voice_name: data.metadata?.voice_name || selectedVoice,
                         text_input: text,
                         generation_time: data.metadata?.generation_time || 0,
+                        sample_rate: data.metadata?.sample_rate || 0,
+                        audio_shape: data.metadata?.audio_shape || [],
                         tts_file: data.metadata?.tts_file || '',
                         timestamp: data.metadata?.timestamp || new Date().toISOString(),
-                        firebase_url: data.metadata?.firebase_urls?.story_url
+                        response_type: data.metadata?.response_type || '',
+                        format: data.metadata?.format || '',
+                        audio_path: data.audio_path // Add audio_path to metadata
                     }
                 });
                 
@@ -559,8 +569,8 @@ export default function TTSPage() {
                                             {result.metadata.generation_time && (
                                                 <p>Generation Time: {result.metadata.generation_time.toFixed(2)}s</p>
                                             )}
-                                            {result.metadata.firebase_url && (
-                                                <p>Firebase URL: <a href={result.metadata.firebase_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">View File</a></p>
+                                            {result.metadata.audio_path && (
+                                                <p>Audio Path: <a href={result.metadata.audio_path} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">View File</a></p>
                                             )}
                                         </div>
                                     </div>
