@@ -550,73 +550,142 @@ class FirebaseService:
             if len(blob_list) > 5:
                 logger.info(f"   ... and {len(blob_list) - 5} more blobs")
             
+            # Debug: Log all blobs found
+            logger.info(f"🔍 All blobs found with prefix '{prefix}':")
+            for blob in blob_list:
+                logger.info(f"   📁 {blob.name}")
+            
             voices = {}
             
             for blob in blob_list:
                 if blob.name.endswith('/'):
                     continue
                     
-                # Extract voice_id from path
-                # Path format: audio/voices/en/samples/voice_name_sample_timestamp.wav
-                # or: audio/voices/en/profiles/voice_name.npy
+                # Skip placeholder files
+                if blob.name.endswith('/.placeholder'):
+                    continue
+                
+                # Debug: Log each blob being processed
+                logger.info(f"🔍 Processing blob: {blob.name}")
+                
+                # Extract path information
                 path_parts = blob.name.split('/')
                 
-                # Find the voice_id from the filename
-                filename = path_parts[-1]
+                # Determine file type based on directory structure
+                file_type = None
+                voice_id = None
+                voice_name = None
+                language = None
+                is_kids_voice = None
                 
-                # Handle different file types
-                if filename.endswith('.npy'):
-                    # Profile file: voice_name.npy
-                    voice_id = filename.replace('.npy', '')
-                    logger.debug(f"   📄 Profile file: {filename} -> voice_id: {voice_id}")
-                elif '_sample_' in filename:
-                    # Sample file: voice_name_sample_timestamp.wav
-                    voice_id = filename.split('_sample_')[0]
-                    logger.debug(f"   🎵 Sample file: {filename} -> voice_id: {voice_id}")
-                elif filename.startswith('recording_'):
-                    # Recording file: recording_1_timestamp.wav
-                    # Extract voice_id from the path structure
-                    if len(path_parts) >= 4:
-                        # Path: audio/voices/en/recorded/voice_name_recording_1_timestamp.wav
-                        voice_id = path_parts[-1].split('_recording_')[0]
-                        logger.debug(f"   🎤 Recording file: {filename} -> voice_id: {voice_id}")
+                # Check directory structure to determine file type
+                if len(path_parts) >= 4:
+                    if path_parts[-2] == 'samples':
+                        file_type = 'sample'
+                    elif path_parts[-2] == 'profiles':
+                        file_type = 'profile'
+                    elif path_parts[-2] == 'recorded':
+                        file_type = 'recorded'
                     else:
-                        logger.debug(f"   ⚠️ Skipping recording file with insufficient path parts: {blob.name}")
+                        logger.info(f"   ⚠️ Skipping file with unknown directory: {blob.name}")
                         continue
-                else:
-                    # Skip unknown file types
-                    logger.debug(f"   ⚠️ Skipping unknown file type: {filename}")
+                    
+                    # Try to get metadata from the blob
+                    try:
+                        blob.reload()  # Ensure we have the latest metadata
+                        metadata = blob.metadata or {}
+                        
+                        # Extract voice_id and other metadata from blob metadata
+                        voice_id = metadata.get('voice_id')
+                        voice_name = metadata.get('voice_name')
+                        language = metadata.get('language', 'en')
+                        is_kids_voice = metadata.get('is_kids_voice', 'false').lower() == 'true'
+                        
+                        logger.info(f"   📄 {file_type.title()} file with metadata: voice_id={voice_id}, voice_name={voice_name}")
+                        
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ Could not read metadata from {blob.name}: {e}")
+                        metadata = {}
+                    
+                    # If no metadata or no voice_id in metadata, fallback to filename parsing
+                    if not voice_id:
+                        filename = path_parts[-1]
+                        if file_type == 'sample' and '_sample_' in filename:
+                            voice_id = filename.split('_sample_')[0]
+                        elif file_type == 'profile':
+                            voice_id = filename.replace('.npy', '')
+                        elif file_type == 'recorded' and '_recording_' in filename:
+                            voice_id = filename.split('_recording_')[0]
+                        else:
+                            # Fallback: use filename without extension as voice_id
+                            voice_id = filename.rsplit('.', 1)[0]
+                        
+                        logger.info(f"   📄 {file_type.title()} file (fallback parsing): voice_id={voice_id}")
+                    
+                    # Skip if we still couldn't determine voice_id
+                    if not voice_id:
+                        logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
+                        continue
+                
+                # Skip if we couldn't determine file type or voice_id
+                if not file_type or not voice_id:
+                    logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
                     continue
                 
                 if voice_id not in voices:
                     voices[voice_id] = {
                         "voice_id": voice_id,
-                        "name": voice_id.replace('voice_', '').replace('_', ' ').title(),
+                        "name": voice_name or voice_id.replace('voice_', '').replace('_', ' ').title(),
                         "recorded": [],
                         "samples": [],
                         "profiles": [],
-                        "created_date": None
+                        "created_date": None,
+                        "language": language or "en",
+                        "is_kids_voice": is_kids_voice or False
                     }
                 
                 url = blob.public_url
-                if "/recorded/" in blob.name:
-                    voices[voice_id]["recorded"].append(url)
-                elif "/samples/" in blob.name:
-                    voices[voice_id]["samples"].append(url)
-                elif "/profiles/" in blob.name:
-                    voices[voice_id]["profiles"].append(url)
                 
-                # Try to extract creation time from filename
-                if '_sample_' in filename:
-                    try:
-                        timestamp_part = filename.split('_sample_')[-1].replace('.wav', '')
+                # Categorize based on file_type determined from directory structure
+                if file_type == 'recorded':
+                    voices[voice_id]["recorded"].append(url)
+                    logger.info(f"   ✅ Added to recorded: {blob.name}")
+                elif file_type == 'sample':
+                    voices[voice_id]["samples"].append(url)
+                    logger.info(f"   ✅ Added to samples: {blob.name}")
+                elif file_type == 'profile':
+                    voices[voice_id]["profiles"].append(url)
+                    logger.info(f"   ✅ Added to profiles: {blob.name}")
+                else:
+                    logger.warning(f"   ⚠️ File not categorized: {blob.name}")
+                
+                # Try to extract creation time from metadata or filename
+                try:
+                    # First try to get creation date from metadata
+                    if metadata and 'created_date' in metadata:
+                        from datetime import datetime
+                        created_date = datetime.fromisoformat(metadata['created_date'])
+                        voices[voice_id]["created_date"] = created_date.timestamp()
+                        logger.debug(f"   📅 Extracted timestamp from metadata: {metadata['created_date']}")
+                    else:
+                        # Fallback: try to extract from filename timestamp
+                        filename = path_parts[-1]
+                        if '_sample_' in filename:
+                            timestamp_part = filename.split('_sample_')[-1].split('.')[0]
+                        elif '_recording_' in filename:
+                            timestamp_part = filename.split('_recording_')[-1].split('.')[0]
+                        else:
+                            # Try to find timestamp at the end of filename
+                            timestamp_part = filename.split('_')[-1].split('.')[0]
+                        
                         # Parse timestamp like 20250727_153420
-                        if len(timestamp_part) >= 15:
+                        if len(timestamp_part) >= 15 and timestamp_part.replace('_', '').isdigit():
                             from datetime import datetime
                             created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
                             voices[voice_id]["created_date"] = created_date.timestamp()
-                    except Exception as e:
-                        logger.debug(f"Could not parse timestamp from {filename}: {e}")
+                            logger.debug(f"   📅 Extracted timestamp from filename: {timestamp_part}")
+                except Exception as e:
+                    logger.debug(f"Could not parse timestamp from {blob.name}: {e}")
             
             result = list(voices.values())
             logger.info(f"✅ Processed {len(result)} voices from Firebase")
@@ -654,32 +723,37 @@ class FirebaseService:
                 if blob.name.endswith('/'):
                     continue
                     
-                # Extract generation_id from filename
+                # Extract filename from blob path
                 filename = blob.name.split('/')[-1]
                 
-                # Handle different story file naming patterns
-                if filename.endswith('.wav'):
-                    # Extract generation_id from filename
-                    # Pattern: gen_20250727_153420.wav or similar
-                    generation_id = filename.replace('.wav', '')
+                # Handle TTS story file naming patterns
+                if filename.endswith('.wav') and filename.startswith('TTS_'):
+                    # Extract voice_id and timestamp from filename
+                    # Pattern: TTS_voice_christianmp3test2_20250728_075206.wav
+                    parts = filename.replace('.wav', '').split('_')
                     
-                    if generation_id not in stories:
-                        stories[generation_id] = {
-                            "generation_id": generation_id,
-                            "voice_id": "unknown",  # We'll need to extract this from metadata
-                            "voice_name": "Unknown Voice",
-                            "audio_files": [],
-                            "created_date": None
-                        }
-                    
-                    url = blob.public_url
-                    stories[generation_id]["audio_files"].append(url)
-                    
-                    # Try to extract creation time from filename
-                    if '_' in filename:
+                    if len(parts) >= 3:
+                        # Extract voice_id (everything after TTS_ and before the last timestamp part)
+                        voice_id = '_'.join(parts[1:-1])  # Skip TTS_ and timestamp
+                        timestamp_part = parts[-1]
+                        
+                        # Create a unique generation_id
+                        generation_id = f"{voice_id}_{timestamp_part}"
+                        
+                        if generation_id not in stories:
+                            stories[generation_id] = {
+                                "generation_id": generation_id,
+                                "voice_id": voice_id,
+                                "voice_name": voice_id.replace('voice_', ''),
+                                "audio_file": blob.public_url,
+                                "created_date": None,
+                                "language": language,
+                                "story_type": story_type,
+                                "file_size": blob.size if hasattr(blob, 'size') else 0
+                            }
+                        
+                        # Try to extract creation time from timestamp
                         try:
-                            timestamp_part = filename.split('_')[-1].replace('.wav', '')
-                            # Parse timestamp like 20250727_153420
                             if len(timestamp_part) >= 15:
                                 from datetime import datetime
                                 created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
@@ -825,3 +899,67 @@ class FirebaseService:
         except Exception as e:
             logger.error(f"❌ Failed to get storage usage: {e}")
             return {} 
+
+    def test_list_all_files(self, prefix: str = "audio/voices/en/"):
+        """
+        Test method to list all files in Firebase bucket
+        """
+        if not self.bucket:
+            logger.error("❌ No Firebase bucket available")
+            return []
+        
+        try:
+            logger.info(f"🔍 Testing Firebase file listing with prefix: {prefix}")
+            blobs = self.bucket.list_blobs(prefix=prefix)
+            blob_list = list(blobs)
+            
+            logger.info(f"📁 Found {len(blob_list)} files with prefix '{prefix}':")
+            for blob in blob_list:
+                logger.info(f"   📄 {blob.name}")
+            
+            return [blob.name for blob in blob_list]
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to list files: {e}")
+            return [] 
+
+    def upload_to_firebase(self, data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
+        """
+        Upload data directly to Firebase Storage
+        
+        :param data: Binary data to upload
+        :param destination_blob_name: Destination path in Firebase
+        :param content_type: MIME type of the file
+        :param metadata: Optional metadata to store with the file
+        :return: Public URL or None if failed
+        """
+        if not self.bucket:
+            logger.error("❌ Firebase not initialized")
+            return None
+        
+        try:
+            # Ensure the directory structure exists
+            self._ensure_directory_structure(destination_blob_name)
+            
+            blob = self.bucket.blob(destination_blob_name)
+            
+            # Set metadata if provided
+            if metadata:
+                blob.metadata = metadata
+            
+            # Set content type and CORS headers
+            blob.content_type = content_type
+            
+            # Upload the data
+            blob.upload_from_string(data, content_type=content_type)
+            
+            # Make the blob publicly accessible
+            blob.make_public()
+            
+            public_url = blob.public_url
+            logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+            return public_url
+            
+        except Exception as e:
+            logger.error(f"❌ Firebase upload failed: {e}")
+            return None 

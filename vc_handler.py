@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from google.cloud import storage
 import numpy as np  # Added for MP3 conversion
+from typing import Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -153,106 +154,25 @@ def convert_audio_file_to_mp3(input_path, output_path, bitrate="160k"):
 # 🐞  Firebase / GCS credential debug helper
 # -------------------------------------------------------------------
 def _debug_gcs_creds():
-    import os, json, textwrap, pathlib, socket, ssl
-    from google.auth import exceptions as gauth_exc
-    logger.info("🔍 GCS-Debug | GOOGLE_APPLICATION_CREDENTIALS=%s",
-                os.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
-    logger.info("🔍 GCS-Debug | RUNPOD_SECRET envs: %s",
-                [k for k in os.environ if k.startswith("RUNPOD_SECRET")])
+    """Minimal Firebase credential check - removed extensive debugging since voice cloning is working"""
+    import os
+    logger.info("🔍 Firebase credentials check")
     
-    # Check RunPod Firebase secret specifically
+    # Check if RunPod secret is available
     firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-    logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase=%s", firebase_secret_path)
-    
-    # Check if it's a file path or actual JSON content
     if firebase_secret_path:
         if firebase_secret_path.startswith('{'):
-            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase appears to be JSON content (starts with '{')")
-            logger.info("🔍 GCS-Debug | JSON content preview: %s", firebase_secret_path[:200] + "..." if len(firebase_secret_path) > 200 else firebase_secret_path)
-        elif os.path.exists(firebase_secret_path):
-            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase appears to be a file path (exists)")
+            logger.info("✅ Using RunPod Firebase secret (JSON content)")
         else:
-            logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase is neither JSON content nor existing file path")
+            logger.info("✅ Using RunPod Firebase secret (file path)")
     else:
-        logger.info("🔍 GCS-Debug | RUNPOD_SECRET_Firebase is None or empty")
-    
-    # 1) Does the expected file exist?
-    cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/firebase.json")
-    logger.info("🔍 GCS-Debug | Checking file %s", cred_path)
-    p = pathlib.Path(cred_path)
-    if p.exists():
-        logger.info("✅ GCS-Debug | File exists (%d bytes)", p.stat().st_size)
-        try:
-            with p.open() as fp:
-                first_line = fp.readline(256)
-            logger.info("🔍 GCS-Debug | File starts with: %s",
-                        textwrap.shorten(first_line.strip(), 120))
-        except Exception as e:
-            logger.warning("⚠️  GCS-Debug | Could not read file: %s", e)
-    # Removed the "File NOT found" log since we're using JSON content from RunPod secret
-
-    # Check RunPod secret file if different and it's actually a file path
-    if firebase_secret_path and firebase_secret_path != cred_path and not firebase_secret_path.startswith('{'):
-        logger.info("🔍 GCS-Debug | Checking RunPod secret file %s", firebase_secret_path)
-        p2 = pathlib.Path(firebase_secret_path)
-        if p2.exists():
-            logger.info("✅ GCS-Debug | RunPod secret file exists (%d bytes)", p2.stat().st_size)
-            try:
-                with p2.open() as fp:
-                    first_line = fp.readline(256)
-                logger.info("🔍 GCS-Debug | RunPod secret file starts with: %s",
-                            textwrap.shorten(first_line.strip(), 120))
-            except Exception as e:
-                logger.warning("⚠️  GCS-Debug | Could not read RunPod secret file: %s", e)
-        else:
-            logger.error("❌ GCS-Debug | RunPod secret file NOT found on disk")
-    elif firebase_secret_path and firebase_secret_path.startswith('{'):
-        logger.info("🔍 GCS-Debug | RunPod secret is JSON content, skipping file existence check")
-
-    # 2) Try manual credential load from RunPod secret
-    if firebase_secret_path and os.path.exists(firebase_secret_path):
-        try:
-            from google.oauth2 import service_account
-            creds = service_account.Credentials.from_service_account_file(firebase_secret_path)
-            logger.info("✅ GCS-Debug | Loaded RunPod creds for project_id=%s, client_email=%s",
-                        creds.project_id, creds.service_account_email)
-        except FileNotFoundError:
-            logger.error("❌ GCS-Debug | FileNotFoundError for RunPod secret")
-        except gauth_exc.DefaultCredentialsError as e:
-            logger.error("❌ GCS-Debug | DefaultCredentialsError for RunPod secret: %s", e)
-        except Exception as e:
-            logger.error("❌ GCS-Debug | Unexpected error for RunPod secret: %s (%s)", e, type(e).__name__)
-
-    # 3) Try manual credential load from fallback path
-    try:
-        from google.oauth2 import service_account
-        creds = service_account.Credentials.from_service_account_file(cred_path)
-        logger.info("✅ GCS-Debug | Loaded fallback creds for project_id=%s, client_email=%s",
-                    creds.project_id, creds.service_account_email)
-    except FileNotFoundError:
-        logger.error("❌ GCS-Debug | FileNotFoundError for fallback path")
-    except gauth_exc.DefaultCredentialsError as e:
-        logger.error("❌ GCS-Debug | DefaultCredentialsError for fallback: %s", e)
-    except Exception as e:
-        logger.error("❌ GCS-Debug | Unexpected error for fallback: %s (%s)", e, type(e).__name__)
-
-    # 4) Quick network check to storage.googleapis.com
-    try:
-        sock = socket.create_connection(("storage.googleapis.com", 443), timeout=3)
-        ctx = ssl.create_default_context()
-        with ctx.wrap_socket(sock, server_hostname="storage.googleapis.com"):
-            logger.info("✅ GCS-Debug | TLS handshake to storage.googleapis.com ok")
-    except Exception as e:
-        logger.warning("⚠️  GCS-Debug | Network to GCS failed: %s", e)
+        logger.warning("⚠️ No RunPod Firebase secret found")
 
 def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
     
-    # Call debug helper first
-    logger.info("🔍 ===== FIREBASE INITIALIZATION DEBUG =====")
-    _debug_gcs_creds()
-    logger.info("🔍 ===== END FIREBASE INITIALIZATION DEBUG =====")
+    # Firebase initialization
     
     try:
         # Check if we're in RunPod and have the secret
@@ -302,51 +222,44 @@ def initialize_firebase():
         logger.error(f"❌ Failed to initialize Firebase storage: {e}")
         return False
 
-def upload_to_firebase(data: bytes, dst: str, ctype: str):
-    """Upload data to Firebase and return success status"""
-    global bucket
+def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
+    """
+    Upload data directly to Firebase Storage with metadata
     
-    logger.info(f"🔍 Upload-Debug | Starting upload: {dst} ({len(data)} bytes, {ctype})")
-    
+    :param data: Binary data to upload
+    :param destination_blob_name: Destination path in Firebase
+    :param content_type: MIME type of the file
+    :param metadata: Optional metadata to store with the file
+    :return: Public URL or None if failed
+    """
+    global bucket # Ensure bucket is accessible
     if bucket is None:
-        logger.info("🔍 Upload-Debug | Bucket is None, initializing Firebase...")
-        if not initialize_firebase():
-            logger.error("❌ Firebase not initialized, cannot upload")
-            return False
-        logger.info("🔍 Upload-Debug | Firebase initialized, bucket: %s", bucket.name if bucket else "None")
+        logger.error("❌ Firebase not initialized")
+        return None
     
     try:
-        logger.info(f"🔍 Upload-Debug | Creating blob: {dst}")
-        blob = bucket.blob(dst)
-        logger.info(f"🔍 Upload-Debug | Blob created, uploading {len(data)} bytes...")
+        blob = bucket.blob(destination_blob_name)
         
-        # Set metadata before uploading
-        blob.metadata = {
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=3600'
-        }
+        # Set metadata if provided
+        if metadata:
+            blob.metadata = metadata
         
-        blob.upload_from_string(data, content_type=ctype)
+        # Set content type
+        blob.content_type = content_type
         
-        # Make the blob public so it can be accessed via URL
+        # Upload the data
+        blob.upload_from_string(data, content_type=content_type)
+        
+        # Make the blob publicly accessible
         blob.make_public()
         
-        logger.info(f"✅ Uploaded to Firebase: {dst}")
-        logger.info(f"🔍 Upload-Debug | Public URL: {blob.public_url}")
+        public_url = blob.public_url
+        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+        return public_url
         
-        # Verify upload
-        try:
-            blob.reload()
-            logger.info(f"🔍 Upload-Debug | Upload verified: {blob.name} ({blob.size} bytes)")
-        except Exception as verify_error:
-            logger.warning(f"⚠️ Upload-Debug | Could not verify upload: {verify_error}")
-        
-        return True
     except Exception as e:
-        logger.error(f"❌ Failed to upload to Firebase: {e}")
-        logger.error(f"🔍 Upload-Debug | Error type: {type(e).__name__}")
-        logger.error(f"🔍 Upload-Debug | Error details: {str(e)}")
-        return False
+        logger.error(f"❌ Firebase upload failed: {e}")
+        return None
 
 def initialize_model():
     global model, forked_handler
@@ -571,10 +484,25 @@ def handle_voice_clone_request(input, responseFormat):
             else:
                 recorded_firebase_path = f"audio/voices/{language}/recorded/{voice_id}_{timestamp}.mp3"
             
+            # Store metadata with the recorded audio file
+            recorded_metadata = {
+                'voice_id': voice_id,
+                'voice_name': name,
+                'file_type': 'recorded_audio',
+                'language': language,
+                'is_kids_voice': str(is_kids_voice),
+                'format': '160k_mp3',
+                'timestamp': timestamp,
+                'created_date': datetime.now().isoformat(),
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            }
+            
             recorded_uploaded = upload_to_firebase(
                 recorded_mp3_bytes,
                 recorded_firebase_path,
-                "audio/mpeg"
+                "audio/mpeg",
+                recorded_metadata
             )
             if recorded_uploaded:
                 recorded_audio_path = recorded_firebase_path
@@ -644,10 +572,26 @@ def handle_voice_clone_request(input, responseFormat):
             else:
                 sample_firebase_path = f"audio/voices/{language}/samples/{voice_id}_sample_{timestamp}.mp3"
             
+            # Store metadata with the voice sample file
+            sample_metadata = {
+                'voice_id': voice_id,
+                'voice_name': name,
+                'file_type': 'voice_sample',
+                'language': language,
+                'is_kids_voice': str(is_kids_voice),
+                'format': '96k_mp3',
+                'timestamp': timestamp,
+                'created_date': datetime.now().isoformat(),
+                'generation_method': generation_method,
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            }
+            
             sample_uploaded = upload_to_firebase(
                 sample_mp3_bytes,
                 sample_firebase_path,
-                "audio/mpeg"
+                "audio/mpeg",
+                sample_metadata
             )
             if sample_uploaded:
                 sample_audio_path = sample_firebase_path
@@ -683,10 +627,24 @@ def handle_voice_clone_request(input, responseFormat):
             else:
                 profile_firebase_path = f"audio/voices/{language}/profiles/{voice_id}.npy"
             
+            # Store metadata with the voice profile file
+            profile_metadata = {
+                'voice_id': voice_id,
+                'voice_name': name,
+                'file_type': 'voice_profile',
+                'language': language,
+                'is_kids_voice': str(is_kids_voice),
+                'format': 'npy',
+                'created_date': datetime.now().isoformat(),
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            }
+            
             profile_uploaded = upload_to_firebase(
                 profile_data,
                 profile_firebase_path,
-                "application/octet-stream"
+                "application/octet-stream",
+                profile_metadata
             )
             if profile_uploaded:
                 profile_path_firebase = profile_firebase_path

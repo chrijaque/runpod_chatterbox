@@ -45,4 +45,14 @@ class TTSGeneration(BaseModel):
     audio_file: Optional[str] = None
     created_date: Optional[int] = None
     language: Optional[str] = None
-    story_type: Optional[str] = None 
+    story_type: Optional[str] = None
+
+class HealthResponse(BaseModel):
+    status: str
+    message: str
+    timestamp: Optional[str] = None
+
+class DebugResponse(BaseModel):
+    status: str
+    message: str
+    debug_info: Optional[Dict[str, Any]] = None 

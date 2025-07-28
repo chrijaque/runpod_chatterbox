@@ -27,9 +27,9 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(voices.router)
-app.include_router(tts.router)
-app.include_router(health.router)
+app.include_router(voices.router, prefix="/api/voices", tags=["voices"])
+app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
+app.include_router(health.router, prefix="/api/health", tags=["health"])
 
 # Startup event
 @app.on_event("startup")
