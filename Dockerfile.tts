@@ -49,8 +49,9 @@ RUN echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
     echo "🔧 Checking repository structure..." && \
     ls -la /workspace/chatterbox_embed/ && \
-    echo "🔧 Installing PyTorch 2.8.0 to match requirements..." && \
-    pip install torch==2.8.0.dev20250319 torchvision==0.22.0.dev20250319+cu128 torchaudio==2.8.0.dev20250319 --index-url https://download.pytorch.org/whl/cu128 && \
+    echo "🔧 Checking forked repository requirements..." && \
+    cat /workspace/chatterbox_embed/requirements.txt && \
+    echo "🔧 Using PyTorch from base image (2.8.0) - no explicit installation needed" && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
