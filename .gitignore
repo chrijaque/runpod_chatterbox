@@ -67,5 +67,5 @@ htmlcov/
 *.pem
 .cache
 
-# Firebase
+# Firebase credentials
 firebase_creds.json
