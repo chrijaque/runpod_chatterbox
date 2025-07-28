@@ -175,6 +175,13 @@ def initialize_firebase():
     # Firebase initialization
     
     try:
+        # Debug: Check environment variables
+        logger.info("🔍 Checking Firebase environment variables...")
+        firebase_secret = os.getenv('RUNPOD_SECRET_Firebase')
+        google_creds = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        logger.info(f"🔍 RUNPOD_SECRET_Firebase exists: {firebase_secret is not None}")
+        logger.info(f"🔍 GOOGLE_APPLICATION_CREDENTIALS exists: {google_creds is not None}")
+        
         # Check if we're in RunPod and have the secret
         firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
         
@@ -234,21 +241,28 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
     """
     global bucket # Ensure bucket is accessible
     if bucket is None:
-        logger.error("❌ Firebase not initialized")
-        return None
+        logger.info("🔍 Bucket is None, initializing Firebase...")
+        if not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot upload")
+            return None
     
     try:
+        logger.info(f"🔍 Creating blob: {destination_blob_name}")
         blob = bucket.blob(destination_blob_name)
+        logger.info(f"🔍 Uploading {len(data)} bytes...")
         
         # Set metadata if provided
         if metadata:
             blob.metadata = metadata
+            logger.info(f"🔍 Set metadata: {metadata}")
         
         # Set content type
         blob.content_type = content_type
+        logger.info(f"🔍 Set content type: {content_type}")
         
         # Upload the data
         blob.upload_from_string(data, content_type=content_type)
+        logger.info(f"🔍 Upload completed, making public...")
         
         # Make the blob publicly accessible
         blob.make_public()
@@ -425,6 +439,11 @@ def handler(event, responseFormat="base64"):
 def handle_voice_clone_request(input, responseFormat):
     """Handle voice cloning requests"""
     global forked_handler
+    
+    # Initialize Firebase at the start
+    if not initialize_firebase():
+        logger.error("❌ Failed to initialize Firebase, cannot proceed")
+        return {"status": "error", "message": "Failed to initialize Firebase storage"}
     
     # Handle voice generation request only
     name = input.get('name')
