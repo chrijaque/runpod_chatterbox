@@ -28,18 +28,80 @@ async def generate_tts(request: TTSGenerateRequest):
     try:
         logger.info(f"📖 TTS generation request received for voice: {request.voice_id}")
         logger.info(f"📊 Request details: language={request.language}, story_type={request.story_type}, kids_voice={request.is_kids_voice}")
+        logger.info(f"🔑 Profile base64 length: {len(request.profile_base64)}")
+        logger.info(f"📝 Text preview: {request.text[:50]}...")
         
         # Call RunPod for TTS generation
-        result = await runpod_client.generate_tts(
-            voice_id=request.voice_id,
-            text=request.text,
-            profile_base64=request.profile_base64,
-            language=request.language,
-            story_type=request.story_type,
-            is_kids_voice=request.is_kids_voice
-        )
+        logger.info("📞 Calling RunPod client generate_tts_with_context...")
+        logger.info(f"🔧 RunPod client config - TTS Endpoint ID: {runpod_client.tts_endpoint_id}")
+        logger.info(f"🔧 RunPod client config - Base URL: {runpod_client.base_url}")
         
-        if result.get("status") == "success":
+        try:
+            result = runpod_client.generate_tts_with_context(
+                voice_id=request.voice_id,
+                text=request.text,
+                profile_base64=request.profile_base64,
+                language=request.language,
+                story_type=request.story_type,
+                is_kids_voice=request.is_kids_voice
+            )
+            logger.info(f"✅ RunPod call completed successfully")
+        except Exception as e:
+            logger.error(f"❌ RunPod call failed with exception: {str(e)}")
+            logger.error(f"❌ Exception type: {type(e)}")
+            raise
+        logger.info(f"✅ RunPod response received: {type(result)}")
+        logger.info(f"📊 Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        if isinstance(result, dict):
+            logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
+            logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
+        
+        # Wait for job completion like voice cloning does
+        if result.get("status") in ["IN_QUEUE", "IN_PROGRESS"]:
+            job_id = result.get("id")
+            logger.info(f"⏳ TTS job queued with ID: {job_id}, waiting for completion...")
+            
+            # Wait for job completion (like voice cloning)
+            import time
+            max_wait_time = 60  # 60 seconds timeout
+            wait_time = 0
+            
+            while wait_time < max_wait_time:
+                try:
+                    job_status = runpod_client.get_job_status(runpod_client.tts_endpoint_id, job_id)
+                    logger.info(f"📊 Job status check: {job_status.get('status')}")
+                    
+                    if job_status.get("status") == "COMPLETED":
+                        # Job completed successfully
+                        output = job_status.get("output", {})
+                        audio_path = output.get("audio_path")
+                        metadata = output.get("metadata", {})
+                        
+                        logger.info(f"✅ TTS generation completed successfully")
+                        logger.info(f"🎵 Audio path: {audio_path}")
+                        
+                        return TTSGenerateResponse(
+                            status="success",
+                            audio_path=audio_path,
+                            metadata=metadata
+                        )
+                    elif job_status.get("status") == "FAILED":
+                        error = job_status.get("error", "Unknown error")
+                        logger.error(f"❌ TTS job failed: {error}")
+                        raise HTTPException(status_code=500, detail=f"TTS generation failed: {error}")
+                    
+                    # Wait 2 seconds before checking again
+                    time.sleep(2)
+                    wait_time += 2
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error checking job status: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Failed to check job status: {str(e)}")
+            
+            # Timeout reached
+            logger.error(f"❌ TTS generation timeout after {max_wait_time} seconds")
+            raise HTTPException(status_code=500, detail="TTS generation timeout")
+        elif result.get("status") == "success":
             logger.info("✅ TTS generation completed successfully")
             
             # Extract audio path from RunPod response
@@ -94,6 +156,29 @@ async def list_tts_generations():
     except Exception as e:
         logger.error(f"❌ Error listing TTS generations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to list TTS generations: {str(e)}")
+
+@router.get("/test-files")
+async def test_firebase_files():
+    """
+    Test endpoint to list all files in Firebase stories directory
+    """
+    try:
+        logger.info("🔍 Testing Firebase files listing...")
+        
+        # Test listing all files in stories directory
+        files = firebase_service.test_list_all_files("audio/stories/en/user/")
+        
+        logger.info(f"📁 Found files: {files}")
+        
+        return {
+            "status": "success",
+            "files": files,
+            "message": f"Found {len(files)} files in Firebase"
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error testing Firebase files: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to test Firebase files: {str(e)}")
 
 @router.get("/stories/{language}")
 async def list_stories_by_language(language: str, story_type: str = "user"):

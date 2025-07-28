@@ -97,13 +97,18 @@ export default function Home() {
             console.log('Voice Library API response:', data);
 
             if (data.status === 'success') {
+                // Debug: Log the first voice structure
+                if (data.voices && data.voices.length > 0) {
+                    console.log('🔍 First voice structure from API:', data.voices[0]);
+                }
+                
                 // Transform Firebase data to match our Voice interface
                 const voices = data.voices.map((voice: any) => ({
                     voice_id: voice.voice_id,
-                    name: voice.title || voice.voice_id,
-                    sample_file: voice.sample_url || '',
-                    embedding_file: voice.profile_url || '',
-                    created_date: voice.created_at ? new Date(voice.created_at).getTime() / 1000 : Date.now() / 1000
+                    name: voice.name || voice.voice_id,
+                    sample_file: voice.sample_file || '',
+                    embedding_file: voice.embedding_file || '',
+                    created_date: voice.created_date || Date.now() / 1000
                 }));
                 setVoiceLibrary(voices);
             } else {
@@ -121,29 +126,24 @@ export default function Home() {
     const playVoiceSample = async (voiceId: string) => {
         setPlayingVoice(voiceId);
         try {
-            // Use the new Firebase-based endpoint to get voice sample URL
-            const response = await fetch(`${VOICE_API}/${voiceId}/sample/firebase?language=${language}&is_kids_voice=${isKidsVoice}`);
+            // Find the voice in the library and use its sample_file URL directly
+            const voice = voiceLibrary.find(v => v.voice_id === voiceId);
             
-            if (!response.ok) {
-                throw new Error('Failed to get voice sample URL');
+            if (!voice || !voice.sample_file) {
+                throw new Error('No sample URL available for this voice');
             }
             
-            const data = await response.json();
-            console.log('Voice sample Firebase response:', data);
+            console.log('Playing voice sample from URL:', voice.sample_file);
             
-            if (data.status === 'success' && data.sample_url) {
-                // Create audio element and play from Firebase URL
-                const audio = new Audio(data.sample_url);
-                audio.onended = () => setPlayingVoice(null);
-                audio.onerror = () => {
-                    console.error('Error playing audio from Firebase');
-                    setPlayingVoice(null);
-                };
-                
-                await audio.play();
-            } else {
-                throw new Error('No sample URL available');
-            }
+            // Create audio element and play from Firebase URL
+            const audio = new Audio(voice.sample_file);
+            audio.onended = () => setPlayingVoice(null);
+            audio.onerror = () => {
+                console.error('Error playing audio from Firebase');
+                setPlayingVoice(null);
+            };
+            
+            await audio.play();
         } catch (err) {
             console.error('Error playing voice sample:', err);
             setPlayingVoice(null);

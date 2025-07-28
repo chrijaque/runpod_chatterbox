@@ -100,10 +100,7 @@ class RunPodClient:
             voice_id=voice_id,
             text=text,
             profile_base64=profile_base64,
-            response_format=response_format,
-            language="en",
-            story_type="sample",
-            is_kids_voice=False
+            response_format=response_format
         )
 
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
@@ -141,8 +138,15 @@ class RunPodClient:
             logger.info(f"📚 Story Type: {story_type}")
             logger.info(f"👶 Kids Voice: {is_kids_voice}")
             logger.info(f"📡 Calling RunPod TTS API: {url}")
+            logger.info(f"📊 Payload keys: {list(payload.keys())}")
+            logger.info(f"📊 Input keys: {list(payload['input'].keys())}")
+            logger.info(f"🔑 Headers: {self.headers}")
             
             response = requests.post(url, json=payload, headers=self.headers)
+            
+            logger.info(f"📡 RunPod TTS API Response Status: {response.status_code}")
+            logger.info(f"📡 RunPod TTS API Response Headers: {dict(response.headers)}")
+            logger.info(f"📡 RunPod TTS API Response Text: {response.text[:500]}...")
             
             if response.status_code != 200:
                 logger.error(f"❌ RunPod TTS API error: {response.status_code} - {response.text}")
@@ -150,6 +154,12 @@ class RunPodClient:
             
             result = response.json()
             logger.info(f"✅ TTS generated successfully")
+            logger.info(f"📊 Response type: {type(result)}")
+            logger.info(f"📊 Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+            if isinstance(result, dict):
+                logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
+                logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
+                logger.info(f"🔍 Response keys: {list(result.keys())}")
             
             return result
             

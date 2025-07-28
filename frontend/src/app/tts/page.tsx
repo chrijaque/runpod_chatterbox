@@ -71,7 +71,8 @@ export default function TTSPage() {
     const loadVoiceLibrary = async () => {
         setIsLoadingLibrary(true);
         try {
-            const response = await fetch(VOICE_API, {
+            // Use the voice library endpoint with language and kids voice parameters
+            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}`, {
                 method: 'GET',
             });
 
@@ -79,10 +80,19 @@ export default function TTSPage() {
             console.log('TTS Library API response:', data);
 
             if (data.status === 'success') {
-                setVoiceLibrary(data.voices || []);
+                // Transform the API response to match our Voice interface
+                const voices = data.voices.map((voice: any) => ({
+                    voice_id: voice.voice_id,
+                    name: voice.name || voice.voice_id,
+                    sample_file: voice.sample_file || '',
+                    profile_file: voice.embedding_file || '', // Map embedding_file to profile_file
+                    created_date: voice.created_date || Date.now() / 1000
+                }));
+                
+                setVoiceLibrary(voices);
                 // Auto-select first voice if available
-                if (data.voices && data.voices.length > 0 && !selectedVoice) {
-                    setSelectedVoice(data.voices[0].voice_id);
+                if (voices.length > 0 && !selectedVoice) {
+                    setSelectedVoice(voices[0].voice_id);
                 }
             } else {
                 throw new Error(data.message || 'Failed to load voice library');
@@ -112,8 +122,8 @@ export default function TTSPage() {
                     file_id: story.generation_id || story.file_id,
                     voice_id: story.voice_id || 'unknown',
                     voice_name: story.voice_name || 'Unknown Voice',
-                    file_path: story.story_url || '',
-                    created_date: story.created_at ? new Date(story.created_at).getTime() / 1000 : Date.now() / 1000,
+                    file_path: story.audio_file || '', // Use audio_file directly from Firebase
+                    created_date: story.created_date ? story.created_date : Date.now() / 1000,
                     timestamp: story.timestamp || new Date().toISOString(),
                     file_size: story.file_size || 0
                 }));
@@ -140,80 +150,31 @@ export default function TTSPage() {
     const playTTSGeneration = async (fileId: string) => {
         setPlayingGeneration(fileId);
         try {
-            // Use the new Firebase-based endpoint to get story audio URL
-            const response = await fetch(`${TTS_API}/stories/${language}/${storyType}/${fileId}/audio`);
+            // Find the generation with the matching file_id
+            const generation = ttsGenerations.find(g => g.file_id === fileId);
             
-            if (!response.ok) {
-                throw new Error('Failed to get story audio URL');
+            if (!generation || !generation.file_path) {
+                throw new Error('TTS generation not found or no audio file available');
             }
             
-            const data = await response.json();
-            console.log('Story audio Firebase response:', data);
+            console.log('Playing TTS generation from URL:', generation.file_path);
             
-            if (data.status === 'success' && data.audio_url) {
-                // Create audio element and play from Firebase URL
-                const audio = new Audio(data.audio_url);
-                audio.onended = () => setPlayingGeneration(null);
-                audio.onerror = () => {
-                    console.error('Error playing story audio from Firebase');
-                    setPlayingGeneration(null);
-                };
-                
-                await audio.play();
-            } else {
-                throw new Error('No audio URL available');
-            }
+            // Create audio element and play directly from Firebase URL
+            const audio = new Audio(generation.file_path);
+            audio.onended = () => setPlayingGeneration(null);
+            audio.onerror = () => {
+                console.error('Error playing story audio from Firebase');
+                setPlayingGeneration(null);
+            };
+            
+            await audio.play();
         } catch (err) {
             console.error('Error playing TTS generation:', err);
             setPlayingGeneration(null);
         }
     };
 
-    const pollJobStatus = async (jobId: string) => {
-        const statusEndpoint = TTS_API_ENDPOINT.replace('/run', `/status/${jobId}`);
-        abortControllerRef.current = new AbortController();
-        
-        try {
-            while (true) {
-                if (abortControllerRef.current.signal.aborted) {
-                    throw new Error('Polling aborted');
-                }
 
-                const response = await fetch(statusEndpoint, {
-                    headers: {
-                        'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                    },
-                    signal: abortControllerRef.current.signal
-                });
-                
-                const data = await response.json();
-                console.log('TTS Status check response:', data);
-                
-                if (data.status === 'COMPLETED') {
-                    console.log('TTS Job completed, checking output:', data.output);
-                    
-                    if (data.output?.status === 'error') {
-                        throw new Error(data.output.message);
-                    }
-                    if (data.output?.audio_path) {
-                        console.log('TTS Found audio_path in output, returning output object');
-                        return data.output;
-                    }
-                    console.log('TTS No audio_path found, returning raw output');
-                    return data.output;
-                } else if (data.status === 'FAILED') {
-                    throw new Error(data.error || 'Job failed');
-                } else if (data.status === 'IN_QUEUE' || data.status === 'IN_PROGRESS') {
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    continue;
-                } else {
-                    throw new Error(`Unexpected status: ${data.status}`);
-                }
-            }
-        } finally {
-            abortControllerRef.current = null;
-        }
-    };
 
     const handleSubmit = async () => {
         try {
@@ -239,14 +200,28 @@ export default function TTSPage() {
                 selectedVoice 
             });
 
-            // Create form data for the new organized TTS generation
-            const formData = new FormData();
-            formData.append('voice_id', selectedVoice);
-            formData.append('text', text);
-            formData.append('responseFormat', 'base64');
-            formData.append('language', language); // Use state variable
-            formData.append('is_kids_voice', isKidsVoice.toString()); // Use state variable
-            formData.append('story_type', storyType); // Use state variable
+            // Get the voice profile using the proxy endpoint to avoid CORS issues
+            const profileResponse = await fetch(`${VOICE_API}/${selectedVoice}/profile?language=${language}&is_kids_voice=${isKidsVoice}`);
+            if (!profileResponse.ok) {
+                throw new Error('Failed to fetch voice profile');
+            }
+            const profileData = await profileResponse.json();
+            
+            if (profileData.status !== 'success' || !profileData.profile_base64) {
+                throw new Error('Voice profile not found or invalid');
+            }
+            
+            const profileBase64 = profileData.profile_base64;
+
+            // Create JSON request matching TTSGenerateRequest schema
+            const requestData = {
+                voice_id: selectedVoice,
+                text: text,
+                profile_base64: profileBase64, // Use the base64 string directly
+                language: language,
+                story_type: storyType,
+                is_kids_voice: isKidsVoice
+            };
 
             console.log('📤 Sending organized TTS request to FastAPI...', {
                 voice_id: selectedVoice,
@@ -259,7 +234,10 @@ export default function TTSPage() {
             // Send to FastAPI using the new organized TTS endpoint
             const response = await fetch(`${TTS_API}/generate`, {
                 method: 'POST',
-                body: formData
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(requestData)
             });
 
             const data = await response.json();
@@ -268,6 +246,8 @@ export default function TTSPage() {
                 hasGenerationId: !!data.generation_id,
                 hasAudioPath: !!data.audio_path,
                 hasMetadata: !!data.metadata,
+                hasJobId: !!data.job_id,
+                jobId: data.job_id,
                 keys: Object.keys(data)
             });
 

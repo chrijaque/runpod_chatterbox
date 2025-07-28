@@ -665,7 +665,7 @@ class FirebaseService:
                     if metadata and 'created_date' in metadata:
                         from datetime import datetime
                         created_date = datetime.fromisoformat(metadata['created_date'])
-                        voices[voice_id]["created_date"] = created_date.timestamp()
+                        voices[voice_id]["created_date"] = int(created_date.timestamp())
                         logger.debug(f"   📅 Extracted timestamp from metadata: {metadata['created_date']}")
                     else:
                         # Fallback: try to extract from filename timestamp
@@ -682,7 +682,7 @@ class FirebaseService:
                         if len(timestamp_part) >= 15 and timestamp_part.replace('_', '').isdigit():
                             from datetime import datetime
                             created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
-                            voices[voice_id]["created_date"] = created_date.timestamp()
+                            voices[voice_id]["created_date"] = int(created_date.timestamp())
                             logger.debug(f"   📅 Extracted timestamp from filename: {timestamp_part}")
                 except Exception as e:
                     logger.debug(f"Could not parse timestamp from {blob.name}: {e}")
@@ -714,12 +714,17 @@ class FirebaseService:
         try:
             # Build prefix based on language and story type
             prefix = f"audio/stories/{language}/{story_type}/"
+            logger.info(f"🔍 Searching Firebase with prefix: {prefix}")
             
             blobs = self.bucket.list_blobs(prefix=prefix)
             
+            # Convert to list for processing
+            blob_list = list(blobs)
+            logger.info(f"📁 Found {len(blob_list)} blobs in Firebase with prefix: {prefix}")
+            
             stories = {}
             
-            for blob in blobs:
+            for blob in blob_list:
                 if blob.name.endswith('/'):
                     continue
                     
@@ -727,15 +732,17 @@ class FirebaseService:
                 filename = blob.name.split('/')[-1]
                 
                 # Handle TTS story file naming patterns
-                if filename.endswith('.wav') and filename.startswith('TTS_'):
+                if (filename.endswith('.wav') or filename.endswith('.mp3')) and filename.startswith('TTS_'):
                     # Extract voice_id and timestamp from filename
-                    # Pattern: TTS_voice_christianmp3test2_20250728_075206.wav
-                    parts = filename.replace('.wav', '').split('_')
+                    # Pattern: TTS_voice_christianmp3test2_20250728_075206.wav or .mp3
+                    parts = filename.replace('.wav', '').replace('.mp3', '').split('_')
                     
-                    if len(parts) >= 3:
-                        # Extract voice_id (everything after TTS_ and before the last timestamp part)
-                        voice_id = '_'.join(parts[1:-1])  # Skip TTS_ and timestamp
-                        timestamp_part = parts[-1]
+                    if len(parts) >= 5:  # TTS_ + voice + voice_id + date + time
+                        # Extract voice_id (voice + voice_id parts)
+                        voice_id = f"{parts[1]}_{parts[2]}"  # voice_mp3metadatatestv1
+                        date_part = parts[-2]
+                        time_part = parts[-1]
+                        timestamp_part = f"{date_part}_{time_part}"
                         
                         # Create a unique generation_id
                         generation_id = f"{voice_id}_{timestamp_part}"
@@ -757,7 +764,7 @@ class FirebaseService:
                             if len(timestamp_part) >= 15:
                                 from datetime import datetime
                                 created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
-                                stories[generation_id]["created_date"] = created_date.timestamp()
+                                stories[generation_id]["created_date"] = int(created_date.timestamp())
                         except Exception as e:
                             logger.debug(f"Could not parse timestamp from {filename}: {e}")
             
@@ -900,7 +907,7 @@ class FirebaseService:
             logger.error(f"❌ Failed to get storage usage: {e}")
             return {} 
 
-    def test_list_all_files(self, prefix: str = "audio/voices/en/"):
+    def test_list_all_files(self, prefix: str = "audio/stories/en/user/"):
         """
         Test method to list all files in Firebase bucket
         """

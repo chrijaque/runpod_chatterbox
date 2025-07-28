@@ -119,6 +119,33 @@ async def list_voices():
         logger.error(f"❌ Error listing voices: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to list voices: {str(e)}")
 
+@router.get("/{voice_id}/profile")
+async def get_voice_profile(voice_id: str, language: str = "en", is_kids_voice: bool = False):
+    """
+    Get voice profile as base64 from Firebase (proxy endpoint to avoid CORS)
+    """
+    try:
+        logger.info(f"🔍 Getting voice profile for: {voice_id}")
+        logger.info(f"🔍 Parameters: language={language}, is_kids_voice={is_kids_voice}")
+        
+        # Get voice profile from Firebase
+        profile_base64 = firebase_service.get_voice_profile_base64(voice_id, language, is_kids_voice)
+        
+        if profile_base64:
+            logger.info(f"✅ Found voice profile for {voice_id} (length: {len(profile_base64)})")
+            return {
+                "status": "success",
+                "profile_base64": profile_base64,
+                "voice_id": voice_id
+            }
+        else:
+            logger.warning(f"⚠️ Voice profile not found for {voice_id}")
+            raise HTTPException(status_code=404, detail="Voice profile not found")
+            
+    except Exception as e:
+        logger.error(f"❌ Error getting voice profile: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get voice profile: {str(e)}")
+
 @router.get("/by-language/{language}")
 async def list_voices_by_language(language: str, is_kids_voice: bool = False):
     """
