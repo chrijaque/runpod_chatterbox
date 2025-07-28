@@ -7,45 +7,63 @@ This document describes the new organized storage structure for the voice AI API
 ## **📁 Firebase Storage Structure**
 
 ```
-gs://your-project-id.firebasestorage.app/audio/voices/
-├── en/                          # English voices
-│   ├── recorded/                # User raw recordings
-│   │   ├── voice_john_doe_recording_1_20250725_163000.wav
-│   │   └── voice_jane_smith_recording_1_20250725_165000.wav
-│   ├── samples/                 # Generated previews
-│   │   ├── voice_john_doe_voice_john_doe_sample_20250725_163000.wav
-│   │   └── voice_jane_smith_voice_jane_smith_sample_20250725_165000.wav
-│   ├── profiles/                # Voice profiles (.npy files)
-│   │   ├── voice_john_doe_voice_john_doe_20250725_163000.npy
-│   │   └── voice_jane_smith_voice_jane_smith_20250725_165000.npy
-│   └── kids/                    # Kids voices (English)
-│       ├── recorded/            # Kids' raw recordings
-│       ├── samples/             # Kids' generated previews
-│       └── profiles/            # Kids' voice profiles
-├── es/                          # Spanish voices
-│   ├── recorded/
-│   ├── samples/
-│   ├── profiles/
-│   └── kids/
+gs://your-project-id.firebasestorage.app/audio/
+├── voices/                      # Voice management
+│   ├── en/                      # English voices
+│   │   ├── recorded/            # User raw recordings
+│   │   │   ├── voice_john_doe_recording_1_20250725_163000.wav
+│   │   │   └── voice_jane_smith_recording_1_20250725_165000.wav
+│   │   ├── samples/             # Generated previews
+│   │   │   ├── voice_john_doe_voice_john_doe_sample_20250725_163000.wav
+│   │   │   └── voice_jane_smith_voice_jane_smith_sample_20250725_165000.wav
+│   │   ├── profiles/            # Voice profiles (.npy files)
+│   │   │   ├── voice_john_doe_voice_john_doe_20250725_163000.npy
+│   │   │   └── voice_jane_smith_voice_jane_smith_20250725_165000.npy
+│   │   └── kids/                # Kids voices (English)
+│   │       ├── recorded/        # Kids' raw recordings
+│   │       ├── samples/         # Kids' generated previews
+│   │       └── profiles/        # Kids' voice profiles
+│   ├── es/                      # Spanish voices
+│   │   ├── recorded/
+│   │   ├── samples/
+│   │   ├── profiles/
+│   │   └── kids/
+│   │       ├── recorded/
+│   │       ├── samples/
+│   │       └── profiles/
+│   ├── fr/                      # French voices
+│   │   ├── recorded/
+│   │   ├── samples/
+│   │   ├── profiles/
+│   │   └── kids/
+│   │       ├── recorded/
+│   │       ├── samples/
+│   │       └── profiles/
+│   └── [other_languages]/
 │       ├── recorded/
 │       ├── samples/
-│       └── profiles/
-├── fr/                          # French voices
-│   ├── recorded/
-│   ├── samples/
-│   ├── profiles/
-│   └── kids/
-│       ├── recorded/
-│       ├── samples/
-│       └── profiles/
-└── [other_languages]/
-    ├── recorded/
-    ├── samples/
-    ├── profiles/
-    └── kids/
-        ├── recorded/
-        ├── samples/
-        └── profiles/
+│       ├── profiles/
+│       └── kids/
+│           ├── recorded/
+│           ├── samples/
+│           └── profiles/
+└── stories/                     # TTS story generation
+    ├── en/                      # English stories
+    │   ├── user/                # User-generated stories
+    │   │   ├── TTS_voice_john_doe_20250725_163000.wav
+    │   │   └── TTS_voice_jane_smith_20250725_165000.wav
+    │   └── app/                 # App-generated stories
+    │       ├── TTS_voice_john_doe_20250725_163000.wav
+    │       └── TTS_voice_jane_smith_20250725_165000.wav
+    ├── es/                      # Spanish stories
+    │   ├── user/
+    │   └── app/
+    ├── fr/                      # French stories
+    │   ├── user/
+    │   └── app/
+    └── [other_languages]/
+        ├── user/
+        └── app/
 ```
 
 ## **🔄 Voice Clone Request Format**
@@ -126,13 +144,24 @@ GET /api/voices/{voice_id}/sample/firebase?language=en&is_kids_voice=false
 ### **TTS Generation**
 
 ```bash
-# Generate TTS with organized storage
+# Generate TTS story with organized storage
 POST /api/tts/generate
 Content-Type: application/x-www-form-urlencoded
 
 voice_id=voice_john_doe&
-text=Hello, this is a test&
+text=Hello, this is a test story&
 language=en&
+story_type=user&
+is_kids_voice=false
+
+# Generate voice clone sample
+POST /api/tts/generate
+Content-Type: application/x-www-form-urlencoded
+
+voice_id=voice_john_doe&
+text=Hello, this is a sample&
+language=en&
+story_type=sample&
 is_kids_voice=false
 ```
 
@@ -194,11 +223,12 @@ Examples:
 ### **TTS Files**
 
 ```
-{generation_id}_{tts_filename}
+TTS_{voice_id}_{timestamp}.wav
 ```
 
-Example:
-- `gen_20250725_163000_TTS_voice_john_doe_20250725_163000.wav`
+Examples:
+- `TTS_voice_john_doe_20250725_163000.wav` (story generation)
+- `voice_john_doe_voice_john_doe_sample_20250725_163000.wav` (voice sample)
 
 ## **🚀 Usage Examples**
 
@@ -257,11 +287,12 @@ console.log('Profile files:', files.firebase_urls.profiles);
 ### **Generate TTS**
 
 ```javascript
-// Generate TTS with language context
+// Generate TTS story with language context
 const formData = new FormData();
 formData.append('voice_id', 'voice_john_doe');
-formData.append('text', 'Hello, this is a test message');
+formData.append('text', 'Hello, this is a test story');
 formData.append('language', 'en');
+formData.append('story_type', 'user');  // 'user' or 'app'
 formData.append('is_kids_voice', 'false');
 
 const ttsResponse = await fetch('/api/tts/generate', {
@@ -270,7 +301,23 @@ const ttsResponse = await fetch('/api/tts/generate', {
 });
 
 const ttsResult = await ttsResponse.json();
-console.log('TTS URL:', ttsResult.metadata.firebase_urls.tts_url);
+console.log('TTS Path:', ttsResult.audio_path);
+
+// Generate voice clone sample
+const sampleFormData = new FormData();
+sampleFormData.append('voice_id', 'voice_john_doe');
+sampleFormData.append('text', 'Hello, this is a sample');
+sampleFormData.append('language', 'en');
+sampleFormData.append('story_type', 'sample');  // 'sample' for voice cloning
+sampleFormData.append('is_kids_voice', 'false');
+
+const sampleResponse = await fetch('/api/tts/generate', {
+  method: 'POST',
+  body: sampleFormData
+});
+
+const sampleResult = await sampleResponse.json();
+console.log('Sample Path:', sampleResult.audio_path);
 ```
 
 ## **🔧 Implementation Details**
@@ -280,34 +327,37 @@ console.log('TTS URL:', ttsResult.metadata.firebase_urls.tts_url);
 ```python
 # Upload with language and kids voice context
 firebase_service.upload_runpod_voice_sample(voice_id, filename, language, is_kids_voice)
-firebase_service.upload_runpod_tts_generation(generation_id, filename, language, is_kids_voice)
+firebase_service.upload_runpod_tts_story(voice_id, filename, language, story_type, is_kids_voice)
 firebase_service.upload_voice_profile(voice_id, filename, language, is_kids_voice)
 firebase_service.upload_user_recording(voice_id, filename, language, is_kids_voice)
 
 # List files with context
 firebase_service.list_voice_files(voice_id, language, is_kids_voice)
 firebase_service.list_voices_by_language(language, is_kids_voice)
+firebase_service.list_stories_by_language(language, story_type)
 ```
 
 ### **Storage Path Generation**
 
 ```python
-# Regular voice path
-f"audio/voices/{language}/samples/{voice_id}_{filename}"
+# Voice sample paths
+f"audio/voices/{language}/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
+f"audio/voices/{language}/kids/samples/{voice_id}_{voice_id}_sample_{timestamp}.wav"
 
-# Kids voice path
-f"audio/voices/{language}/kids/samples/{voice_id}_{filename}"
+# TTS story paths
+f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.wav"
 ```
 
 ## **📈 Benefits**
 
 ### **✅ Organization Benefits**
 
-1. **Language Separation**: Easy to manage voices by language
+1. **Language Separation**: Easy to manage voices and stories by language
 2. **Kids Voice Isolation**: Separate kids voices for safety and organization
-3. **Scalable Structure**: Easy to add new languages
-4. **Clear File Types**: Recorded, samples, and profiles clearly separated
-5. **User Context**: Each voice tied to specific user and metadata
+3. **Story Type Separation**: User-generated vs app-generated stories clearly separated
+4. **Scalable Structure**: Easy to add new languages
+5. **Clear File Types**: Recorded, samples, profiles, and stories clearly separated
+6. **User Context**: Each voice and story tied to specific user and metadata
 
 ### **🔄 Workflow Benefits**
 
