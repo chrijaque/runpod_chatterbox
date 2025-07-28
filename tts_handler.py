@@ -108,7 +108,9 @@ def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
             # Convert tensor to AudioSegment
             audio_segment = tensor_to_audiosegment(audio_tensor, sample_rate)
             # Export to MP3 bytes
-            mp3_bytes = audio_segment.export(format="mp3", bitrate=bitrate)
+            mp3_file = audio_segment.export(format="mp3", bitrate=bitrate)
+            # Read the bytes from the file object
+            mp3_bytes = mp3_file.read()
             return mp3_bytes
         except Exception as e:
             logger.warning(f"Direct MP3 conversion failed: {e}, falling back to WAV")
@@ -231,8 +233,7 @@ def _debug_gcs_creds():
                         textwrap.shorten(first_line.strip(), 120))
         except Exception as e:
             logger.warning("⚠️  GCS-Debug | Could not read file: %s", e)
-    else:
-        logger.error("❌ GCS-Debug | File NOT found on disk")
+    # Removed the "File NOT found" log since we're using JSON content from RunPod secret
 
     # Check RunPod secret file if different and it's actually a file path
     if firebase_secret_path and firebase_secret_path != cred_path and not firebase_secret_path.startswith('{'):
