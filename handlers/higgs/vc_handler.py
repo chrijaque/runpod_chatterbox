@@ -54,27 +54,89 @@ def verify_model_availability():
     """Verify that Higgs Audio models are available with detailed logging"""
     logger.info("🔍 Starting model availability verification...")
     
+    # Check disk space first
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage("/")
+        logger.info(f"🔍 Disk space check:")
+        logger.info(f"   - Total: {total // (1024**3)} GB")
+        logger.info(f"   - Used: {used // (1024**3)} GB")
+        logger.info(f"   - Free: {free // (1024**3)} GB")
+        
+        if free < 10 * (1024**3):  # Less than 10GB free
+            logger.warning("⚠️ Low disk space - may cause model download issues")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check disk space: {e}")
+    
+    # Check network connectivity
+    try:
+        import requests
+        logger.info("🔍 Testing network connectivity to HuggingFace...")
+        response = requests.get("https://huggingface.co", timeout=10)
+        logger.info(f"✅ Network connectivity: {response.status_code}")
+    except Exception as e:
+        logger.error(f"❌ Network connectivity test failed: {e}")
+    
+    # Check HuggingFace cache directory
+    try:
+        from huggingface_hub import HF_HUB_CACHE
+        logger.info(f"🔍 HuggingFace cache directory: {HF_HUB_CACHE}")
+        import os
+        if os.path.exists(HF_HUB_CACHE):
+            cache_size = sum(os.path.getsize(os.path.join(dirpath, filename))
+                for dirpath, dirnames, filenames in os.walk(HF_HUB_CACHE)
+                for filename in filenames)
+            logger.info(f"✅ Cache directory exists, size: {cache_size // (1024**2)} MB")
+        else:
+            logger.warning("⚠️ HuggingFace cache directory does not exist")
+    except Exception as e:
+        logger.warning(f"⚠️ Could not check cache directory: {e}")
+    
     try:
         from transformers import AutoTokenizer, AutoModel
         logger.info("✅ Successfully imported transformers")
+        logger.info(f"✅ Transformers version: {transformers.__version__}")
         
         # Try to load the tokenizer
         logger.info(f"🔍 Attempting to load tokenizer: {AUDIO_TOKENIZER_PATH}")
+        logger.info(f"🔍 This may take a while if downloading...")
+        
         tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
         logger.info(f"✅ Audio tokenizer loaded successfully: {type(tokenizer)}")
         logger.info(f"✅ Tokenizer vocab size: {tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else 'N/A'}")
         
         # Try to load the model (this will download if not cached)
         logger.info(f"🔍 Attempting to load model: {MODEL_PATH}")
+        logger.info(f"🔍 This may take a while if downloading (model is ~7GB)...")
+        
         model = AutoModel.from_pretrained(MODEL_PATH)
         logger.info(f"✅ Model loaded successfully: {type(model)}")
         logger.info(f"✅ Model device: {next(model.parameters()).device if hasattr(model, 'parameters') else 'N/A'}")
+        
+        # Check model size
+        try:
+            param_count = sum(p.numel() for p in model.parameters())
+            logger.info(f"✅ Model parameter count: {param_count:,}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not count model parameters: {e}")
         
         return True
         
     except Exception as e:
         logger.error(f"❌ Model verification failed: {e}")
         logger.error(f"❌ Error type: {type(e)}")
+        logger.error(f"❌ Error details: {str(e)}")
+        
+        # Check if it's a network error
+        if "Connection" in str(e) or "timeout" in str(e).lower():
+            logger.error("❌ This appears to be a network connectivity issue")
+        elif "disk space" in str(e).lower() or "no space" in str(e).lower():
+            logger.error("❌ This appears to be a disk space issue")
+        elif "not found" in str(e).lower():
+            logger.error("❌ This appears to be a model path issue")
+        elif "authentication" in str(e).lower() or "token" in str(e).lower():
+            logger.error("❌ This appears to be an authentication issue")
+        
         import traceback
         logger.error(f"❌ Full model verification traceback: {traceback.format_exc()}")
         return False

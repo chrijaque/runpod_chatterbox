@@ -25,32 +25,53 @@ def get_model_handler(model_type: str):
     if model_type == "chatterbox" or model_type == "chatterboxtts":
         logger.info("🎯 Using ChatterboxTTS handler")
         try:
+            logger.info("🔍 Checking protobuf before import...")
+            import google.protobuf
+            logger.info(f"✅ Protobuf version: {google.protobuf.__version__}")
+            
+            logger.info("🔍 Attempting to import ChatterboxTTS handler...")
             from handlers.chatterbox.vc_handler import handler as chatterbox_handler
             logger.info("✅ ChatterboxTTS handler imported successfully")
             logger.info(f"✅ Handler type: {type(chatterbox_handler)}")
             return chatterbox_handler
         except ImportError as e:
             logger.error(f"❌ Failed to import ChatterboxTTS handler: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"❌ Unexpected error importing ChatterboxTTS handler: {e}")
-            return None
-    
-    elif model_type == "higgs" or model_type == "higgs_audio":
-        logger.info("🎯 Using Higgs Audio handler")
-        try:
-            from handlers.higgs.vc_handler import handler as higgs_handler
-            logger.info("✅ Higgs Audio handler imported successfully")
-            logger.info(f"✅ Handler type: {type(higgs_handler)}")
-            return higgs_handler
-        except ImportError as e:
-            logger.error(f"❌ Failed to import Higgs Audio handler: {e}")
             logger.error(f"❌ Import error type: {type(e)}")
             import traceback
             logger.error(f"❌ Full import traceback: {traceback.format_exc()}")
             return None
         except Exception as e:
+            logger.error(f"❌ Unexpected error importing ChatterboxTTS handler: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            import traceback
+            logger.error(f"❌ Full unexpected error traceback: {traceback.format_exc()}")
+            return None
+    
+    elif model_type == "higgs" or model_type == "higgs_audio":
+        logger.info("🎯 Using Higgs Audio handler")
+        try:
+            logger.info("🔍 Attempting to import Higgs Audio handler module...")
+            logger.info("🔍 This will execute the module and may trigger model initialization...")
+            
+            from handlers.higgs.vc_handler import handler as higgs_handler
+            logger.info("✅ Higgs Audio handler imported successfully")
+            logger.info(f"✅ Handler type: {type(higgs_handler)}")
+            logger.info(f"✅ Handler function: {higgs_handler}")
+            
+            return higgs_handler
+        except ImportError as e:
+            logger.error(f"❌ Failed to import Higgs Audio handler: {e}")
+            logger.error(f"❌ Import error type: {type(e)}")
+            logger.error(f"❌ Import error details: {str(e)}")
+            import traceback
+            logger.error(f"❌ Full import traceback: {traceback.format_exc()}")
+            return None
+        except Exception as e:
             logger.error(f"❌ Unexpected error importing Higgs Audio handler: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            logger.error(f"❌ Error details: {str(e)}")
+            import traceback
+            logger.error(f"❌ Full unexpected error traceback: {traceback.format_exc()}")
             return None
     
     else:
@@ -95,10 +116,15 @@ def unified_handler(event):
     
     # Call the appropriate handler
     logger.info("🔍 Calling model handler...")
+    logger.info(f"🔍 Handler function: {handler}")
+    logger.info(f"🔍 Event data: {event}")
+    
     try:
+        logger.info("🔍 About to execute handler function...")
         result = handler(event)
         logger.info(f"✅ Handler execution completed")
         logger.info(f"✅ Result type: {type(result)}")
+        logger.info(f"✅ Result: {result}")
         
         # Add model type to result for tracking
         if isinstance(result, dict):
@@ -113,6 +139,7 @@ def unified_handler(event):
     except Exception as e:
         logger.error(f"❌ Handler execution failed: {e}")
         logger.error(f"❌ Error type: {type(e)}")
+        logger.error(f"❌ Error details: {str(e)}")
         import traceback
         logger.error(f"❌ Full handler execution traceback: {traceback.format_exc()}")
         return {

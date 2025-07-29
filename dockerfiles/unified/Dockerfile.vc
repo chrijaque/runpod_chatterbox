@@ -42,7 +42,9 @@ ENV HF_HOME=/root/.cache/huggingface
 RUN echo "🔧 Installing Python dependencies..." && \
     pip install --no-cache-dir -r requirements.txt && \
     echo "🔧 Installing compatible torchvision..." && \
-    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
+    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121 && \
+    echo "🔧 Checking protobuf version..." && \
+    python -c "import google.protobuf; print(f'✅ Protobuf version: {google.protobuf.__version__}')"
 
 # Clone and install ChatterboxTTS from forked repository
 RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
