@@ -70,12 +70,6 @@ COPY handlers/higgs/tts_handler.py /app/handlers/higgs/
 # Create a unified handler that can switch between models
 COPY handlers/unified_tts_handler.py /app/
 
-# Copy verification scripts
-COPY verify_unified_installation.py /app/
-COPY test_higgs_setup.py /app/
-COPY test_pytorch_compatibility.py /app/
-COPY test_base_image.py /app/
-
 # Set the default handler
 ENV HANDLER_PATH=/app/unified_tts_handler.py
 
