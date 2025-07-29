@@ -69,3 +69,4 @@ htmlcov/
 
 # Firebase credentials
 firebase_creds.json
+firebase_cors_config.json
