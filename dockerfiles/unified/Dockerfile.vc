@@ -54,6 +54,18 @@ RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
     echo "🔍 Verifying PyTorch compatibility..." && \
     python -c "import torch; import torchvision; print(f'✅ PyTorch: {torch.__version__}'); print(f'✅ TorchVision: {torchvision.__version__}')"
 
+# Clone and install Higgs Audio from forked repository
+RUN echo "🔧 Cloning Higgs Audio repository..." && \
+    git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
+    echo "🔧 Installing Higgs Audio requirements..." && \
+    pip install -r /workspace/higgs-audio/requirements.txt && \
+    echo "🔧 Installing Higgs Audio in editable mode..." && \
+    pip install -e /workspace/higgs-audio && \
+    echo "🔍 Verifying Higgs Audio installation..." && \
+    python -c "import boson_multimodal; print('✅ boson_multimodal imported from:', boson_multimodal.__file__)" && \
+    echo "🔍 Verifying Higgs Audio components..." && \
+    python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
+
 # Install NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
 
@@ -76,6 +88,7 @@ COPY verify_unified_installation.py /app/
 COPY test_higgs_setup.py /app/
 COPY test_pytorch_compatibility.py /app/
 COPY test_base_image.py /app/
+COPY debug_higgs_setup.py /app/
 
 # Set the default handler
 ENV HANDLER_PATH=/app/unified_vc_handler.py

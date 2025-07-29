@@ -1,137 +1,122 @@
 #!/usr/bin/env python3
 """
-Test script for Higgs Audio setup
+Test script to verify Higgs Audio setup
 """
 
 import sys
-import os
 import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def test_imports():
-    """Test basic imports"""
-    print("🧪 Testing imports...")
+def test_higgs_imports():
+    """Test that Higgs Audio components can be imported"""
+    
+    logger.info("🔍 Testing Higgs Audio imports...")
     
     try:
-        import torch
-        print(f"✅ torch imported: {torch.__version__}")
-        print(f"✅ CUDA available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"✅ CUDA device: {torch.cuda.get_device_name(0)}")
-    except ImportError as e:
-        print(f"❌ torch import failed: {e}")
-        return False
-    
-    try:
-        import transformers
-        print(f"✅ transformers imported: {transformers.__version__}")
-    except ImportError as e:
-        print(f"❌ transformers import failed: {e}")
-        return False
-    
-    try:
-        from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine
-        print("✅ HiggsAudioServeEngine imported")
-    except ImportError as e:
-        print(f"❌ HiggsAudioServeEngine import failed: {e}")
-        return False
-    
-    try:
+        # Test basic import
+        import boson_multimodal
+        logger.info(f"✅ boson_multimodal imported from: {boson_multimodal.__file__}")
+        
+        # Test serve engine import
+        from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine, HiggsAudioResponse
+        logger.info("✅ HiggsAudioServeEngine imported successfully")
+        logger.info("✅ HiggsAudioResponse imported successfully")
+        
+        # Test data types import
         from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
-        print("✅ Higgs Audio data types imported")
+        logger.info("✅ ChatMLSample imported successfully")
+        logger.info("✅ Message imported successfully")
+        logger.info("✅ AudioContent imported successfully")
+        
+        return True
+        
     except ImportError as e:
-        print(f"❌ Higgs Audio data types import failed: {e}")
+        logger.error(f"❌ Import failed: {e}")
         return False
-    
-    return True
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {e}")
+        return False
 
-def test_model_paths():
-    """Test model path availability"""
-    print("\n🧪 Testing model paths...")
+def test_model_availability():
+    """Test that Higgs Audio models can be loaded"""
     
-    MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
-    AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
+    logger.info("🔍 Testing model availability...")
     
     try:
         from transformers import AutoTokenizer, AutoModel
         
-        # Test tokenizer
-        print(f"🔍 Loading tokenizer: {AUDIO_TOKENIZER_PATH}")
-        tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
-        print("✅ Tokenizer loaded successfully")
-        
-        # Test model (this will download if not cached)
-        print(f"🔍 Loading model: {MODEL_PATH}")
-        model = AutoModel.from_pretrained(MODEL_PATH)
-        print("✅ Model loaded successfully")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Model loading failed: {e}")
-        return False
-
-def test_serve_engine():
-    """Test serve engine initialization"""
-    print("\n🧪 Testing serve engine...")
-    
-    try:
-        import torch
-        from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine
-        
         MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
         AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
         
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"🔧 Using device: {device}")
+        # Test tokenizer loading
+        logger.info(f"🔍 Loading tokenizer: {AUDIO_TOKENIZER_PATH}")
+        tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
+        logger.info(f"✅ Tokenizer loaded successfully")
         
-        print("🔧 Initializing serve engine...")
-        serve_engine = HiggsAudioServeEngine(
-            model_path=MODEL_PATH,
-            audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
-            device=device
-        )
-        print("✅ Serve engine initialized successfully")
+        # Test model loading (this will download if not cached)
+        logger.info(f"🔍 Loading model: {MODEL_PATH}")
+        model = AutoModel.from_pretrained(MODEL_PATH)
+        logger.info(f"✅ Model loaded successfully")
         
         return True
         
     except Exception as e:
-        print(f"❌ Serve engine initialization failed: {e}")
-        import traceback
-        print(f"❌ Full traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Model loading failed: {e}")
+        return False
+
+def test_cuda_availability():
+    """Test CUDA availability"""
+    
+    logger.info("🔍 Testing CUDA availability...")
+    
+    try:
+        import torch
+        
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"CUDA available: {cuda_available}")
+        
+        if cuda_available:
+            device_name = torch.cuda.get_device_name(0)
+            logger.info(f"CUDA device: {device_name}")
+            logger.info(f"CUDA version: {torch.version.cuda}")
+        
+        return cuda_available
+        
+    except Exception as e:
+        logger.error(f"❌ CUDA test failed: {e}")
         return False
 
 def main():
-    """Main test function"""
-    print("🚀 ===== HIGGS AUDIO SETUP TEST =====")
+    """Run all tests"""
     
-    # Test imports
-    imports_ok = test_imports()
+    logger.info("🚀 ===== HIGGS AUDIO SETUP TEST =====")
     
-    # Test model paths
-    models_ok = test_model_paths()
+    # Test 1: Import availability
+    imports_ok = test_higgs_imports()
     
-    # Test serve engine
-    engine_ok = test_serve_engine()
+    # Test 2: CUDA availability
+    cuda_ok = test_cuda_availability()
+    
+    # Test 3: Model availability (only if imports are ok)
+    model_ok = False
+    if imports_ok:
+        model_ok = test_model_availability()
     
     # Summary
-    print("\n📋 ===== TEST SUMMARY =====")
-    print(f"Imports: {'✅ PASS' if imports_ok else '❌ FAIL'}")
-    print(f"Models: {'✅ PASS' if models_ok else '❌ FAIL'}")
-    print(f"Serve Engine: {'✅ PASS' if engine_ok else '❌ FAIL'}")
+    logger.info("📊 ===== TEST SUMMARY =====")
+    logger.info(f"✅ Imports: {'PASS' if imports_ok else 'FAIL'}")
+    logger.info(f"✅ CUDA: {'PASS' if cuda_ok else 'FAIL'}")
+    logger.info(f"✅ Models: {'PASS' if model_ok else 'FAIL'}")
     
-    if imports_ok and models_ok and engine_ok:
-        print("\n🎉 ===== ALL TESTS PASSED =====")
-        print("✅ Higgs Audio setup is ready!")
-        return True
+    if imports_ok and cuda_ok and model_ok:
+        logger.info("🎉 All tests passed! Higgs Audio is ready to use.")
+        return 0
     else:
-        print("\n❌ ===== SOME TESTS FAILED =====")
-        print("⚠️ Please check the installation and try again.")
-        return False
+        logger.error("❌ Some tests failed. Please check the setup.")
+        return 1
 
 if __name__ == "__main__":
-    success = main()
-    sys.exit(0 if success else 1) 
+    sys.exit(main()) 

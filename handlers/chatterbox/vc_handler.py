@@ -293,8 +293,13 @@ def initialize_model():
     
     try:
         # Minimal initialization - focus on core functionality
+        logger.info("🔧 Loading ChatterboxTTS model...")
         model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxTTS model initialized")
+        logger.info(f"🔧 Model type: {type(model)}")
+        logger.info(f"🔧 Model has s3gen: {hasattr(model, 's3gen')}")
+        if hasattr(model, 's3gen'):
+            logger.info(f"🔧 s3gen type: {type(model.s3gen)}")
         
         # Initialize the forked repository handler if available
         if FORKED_HANDLER_AVAILABLE:
@@ -445,6 +450,17 @@ def handle_voice_clone_request(input, responseFormat):
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
         return {"status": "error", "message": "Failed to initialize Firebase storage"}
     
+    # Initialize model if needed
+    global model
+    if model is None:
+        logger.info("🔧 Initializing ChatterboxTTS model...")
+        try:
+            initialize_model()
+            logger.info("✅ Model initialization completed")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize model: {e}")
+            return {"status": "error", "message": f"Failed to initialize model: {str(e)}"}
+    
     # Handle voice generation request only
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
@@ -576,6 +592,10 @@ def handle_voice_clone_request(input, responseFormat):
         else:
             # Use original audio file method (fallback)
             logger.info("🔄 Using audio file method")
+            logger.info(f"🔧 Model is: {model}")
+            logger.info(f"🔧 Model type: {type(model)}")
+            if model is None:
+                raise RuntimeError("Model is None - initialization failed")
             audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
             generation_method = "audio_file"
 
