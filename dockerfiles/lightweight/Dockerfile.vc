@@ -93,11 +93,6 @@ COPY handlers/higgs/vc_handler.py /app/handlers/higgs/
 # Copy unified handler
 COPY handlers/unified_vc_handler.py /app/
 
-# Copy verification scripts
-COPY verify_unified_installation.py /app/
-COPY quick_check.py /app/
-COPY fix_dependencies.py /app/
-
 # Set the default handler
 ENV HANDLER_PATH=/app/unified_vc_handler.py
 
