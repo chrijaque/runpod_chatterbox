@@ -49,6 +49,40 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
+# Pre-load ChatterboxTTS model at module level (avoids re-initialization)
+logger.info("🔧 Pre-loading ChatterboxTTS model...")
+try:
+    from chatterbox.tts import ChatterboxTTS
+    model = ChatterboxTTS.from_pretrained(device='cuda')
+    logger.info("✅ ChatterboxTTS model pre-loaded successfully")
+    
+    # Initialize the forked repository handler if available
+    if FORKED_HANDLER_AVAILABLE:
+        logger.info("🔧 Pre-loading ChatterboxVC...")
+        try:
+            from chatterbox.vc import ChatterboxVC
+            forked_handler = ChatterboxVC(
+                s3gen=model.s3gen,
+                device=model.device
+            )
+            logger.info("✅ ChatterboxVC pre-loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to pre-load ChatterboxVC: {e}")
+            forked_handler = None
+    else:
+        logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
+        forked_handler = None
+    
+    # Attach the T3 text‑to‑token encoder to S3Gen
+    if hasattr(model, "s3gen") and hasattr(model, "t3"):
+        model.s3gen.text_encoder = model.t3
+        logger.info("📌 Attached text_encoder to model.s3gen")
+        
+except Exception as e:
+    logger.error(f"❌ Failed to pre-load ChatterboxTTS model: {e}")
+    model = None
+    forked_handler = None
+
 # -------------------------------------------------------------------
 # 🎵 MP3 Conversion Utilities
 # -------------------------------------------------------------------
@@ -275,57 +309,6 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         logger.error(f"❌ Firebase upload failed: {e}")
         return None
 
-def initialize_model():
-    global model, forked_handler
-    
-    if model is not None:
-        logger.info("Model already initialized")
-        return model
-    
-    logger.info("Initializing S3Token2Wav model...")
-    
-    # Check CUDA availability
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required but not available")
-    
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
-    
-    try:
-        # Minimal initialization - focus on core functionality
-        logger.info("🔧 Loading ChatterboxTTS model...")
-        model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxTTS model initialized")
-        logger.info(f"🔧 Model type: {type(model)}")
-        logger.info(f"🔧 Model has s3gen: {hasattr(model, 's3gen')}")
-        if hasattr(model, 's3gen'):
-            logger.info(f"🔧 s3gen type: {type(model.s3gen)}")
-        
-        # Initialize the forked repository handler if available
-        if FORKED_HANDLER_AVAILABLE:
-            logger.info("🔧 Initializing ChatterboxVC...")
-            try:
-                forked_handler = ChatterboxVC(
-                    s3gen=model.s3gen,
-                    device=model.device
-                )
-                logger.info("✅ ChatterboxVC initialized successfully")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize ChatterboxVC: {e}")
-                forked_handler = None
-        else:
-            logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
-        
-        # Attach the T3 text‑to‑token encoder to S3Gen
-        if hasattr(model, "s3gen") and hasattr(model, "t3"):
-            model.s3gen.text_encoder = model.t3
-            logger.info("📌 Attached text_encoder to model.s3gen")
-        
-        logger.info("✅ Model initialized on CUDA")
-    except Exception as e:
-        logger.error(f"Failed to initialize model: {str(e)}")
-        raise
-
 def get_voice_id(name):
     """Generate a unique ID for a voice based on the name"""
     # Create a clean, filesystem-safe voice ID from the name
@@ -450,16 +433,13 @@ def handle_voice_clone_request(input, responseFormat):
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
         return {"status": "error", "message": "Failed to initialize Firebase storage"}
     
-    # Initialize model if needed
+    # Check if model is pre-loaded
     global model
     if model is None:
-        logger.info("🔧 Initializing ChatterboxTTS model...")
-        try:
-            initialize_model()
-            logger.info("✅ Model initialization completed")
-        except Exception as e:
-            logger.error(f"❌ Failed to initialize model: {e}")
-            return {"status": "error", "message": f"Failed to initialize model: {str(e)}"}
+        logger.error("❌ ChatterboxTTS model not pre-loaded")
+        return {"status": "error", "message": "ChatterboxTTS model not available"}
+    
+    logger.info("✅ Using pre-loaded ChatterboxTTS model")
     
     # Handle voice generation request only
     name = input.get('name')

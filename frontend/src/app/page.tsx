@@ -80,7 +80,7 @@ export default function Home() {
             // Voice is now saved directly by RunPod to Firebase
             // We just need to refresh the voice library
             console.log('✅ Voice saved to Firebase by RunPod, refreshing library...');
-            await loadVoiceLibrary();
+                await loadVoiceLibrary();
             
         } catch (error) {
             console.error('❌ Error saving voice to API:', error);
@@ -137,15 +137,15 @@ export default function Home() {
             
             console.log('Playing voice sample from URL:', voice.sample_file);
             
-            // Create audio element and play from Firebase URL
+                // Create audio element and play from Firebase URL
             const audio = new Audio(voice.sample_file);
-            audio.onended = () => setPlayingVoice(null);
-            audio.onerror = () => {
-                console.error('Error playing audio from Firebase');
-                setPlayingVoice(null);
-            };
-            
-            await audio.play();
+                audio.onended = () => setPlayingVoice(null);
+                audio.onerror = () => {
+                    console.error('Error playing audio from Firebase');
+                    setPlayingVoice(null);
+                };
+                
+                await audio.play();
         } catch (err) {
             console.error('Error playing voice sample:', err);
             setPlayingVoice(null);

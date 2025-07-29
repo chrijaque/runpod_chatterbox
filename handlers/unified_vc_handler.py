@@ -17,6 +17,13 @@ sys.path.append('/app/handlers/chatterbox')
 sys.path.append('/app/handlers/higgs')
 logger.info(f"✅ Handler paths added: {sys.path[-2:]}")
 
+# Set up network volume paths
+logger.info("🔧 Setting up network volume paths...")
+os.environ["HF_HOME"] = "/runpod-volume"
+os.environ["TRANSFORMERS_CACHE"] = "/runpod-volume"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/runpod-volume"
+logger.info("✅ Network volume paths configured: /runpod-volume")
+
 def get_model_handler(model_type: str):
     """Get the appropriate handler based on model type with detailed logging"""
     

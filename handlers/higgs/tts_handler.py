@@ -28,23 +28,54 @@ except ImportError as e:
 storage_client = None
 bucket = None
 
-# Model paths for Higgs Audio
-MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
-AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
+# Model paths for Higgs Audio (from network volume)
+MODEL_PATH = "/runpod-volume/higgs_audio_generation"
+AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
+HUBERT_PATH = "/runpod-volume/hubert_base"
 
-# Set cache directory to match download_models.py
+# Set cache directory to use network volume
 import os
-os.environ["HF_HOME"] = "/app/models"
-os.environ["TRANSFORMERS_CACHE"] = "/app/models"
-os.environ["HUGGINGFACE_HUB_CACHE"] = "/app/models"
+os.environ["HF_HOME"] = "/runpod-volume"
+os.environ["TRANSFORMERS_CACHE"] = "/runpod-volume"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/runpod-volume"
 
 # Local directory paths
 TTS_GENERATED_DIR = Path("/tts_generated")
 TEMP_VOICE_DIR = Path("/temp_voice")
 
-# Initialize Higgs Audio model
+# Pre-load Higgs Audio models at module level (avoids runtime initialization)
+logger.info("🔧 Pre-loading Higgs Audio models for TTS...")
 model = None
 serve_engine = None
+
+try:
+    if HIGGS_AVAILABLE:
+        logger.info("🔍 Attempting to pre-load Higgs Audio serve engine for TTS...")
+        logger.info(f"   - Model path: {MODEL_PATH}")
+        logger.info(f"   - Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
+        logger.info(f"   - Device: cuda")
+        
+        serve_engine = HiggsAudioServeEngine(
+            model_path=MODEL_PATH,
+            audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
+            device="cuda"
+        )
+        
+        model = serve_engine  # For compatibility with existing code
+        logger.info("✅ Higgs Audio models pre-loaded successfully for TTS")
+        logger.info(f"✅ Serve engine type: {type(serve_engine)}")
+    else:
+        logger.error("❌ Higgs Audio components not available for pre-loading")
+        serve_engine = None
+        model = None
+        
+except Exception as e:
+    logger.error(f"❌ Failed to pre-load Higgs Audio models for TTS: {e}")
+    logger.error(f"❌ Error type: {type(e)}")
+    import traceback
+    logger.error(f"❌ Full pre-load traceback: {traceback.format_exc()}")
+    serve_engine = None
+    model = None
 
 def initialize_firebase():
     """Initialize Firebase Storage client"""
@@ -110,44 +141,17 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         return None
 
 def initialize_model():
-    """Initialize Higgs Audio model"""
+    """Model is pre-loaded, no initialization needed"""
     global model, serve_engine
     
-    if model is not None:
-        logger.info("Model already initialized")
+    logger.info("🔍 Checking pre-loaded Higgs Audio model for TTS...")
+    
+    if model is not None and serve_engine is not None:
+        logger.info("✅ Model already pre-loaded")
         return model
-    
-    if not HIGGS_AVAILABLE:
-        raise RuntimeError("Higgs Audio components not available")
-    
-    logger.info("Initializing Higgs Audio model...")
-    
-    try:
-        import torch
-        
-        # Check CUDA availability
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA is required but not available")
-        
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"CUDA available: {torch.cuda.is_available()}")
-        logger.info(f"CUDA device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
-        
-        # Initialize Higgs Audio serve engine
-        serve_engine = HiggsAudioServeEngine(
-            model_path=MODEL_PATH,
-            audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
-            device=device
-        )
-        
-        model = serve_engine  # For compatibility with existing code
-        logger.info("✅ Higgs Audio model initialized successfully")
-        
-        return model
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Higgs Audio model: {e}")
-        raise
+    else:
+        logger.error("❌ Model not pre-loaded")
+        raise RuntimeError("Higgs Audio model not available - pre-loading failed")
 
 def load_voice_profile(profile_base64: str) -> Optional[np.ndarray]:
     """Load voice profile from base64 data"""
@@ -213,7 +217,8 @@ def generate_tts_chunk(text: str, voice_profile: np.ndarray, temperature: float 
     global serve_engine
     
     if not serve_engine:
-        initialize_model()
+        logger.error("❌ Serve engine not pre-loaded")
+        return None
     
     try:
         logger.info(f"🎵 Generating TTS chunk: {len(text)} characters")
@@ -304,9 +309,10 @@ def generate_tts_story(voice_id: str, text: str, profile_base64: str, language: 
     logger.info(f"🔍 Parameters: voice_id={voice_id}, language={language}, story_type={story_type}")
     
     try:
-        # Initialize model if needed
+        # Check if model is pre-loaded
         if not serve_engine:
-            initialize_model()
+            logger.error("❌ Serve engine not pre-loaded")
+            return {"status": "error", "message": "Higgs Audio model not available"}
         
         # Load voice profile
         voice_profile = load_voice_profile(profile_base64)

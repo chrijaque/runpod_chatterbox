@@ -134,8 +134,8 @@ async def get_voice_profile(voice_id: str, language: str = "en", is_kids_voice: 
         
         if profile_base64:
             logger.info(f"✅ Found voice profile for {voice_id} (length: {len(profile_base64)})")
-            return {
-                "status": "success",
+        return {
+            "status": "success",
                 "profile_base64": profile_base64,
                 "voice_id": voice_id
             }

@@ -64,6 +64,30 @@ except ImportError:
     PYDUB_AVAILABLE = False
     logger.warning("⚠️ pydub not available - will use torchaudio for audio processing")
 
+# Pre-load ChatterboxTTS model at module level (avoids re-initialization)
+logger.info("🔧 Pre-loading ChatterboxTTS model...")
+try:
+    model = ChatterboxTTS.from_pretrained(device='cuda')
+    logger.info("✅ ChatterboxTTS model pre-loaded successfully")
+    
+    # Initialize the forked repository handler if available
+    if FORKED_HANDLER_AVAILABLE:
+        logger.info("🔧 Pre-loading ChatterboxVC...")
+        try:
+            forked_handler = ChatterboxVC(
+                s3gen=model.s3gen,
+                device=model.device
+            )
+            logger.info("✅ ChatterboxVC pre-loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to pre-load ChatterboxVC: {e}")
+            forked_handler = None
+    else:
+        logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
+        forked_handler = None
+        
+except Exception as e:
+    logger.error(f"❌ Failed to pre-load ChatterboxTTS model: {e}")
 model = None
 forked_handler = None
 

@@ -631,30 +631,30 @@ class FirebaseService:
                 if not file_type or not voice_id:
                     logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
                     continue
-                
-                if voice_id not in voices:
-                    voices[voice_id] = {
-                        "voice_id": voice_id,
+                    
+                    if voice_id not in voices:
+                        voices[voice_id] = {
+                            "voice_id": voice_id,
                         "name": voice_name or voice_id.replace('voice_', '').replace('_', ' ').title(),
-                        "recorded": [],
-                        "samples": [],
+                            "recorded": [],
+                            "samples": [],
                         "profiles": [],
                         "created_date": None,
                         "language": language or "en",
                         "is_kids_voice": is_kids_voice or False
-                    }
-                
-                url = blob.public_url
+                        }
+                    
+                    url = blob.public_url
                 
                 # Categorize based on file_type determined from directory structure
                 if file_type == 'recorded':
-                    voices[voice_id]["recorded"].append(url)
+                        voices[voice_id]["recorded"].append(url)
                     logger.info(f"   ✅ Added to recorded: {blob.name}")
                 elif file_type == 'sample':
-                    voices[voice_id]["samples"].append(url)
+                        voices[voice_id]["samples"].append(url)
                     logger.info(f"   ✅ Added to samples: {blob.name}")
                 elif file_type == 'profile':
-                    voices[voice_id]["profiles"].append(url)
+                        voices[voice_id]["profiles"].append(url)
                     logger.info(f"   ✅ Added to profiles: {blob.name}")
                 else:
                     logger.warning(f"   ⚠️ File not categorized: {blob.name}")
@@ -746,10 +746,10 @@ class FirebaseService:
                         
                         # Create a unique generation_id
                         generation_id = f"{voice_id}_{timestamp_part}"
-                        
-                        if generation_id not in stories:
-                            stories[generation_id] = {
-                                "generation_id": generation_id,
+                    
+                    if generation_id not in stories:
+                        stories[generation_id] = {
+                            "generation_id": generation_id,
                                 "voice_id": voice_id,
                                 "voice_name": voice_id.replace('voice_', ''),
                                 "audio_file": blob.public_url,
@@ -758,7 +758,7 @@ class FirebaseService:
                                 "story_type": story_type,
                                 "file_size": blob.size if hasattr(blob, 'size') else 0
                             }
-                        
+                    
                         # Try to extract creation time from timestamp
                         try:
                             if len(timestamp_part) >= 15:

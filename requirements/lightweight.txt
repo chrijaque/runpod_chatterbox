@@ -1,5 +1,5 @@
-# Unified Requirements for ChatterboxTTS + Higgs Audio
-# This file supports both models in a single Docker image
+# Lightweight Requirements for Network Volume Deployment
+# This file contains only the essential dependencies, excluding heavy models
 
 # ===== CORE DEPENDENCIES =====
 
@@ -25,13 +25,7 @@ requests>=2.31.0
 
 # ===== AUDIO PROCESSING =====
 
-# PyTorch ecosystem (compatible with both models)
-# Note: PyTorch 2.1.0 is already included in the base image
-# torch==2.1.0
-# torchaudio==2.1.0
-# torchvision==0.16.0
-
-# Audio processing libraries
+# Audio processing libraries (lightweight)
 pydub==0.25.1
 librosa>=0.10.0
 soundfile>=0.12.0
@@ -56,30 +50,16 @@ accelerate>=0.20.0
 datasets>=2.10.0
 tokenizers>=0.13.0
 
-# Note: Let pip resolve ONNX version to avoid conflicts
-# onnx==1.14.0
-
 # HuggingFace Hub
 huggingface-hub>=0.15.0
-
-# ===== CHATTERBOXTTS DEPENDENCIES =====
-
-# ChatterboxTTS specific dependencies
-# Note: These may need to be installed from the forked repository
-# git+https://github.com/your-forked-repo/chatterbox.git
 
 # ===== HIGGS AUDIO DEPENDENCIES =====
 
 # Higgs Audio specific dependencies
-# Note: boson_multimodal will be installed from the forked repository
-# Additional dependencies that might be needed for Higgs Audio
 einops>=0.6.0
 sentencepiece>=0.1.99
-# Note: Let pip resolve protobuf version to avoid conflicts
-# protobuf==3.20.3
 
 # Higgs Audio specific dependencies from the forked repository
-descript-audio-codec
 dacite
 boto3==1.35.36
 s3fs
@@ -90,23 +70,13 @@ loguru
 ruff==0.12.2
 omegaconf
 
-# ===== OPTIONAL PERFORMANCE OPTIMIZATIONS =====
-
-# Flash Attention (optional, for better performance)
-# flash-attn>=2.0.0
-
-# XFormers (optional, for better performance)
-# xformers>=0.0.20
-
 # ===== UTILITIES =====
 
-# General utilities
-python-dotenv>=1.0.0
+# Utilities
 tqdm>=4.64.0
 click>=8.0.0
+python-dotenv>=1.0.0
 
-# ===== DEVELOPMENT & TESTING =====
-
-# For development and testing
-pytest>=7.0.0
-pytest-asyncio>=0.21.0 
+# Note: PyTorch is already included in the base image
+# Note: descript-audio-codec will be installed separately to avoid protobuf conflicts
+# Note: Models will be mounted from network volume at runtime 
