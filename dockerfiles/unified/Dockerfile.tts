@@ -1,7 +1,7 @@
 # Unified TTS Dockerfile
 # Supports both ChatterboxTTS and Higgs Audio models
 
-FROM nvcr.io/nvidia/pytorch:25.02-py3
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-devel
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -38,11 +38,9 @@ RUN git config --global --add safe.directory '*'
 # Setup environment for huggingface
 ENV HF_HOME=/root/.cache/huggingface
 
-# Install Python dependencies with PyTorch version management
+# Install Python dependencies
 RUN echo "🔧 Installing Python dependencies..." && \
     pip install --no-cache-dir -r requirements.txt && \
-    echo "🔧 Fixing PyTorch version conflicts..." && \
-    pip install --force-reinstall torch==2.1.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121 && \
     echo "🔧 Installing compatible torchvision..." && \
     pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
 
@@ -76,6 +74,7 @@ COPY handlers/unified_tts_handler.py /app/
 COPY verify_unified_installation.py /app/
 COPY test_higgs_setup.py /app/
 COPY test_pytorch_compatibility.py /app/
+COPY test_base_image.py /app/
 
 # Set the default handler
 ENV HANDLER_PATH=/app/unified_tts_handler.py

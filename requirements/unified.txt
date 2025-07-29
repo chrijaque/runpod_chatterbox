@@ -26,9 +26,10 @@ requests>=2.31.0
 # ===== AUDIO PROCESSING =====
 
 # PyTorch ecosystem (compatible with both models)
-torch==2.1.0
-torchaudio==2.1.0
-torchvision==0.16.0
+# Note: PyTorch 2.1.0 is already included in the base image
+# torch==2.1.0
+# torchaudio==2.1.0
+# torchvision==0.16.0
 
 # Audio processing libraries
 pydub==0.25.1
