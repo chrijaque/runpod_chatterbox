@@ -54,6 +54,31 @@ RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
     echo "🔍 Verifying PyTorch compatibility..." && \
     python -c "import torch; import torchvision; print(f'✅ PyTorch: {torch.__version__}'); print(f'✅ TorchVision: {torchvision.__version__}')"
 
+# Clone and install Higgs Audio from forked repository
+RUN echo "🔧 Cloning Higgs Audio repository..." && \
+    git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
+    echo "🔧 Installing Higgs Audio requirements..." && \
+    pip install -r /workspace/higgs-audio/requirements.txt && \
+    echo "🔧 Installing Higgs Audio in editable mode..." && \
+    pip install -e /workspace/higgs-audio && \
+    echo "🔍 Verifying Higgs Audio installation..." && \
+    python -c "import boson_multimodal; print('✅ boson_multimodal imported from:', boson_multimodal.__file__)" && \
+    echo "🔍 Verifying Higgs Audio components..." && \
+    python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
+
+# Download Higgs Audio models during build
+RUN echo "🔧 Downloading Higgs Audio models..." && \
+    echo "🔧 This may take a while (models are ~5.77 GB)..." && \
+    python -c "from transformers import AutoTokenizer, AutoModel; \
+        print('🔍 Downloading tokenizer...'); \
+        tokenizer = AutoTokenizer.from_pretrained('bosonai/higgs-audio-v2-tokenizer'); \
+        print('✅ Tokenizer downloaded successfully'); \
+        print('🔍 Downloading model...'); \
+        model = AutoModel.from_pretrained('bosonai/higgs-audio-v2-generation-3B-base'); \
+        print('✅ Model downloaded successfully'); \
+        print(f'✅ Model parameters: {sum(p.numel() for p in model.parameters()):,}')" && \
+    echo "✅ Higgs Audio models downloaded successfully"
+
 # Install NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
 
