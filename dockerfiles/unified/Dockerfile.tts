@@ -38,8 +38,13 @@ RUN git config --global --add safe.directory '*'
 # Setup environment for huggingface
 ENV HF_HOME=/root/.cache/huggingface
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with PyTorch version management
+RUN echo "🔧 Installing Python dependencies..." && \
+    pip install --no-cache-dir -r requirements.txt && \
+    echo "🔧 Fixing PyTorch version conflicts..." && \
+    pip install --force-reinstall torch==2.1.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121 && \
+    echo "🔧 Installing compatible torchvision..." && \
+    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
 
 # Clone and install ChatterboxTTS from forked repository
 RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
@@ -47,7 +52,9 @@ RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
     echo "🔧 Installing ChatterboxTTS in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying ChatterboxTTS installation..." && \
-    python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
+    python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)" && \
+    echo "🔍 Verifying PyTorch compatibility..." && \
+    python -c "import torch; import torchvision; print(f'✅ PyTorch: {torch.__version__}'); print(f'✅ TorchVision: {torchvision.__version__}')"
 
 # Install NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
@@ -68,6 +75,7 @@ COPY handlers/unified_tts_handler.py /app/
 # Copy verification scripts
 COPY verify_unified_installation.py /app/
 COPY test_higgs_setup.py /app/
+COPY test_pytorch_compatibility.py /app/
 
 # Set the default handler
 ENV HANDLER_PATH=/app/unified_tts_handler.py
