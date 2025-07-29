@@ -29,7 +29,8 @@ class RunPodClient:
         logger.info(f"📞 Headers configured: {bool(self.headers)}")
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
-    def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64") -> Dict[str, Any]:
+    def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64", 
+                          language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox") -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -55,7 +56,10 @@ class RunPodClient:
                     "name": name,
                     "audio_data": audio_base64,
                     "audio_format": audio_format,
-                    "responseFormat": response_format
+                    "responseFormat": response_format,
+                    "language": language,
+                    "is_kids_voice": is_kids_voice,
+                    "model_type": model_type
                 }
             }
             
@@ -104,7 +108,8 @@ class RunPodClient:
         )
 
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
-                                 language: str = "en", story_type: str = "user", is_kids_voice: bool = False) -> Dict[str, Any]:
+                                 language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
+                                 model_type: str = "chatterbox") -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -128,7 +133,8 @@ class RunPodClient:
                     "responseFormat": response_format,
                     "language": language,
                     "story_type": story_type,
-                    "is_kids_voice": is_kids_voice
+                    "is_kids_voice": is_kids_voice,
+                    "model_type": model_type
                 }
             }
             

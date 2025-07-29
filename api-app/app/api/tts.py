@@ -43,7 +43,8 @@ async def generate_tts(request: TTSGenerateRequest):
                 profile_base64=request.profile_base64,
                 language=request.language,
                 story_type=request.story_type,
-                is_kids_voice=request.is_kids_voice
+                is_kids_voice=request.is_kids_voice,
+                model_type=request.model_type
             )
             logger.info(f"✅ RunPod call completed successfully")
         except Exception as e:

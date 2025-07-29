@@ -35,7 +35,8 @@ async def clone_voice(request: VoiceCloneRequest):
             audio_base64=request.audio_data,
             audio_format=request.audio_format,
             language=request.language,
-            is_kids_voice=request.is_kids_voice
+            is_kids_voice=request.is_kids_voice,
+            model_type=request.model_type  # New: pass model type
         )
         
         if result.get("status") == "success":

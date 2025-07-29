@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
+import { ModelToggle, ModelType } from '@/components/ModelToggle';
 import { API_ENDPOINT, RUNPOD_API_KEY, VOICE_API } from '@/config/api';
 
 interface FileMetadata {
@@ -40,6 +41,7 @@ export default function Home() {
     const [audioFormat, setAudioFormat] = useState<string>('wav');
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
+    const [modelType, setModelType] = useState<ModelType>('chatterbox');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
@@ -268,6 +270,9 @@ export default function Home() {
                         audio_data: audioData,
                         audio_format: audioFormat,
                         responseFormat: "base64",  // Explicitly request JSON response
+                        language: language,
+                        is_kids_voice: isKidsVoice,
+                        model_type: modelType,  // New: include model type
                     },
                 }),
                 signal: abortControllerRef.current.signal,
@@ -401,6 +406,13 @@ export default function Home() {
                                 placeholder="Enter a name for this voice clone (e.g., John, Sarah, etc.)"
                             />
                         </div>
+
+                        {/* Model Selection */}
+                        <ModelToggle 
+                            modelType={modelType}
+                            onModelChange={setModelType}
+                            disabled={isLoading}
+                        />
 
                         <div>
                             <label className="form-label mb-2">

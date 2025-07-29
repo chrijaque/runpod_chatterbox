@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_API, TTS_GENERATIONS_API } from '@/config/api';
+import { ModelToggle, ModelType } from '@/components/ModelToggle';
 import Link from 'next/link';
 
 interface Voice {
@@ -46,6 +47,7 @@ export default function TTSPage() {
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
     const [storyType, setStoryType] = useState<string>('user');
+    const [modelType, setModelType] = useState<ModelType>('chatterbox');
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
     const [ttsGenerations, setTtsGenerations] = useState<TTSGeneration[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -220,7 +222,8 @@ export default function TTSPage() {
                 profile_base64: profileBase64, // Use the base64 string directly
                 language: language,
                 story_type: storyType,
-                is_kids_voice: isKidsVoice
+                is_kids_voice: isKidsVoice,
+                model_type: modelType  // New: include model type
             };
 
             console.log('📤 Sending organized TTS request to FastAPI...', {
@@ -370,6 +373,13 @@ export default function TTSPage() {
                                 {text.length} characters
                             </p>
                         </div>
+
+                        {/* Model Selection */}
+                        <ModelToggle 
+                            modelType={modelType}
+                            onModelChange={setModelType}
+                            disabled={isLoading}
+                        />
 
                         <div>
                             <label htmlFor="voice" className="form-label">
