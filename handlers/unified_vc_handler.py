@@ -17,7 +17,7 @@ sys.path.append('/app/handlers/chatterbox')
 sys.path.append('/app/handlers/higgs')
 logger.info(f"✅ Handler paths added: {sys.path[-2:]}")
 
-# Set up network volume paths
+# Set up network volume path
 logger.info("🔧 Setting up network volume paths...")
 os.environ["HF_HOME"] = "/runpod-volume"
 os.environ["TRANSFORMERS_CACHE"] = "/runpod-volume"
