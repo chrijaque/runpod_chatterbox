@@ -72,7 +72,7 @@ huggingface-hub>=0.15.0
 # Additional dependencies that might be needed for Higgs Audio
 einops>=0.6.0
 sentencepiece>=0.1.99
-protobuf>=3.20.0
+protobuf>=3.9.2,<3.20
 
 # Higgs Audio specific dependencies from the forked repository
 descript-audio-codec
