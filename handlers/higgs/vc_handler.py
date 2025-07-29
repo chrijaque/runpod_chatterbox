@@ -32,6 +32,27 @@ bucket = None
 MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
 AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
 
+# Add model download verification
+def verify_model_availability():
+    """Verify that Higgs Audio models are available"""
+    try:
+        from transformers import AutoTokenizer, AutoModel
+        logger.info("🔍 Checking model availability...")
+        
+        # Try to load the tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
+        logger.info(f"✅ Audio tokenizer loaded: {AUDIO_TOKENIZER_PATH}")
+        
+        # Try to load the model (this will download if not cached)
+        model = AutoModel.from_pretrained(MODEL_PATH)
+        logger.info(f"✅ Model loaded: {MODEL_PATH}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Model verification failed: {e}")
+        return False
+
 # Local directory paths
 VOICE_PROFILES_DIR = Path("/voice_profiles")
 VOICE_SAMPLES_DIR = Path("/voice_samples")
@@ -128,7 +149,14 @@ def initialize_model():
         logger.info(f"CUDA available: {torch.cuda.is_available()}")
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'}")
         
+        # Verify model availability first
+        if not verify_model_availability():
+            raise RuntimeError("Higgs Audio models not available")
+        
         # Initialize Higgs Audio serve engine
+        logger.info(f"🔧 Initializing serve engine with model: {MODEL_PATH}")
+        logger.info(f"🔧 Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
+        
         serve_engine = HiggsAudioServeEngine(
             model_path=MODEL_PATH,
             audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
@@ -142,6 +170,8 @@ def initialize_model():
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize Higgs Audio model: {e}")
+        import traceback
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
         raise
 
 def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarray]:
@@ -274,14 +304,19 @@ def handler(event):
     input_data = event.get('input', {})
     logger.info(f"📥 Input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'Not a dict'}")
     
-    # Extract parameters
-    voice_id = input_data.get('voice_id')
+    # Extract parameters (compatible with API format)
+    name = input_data.get('name')
     audio_data_base64 = input_data.get('audio_data')
     text = input_data.get('text', "Hello, this is a test of the voice cloning system.")
     
-    if not voice_id or not audio_data_base64:
-        logger.error("❌ Missing required parameters: voice_id and audio_data")
-        return {"status": "error", "message": "voice_id and audio_data are required"}
+    if not name or not audio_data_base64:
+        logger.error("❌ Missing required parameters: name and audio_data")
+        return {"status": "error", "message": "name and audio_data are required"}
+    
+    # Generate voice_id from name (compatible with ChatterboxTTS format)
+    import hashlib
+    voice_id = f"voice_{name.lower().replace(' ', '_')}"
+    logger.info(f"🎯 Generated voice_id: {voice_id} from name: {name}")
     
     try:
         # Decode audio data
@@ -290,7 +325,9 @@ def handler(event):
         
         # Initialize model if needed
         if not model:
+            logger.info("🔧 Initializing Higgs Audio model...")
             initialize_model()
+            logger.info("✅ Model initialization completed")
         
         start_time = time.time()
         
@@ -323,7 +360,7 @@ def handler(event):
         
         profile_metadata = {
             "voice_id": voice_id,
-            "voice_name": voice_id.replace('voice_', ''),
+            "voice_name": name,
             "created_date": str(int(start_time)),
             "language": "en",
             "is_kids_voice": "False",
@@ -344,7 +381,7 @@ def handler(event):
         
         sample_metadata = {
             "voice_id": voice_id,
-            "voice_name": voice_id.replace('voice_', ''),
+            "voice_name": name,
             "created_date": str(int(start_time)),
             "language": "en",
             "is_kids_voice": "False",
@@ -366,7 +403,7 @@ def handler(event):
         
         recorded_metadata = {
             "voice_id": voice_id,
-            "voice_name": voice_id.replace('voice_', ''),
+            "voice_name": name,
             "created_date": str(int(start_time)),
             "language": "en",
             "is_kids_voice": "False",

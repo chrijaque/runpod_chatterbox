@@ -56,6 +56,12 @@ tokenizers>=0.13.0
 # HuggingFace Hub
 huggingface-hub>=0.15.0
 
+# ===== CHATTERBOXTTS DEPENDENCIES =====
+
+# ChatterboxTTS specific dependencies
+# Note: These may need to be installed from the forked repository
+# git+https://github.com/your-forked-repo/chatterbox.git
+
 # ===== OPTIONAL PERFORMANCE OPTIMIZATIONS =====
 
 # Flash Attention (optional, for better performance)
