@@ -45,6 +45,12 @@ bucket = None
 MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
 AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
 
+# Set cache directory to match download_models.py
+import os
+os.environ["HF_HOME"] = "/app/models"
+os.environ["TRANSFORMERS_CACHE"] = "/app/models"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/app/models"
+
 logger.info(f"🔧 Model configuration:")
 logger.info(f"   - MODEL_PATH: {MODEL_PATH}")
 logger.info(f"   - AUDIO_TOKENIZER_PATH: {AUDIO_TOKENIZER_PATH}")
@@ -301,7 +307,18 @@ def initialize_model():
         logger.info("🔍 Verifying model availability...")
         if not verify_model_availability():
             logger.error("❌ Model verification failed")
-            raise RuntimeError("Higgs Audio models not available")
+            logger.info("🔧 Attempting to download models at runtime...")
+            # Try to download models if not available
+            try:
+                from transformers import AutoTokenizer, AutoModel
+                logger.info("🔍 Downloading tokenizer...")
+                tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
+                logger.info("🔍 Downloading model...")
+                model = AutoModel.from_pretrained(MODEL_PATH)
+                logger.info("✅ Models downloaded successfully at runtime")
+            except Exception as e:
+                logger.error(f"❌ Runtime model download failed: {e}")
+                raise RuntimeError("Higgs Audio models not available and runtime download failed")
         
         # Initialize Higgs Audio serve engine
         logger.info(f"🔧 Initializing serve engine...")
@@ -309,13 +326,20 @@ def initialize_model():
         logger.info(f"   - Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
         logger.info(f"   - Device: {device}")
         
-        serve_engine = HiggsAudioServeEngine(
-            model_path=MODEL_PATH,
-            audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
-            device=device
-        )
-        
-        logger.info(f"✅ Serve engine initialized successfully: {type(serve_engine)}")
+        try:
+            serve_engine = HiggsAudioServeEngine(
+                model_path=MODEL_PATH,
+                audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
+                device=device
+            )
+            
+            logger.info(f"✅ Serve engine initialized successfully: {type(serve_engine)}")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize serve engine: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            import traceback
+            logger.error(f"❌ Full serve engine initialization traceback: {traceback.format_exc()}")
+            raise RuntimeError(f"Failed to initialize Higgs Audio serve engine: {e}")
         
         model = serve_engine  # For compatibility with existing code
         logger.info("✅ Higgs Audio model initialized successfully")
@@ -662,7 +686,7 @@ def handler(event):
         upload_time = time.time() - upload_start_time
         logger.info(f"✅ All files uploaded to Firebase successfully in {upload_time:.2f}s")
         
-        # Prepare response
+        # Prepare response (compatible with ChatterboxTTS format)
         response = {
             "status": "success",
             "voice_id": voice_id,
@@ -673,7 +697,12 @@ def handler(event):
             "sample_url": sample_url,
             "recorded_url": recorded_url,
             "generation_time": generation_time,
-            "model": "higgs_audio_v2"
+            "model": "higgs_audio_v2",
+            # Add ChatterboxTTS compatibility fields
+            "sample_audio_path": sample_path,
+            "embedding_path": profile_path,
+            "voice_name": name,
+            "created_date": int(start_time)
         }
         
         logger.info("✅ Voice cloning process completed successfully")

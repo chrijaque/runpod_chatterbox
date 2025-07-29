@@ -32,6 +32,12 @@ bucket = None
 MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
 AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
 
+# Set cache directory to match download_models.py
+import os
+os.environ["HF_HOME"] = "/app/models"
+os.environ["TRANSFORMERS_CACHE"] = "/app/models"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/app/models"
+
 # Local directory paths
 TTS_GENERATED_DIR = Path("/tts_generated")
 TEMP_VOICE_DIR = Path("/temp_voice")

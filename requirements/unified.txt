@@ -56,8 +56,8 @@ accelerate>=0.20.0
 datasets>=2.10.0
 tokenizers>=0.13.0
 
-# Pin ONNX to compatible version
-onnx==1.14.0
+# Note: Let pip resolve ONNX version to avoid conflicts
+# onnx==1.14.0
 
 # HuggingFace Hub
 huggingface-hub>=0.15.0
@@ -75,8 +75,8 @@ huggingface-hub>=0.15.0
 # Additional dependencies that might be needed for Higgs Audio
 einops>=0.6.0
 sentencepiece>=0.1.99
-# Note: Pin protobuf to version compatible with ONNX
-protobuf==3.20.3
+# Note: Let pip resolve protobuf version to avoid conflicts
+# protobuf==3.20.3
 
 # Higgs Audio specific dependencies from the forked repository
 descript-audio-codec

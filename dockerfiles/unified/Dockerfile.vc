@@ -20,8 +20,9 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
-COPY requirements/unified.txt /app/requirements.txt
+# Copy requirements files
+COPY requirements/chatterbox_only.txt /app/requirements_chatterbox.txt
+COPY requirements/higgs_only.txt /app/requirements_higgs.txt
 
 # Install system dependencies for audio processing
 RUN apt-get update && apt-get install -y \
@@ -38,17 +39,20 @@ RUN git config --global --add safe.directory '*'
 # Setup environment for huggingface
 ENV HF_HOME=/root/.cache/huggingface
 
-# Install Python dependencies
-RUN echo "🔧 Installing Python dependencies..." && \
-    pip install --no-cache-dir -r requirements.txt && \
+# Install base dependencies (common to both models)
+RUN echo "🔧 Installing base dependencies..." && \
+    pip install --no-cache-dir runpod>=1.5.0 && \
+    pip install --no-cache-dir firebase-admin>=6.2.0 google-cloud-storage>=2.10.0 && \
+    pip install --no-cache-dir pydub==0.25.1 librosa>=0.10.0 soundfile>=0.12.0 && \
+    pip install --no-cache-dir numpy>=1.21.0 scipy>=1.9.0 && \
     echo "🔧 Installing compatible torchvision..." && \
-    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121 && \
-    echo "🔧 Checking protobuf version..." && \
-    python -c "import google.protobuf; print(f'✅ Protobuf version: {google.protobuf.__version__}')"
+    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
 
 # Clone and install ChatterboxTTS from forked repository
 RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    echo "🔧 Installing ChatterboxTTS dependencies..." && \
+    pip install --no-cache-dir -r /app/requirements_chatterbox.txt && \
     echo "🔧 Installing ChatterboxTTS in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying ChatterboxTTS installation..." && \
@@ -59,8 +63,8 @@ RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
 # Clone and install Higgs Audio from forked repository
 RUN echo "🔧 Cloning Higgs Audio repository..." && \
     git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
-    echo "🔧 Installing Higgs Audio requirements..." && \
-    pip install -r /workspace/higgs-audio/requirements.txt && \
+    echo "🔧 Installing Higgs Audio dependencies..." && \
+    pip install --no-cache-dir -r /app/requirements_higgs.txt && \
     echo "🔧 Installing Higgs Audio in editable mode..." && \
     pip install -e /workspace/higgs-audio && \
     echo "🔍 Verifying Higgs Audio installation..." && \
@@ -68,17 +72,13 @@ RUN echo "🔧 Cloning Higgs Audio repository..." && \
     echo "🔍 Verifying Higgs Audio components..." && \
     python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
 
+# Copy model download script
+COPY download_models.py /app/
+
 # Download Higgs Audio models during build
 RUN echo "🔧 Downloading Higgs Audio models..." && \
     echo "🔧 This may take a while (models are ~5.77 GB)..." && \
-    python -c "from transformers import AutoTokenizer, AutoModel; \
-        print('🔍 Downloading tokenizer...'); \
-        tokenizer = AutoTokenizer.from_pretrained('bosonai/higgs-audio-v2-tokenizer'); \
-        print('✅ Tokenizer downloaded successfully'); \
-        print('🔍 Downloading model...'); \
-        model = AutoModel.from_pretrained('bosonai/higgs-audio-v2-generation-3B-base'); \
-        print('✅ Model downloaded successfully'); \
-        print(f'✅ Model parameters: {sum(p.numel() for p in model.parameters()):,}')" && \
+    python /app/download_models.py && \
     echo "✅ Higgs Audio models downloaded successfully"
 
 # Install NLTK data

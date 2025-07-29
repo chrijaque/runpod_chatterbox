@@ -968,6 +968,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
             'created_date': datetime.now().isoformat(),
             'text_length': len(text),
             'generation_time': str(generation_time),
+            'model': 'chatterbox_tts',
             'Access-Control-Allow-Origin': '*',
             'Cache-Control': 'public, max-age=3600'
         }
@@ -980,10 +981,14 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
         )
         logger.info(f"🎵 TTS story uploaded: {audio_path_firebase}")
         
-        # Return response
+        # Return response (compatible with Higgs Audio format)
         response = {
             "status": "success",
+            "voice_id": voice_id,
             "audio_path": audio_path_firebase if audio_uploaded else None,
+            "audio_url": audio_path_firebase if audio_uploaded else None,  # For compatibility
+            "generation_time": generation_time,
+            "model": "chatterbox_tts",
             "metadata": {
                 "voice_id": voice_id,
                 "voice_name": voice_id.replace('voice_', ''),

@@ -529,6 +529,7 @@ def handle_voice_clone_request(input, responseFormat):
                 'format': '160k_mp3',
                 'timestamp': timestamp,
                 'created_date': datetime.now().isoformat(),
+                'model': 'chatterbox_tts',
                 'Access-Control-Allow-Origin': '*',
                 'Cache-Control': 'public, max-age=3600'
             }
@@ -622,6 +623,7 @@ def handle_voice_clone_request(input, responseFormat):
                 'timestamp': timestamp,
                 'created_date': datetime.now().isoformat(),
                 'generation_method': generation_method,
+                'model': 'chatterbox_tts',
                 'Access-Control-Allow-Origin': '*',
                 'Cache-Control': 'public, max-age=3600'
             }
@@ -675,6 +677,7 @@ def handle_voice_clone_request(input, responseFormat):
                 'is_kids_voice': str(is_kids_voice),
                 'format': 'npy',
                 'created_date': datetime.now().isoformat(),
+                'model': 'chatterbox_tts',
                 'Access-Control-Allow-Origin': '*',
                 'Cache-Control': 'public, max-age=3600'
             }
@@ -699,12 +702,24 @@ def handle_voice_clone_request(input, responseFormat):
     logger.info(f"🎵 Recorded audio uploaded: {'YES' if recorded_audio_path else 'NO'}")
     logger.info(f"🎵 Voice sample uploaded: {'YES' if sample_audio_path else 'NO'}")
     
-    # Return file paths instead of URLs
+    # Return response (compatible with Higgs Audio format)
     response = {
         "status": "success",
+        "voice_id": voice_id,
         "profile_path": profile_path_firebase,
-        "recorded_audio_path": recorded_audio_path,
+        "sample_path": sample_audio_path,
+        "recorded_path": recorded_audio_path,
+        "profile_url": profile_path_firebase,  # Use path as URL for compatibility
+        "sample_url": sample_audio_path,  # Use path as URL for compatibility
+        "recorded_url": recorded_audio_path,  # Use path as URL for compatibility
+        "generation_time": time.time() - start_time if 'start_time' in locals() else 0,
+        "model": "chatterbox_tts",
+        # Add Higgs Audio compatibility fields
         "sample_audio_path": sample_audio_path,
+        "embedding_path": profile_path_firebase,
+        "voice_name": name,
+        "created_date": int(time.time()),
+        # Keep original metadata for debugging
         "metadata": {
             "sample_rate": model.sr,
             "audio_shape": list(audio_tensor.shape) if audio_tensor is not None else None,
