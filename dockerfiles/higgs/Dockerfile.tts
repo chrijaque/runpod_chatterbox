@@ -1,4 +1,4 @@
-# Lightweight Dockerfile for Unified TTS Handler with Network Volume
+# Higgs Audio TTS Handler Dockerfile
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 # Set environment variables
@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy lightweight requirements
-COPY requirements/lightweight.txt /app/requirements.txt
+# Copy Higgs Audio requirements
+COPY requirements/higgs_only.txt /app/requirements.txt
 
 # Install system dependencies for audio processing
 RUN apt-get update && apt-get install -y \
@@ -33,38 +33,27 @@ RUN apt-get update && apt-get install -y \
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
 
-# Setup environment for huggingface (network volume for Higgs, local for ChatterboxTTS)
-ENV HF_HOME=/app/models
-ENV TRANSFORMERS_CACHE=/app/models
-ENV HUGGINGFACE_HUB_CACHE=/app/models
+# Setup environment for Higgs Audio (network volume)
+ENV HF_HOME=/runpod-volume
+ENV TRANSFORMERS_CACHE=/runpod-volume
+ENV HUGGINGFACE_HUB_CACHE=/runpod-volume
+
+# Install protobuf first to avoid conflicts
+RUN echo "🔧 Installing protobuf compatibility layer..." && \
+    pip install --no-cache-dir "protobuf>=3.9.2,<3.20"
 
 # Install Python dependencies
-RUN echo "🔧 Installing lightweight Python dependencies..." && \
+RUN echo "🔧 Installing Higgs Audio Python dependencies..." && \
     pip install --no-cache-dir -r requirements.txt && \
     echo "🔧 Installing compatible torchvision..." && \
     pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
-
-# Clone and install ChatterboxTTS from forked repository
-RUN echo "🔧 Cloning ChatterboxTTS repository..." && \
-    git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
-    echo "🔧 Installing ChatterboxTTS in editable mode..." && \
-    pip install -e /workspace/chatterbox_embed && \
-    echo "🔍 Verifying ChatterboxTTS installation..." && \
-    python -c "import chatterbox; print('✅ chatterbox imported from:', chatterbox.__file__)"
-
-# Pre-download ChatterboxTTS models during build
-RUN echo "🔧 Pre-downloading ChatterboxTTS models..." && \
-    mkdir -p /app/models && \
-    python -c "from chatterbox.tts import ChatterboxTTS; print('✅ ChatterboxTTS models downloaded')" && \
-    echo "✅ ChatterboxTTS models pre-loaded"
 
 # Clone and install Higgs Audio from forked repository
 RUN echo "🔧 Cloning Higgs Audio repository..." && \
     git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
     echo "🔧 Installing Higgs Audio requirements..." && \
     pip install -r /workspace/higgs-audio/requirements.txt && \
-    echo "🔧 Installing descript-audio-codec with compatible protobuf..." && \
-    pip install --no-cache-dir "protobuf>=3.9.2,<3.20" && \
+    echo "🔧 Installing descript-audio-codec..." && \
     pip install --no-cache-dir descript-audio-codec && \
     echo "🔧 Installing Higgs Audio in editable mode..." && \
     pip install -e /workspace/higgs-audio && \
@@ -74,29 +63,24 @@ RUN echo "🔧 Cloning Higgs Audio repository..." && \
     python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
 
 # Note: Higgs Audio models will be mounted from network volume at runtime
-RUN echo "🔧 Lightweight image - Higgs models will be mounted from network volume"
+RUN echo "🔧 Higgs Audio models will be mounted from network volume"
 
 # Install NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
 
-# Create directories for both models
-RUN mkdir -p /app/handlers/chatterbox \
-    && mkdir -p /app/handlers/higgs \
+# Create directories
+RUN mkdir -p /app/handlers/higgs_only \
     && mkdir -p /tts_generated \
     && mkdir -p /temp_voice
 
-# Copy handlers
-COPY handlers/chatterbox/tts_handler.py /app/handlers/chatterbox/
-COPY handlers/higgs/tts_handler.py /app/handlers/higgs/
-
-# Copy unified handler
-COPY handlers/unified_tts_handler.py /app/
+# Copy Higgs Audio TTS handler
+COPY handlers/higgs_only/tts_handler.py /app/handlers/higgs_only/
 
 # Set the default handler
-ENV HANDLER_PATH=/app/unified_tts_handler.py
+ENV HANDLER_PATH=/app/handlers/higgs_only/tts_handler.py
 
 # Expose port (if needed for debugging)
 EXPOSE 8000
 
 # Default command
-CMD ["python", "/app/unified_tts_handler.py"] 
+CMD ["python", "/app/handlers/higgs_only/tts_handler.py"] 

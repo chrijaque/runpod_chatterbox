@@ -91,131 +91,17 @@ except Exception as e:
     serve_engine = None
     model = None
 
-# Add model download verification with detailed logging
-def verify_model_availability():
-    """Verify that Higgs Audio models are available with detailed logging"""
-    logger.info("🔍 Starting model availability verification...")
-    
-    # Check disk space first
-    try:
-        import shutil
-        total, used, free = shutil.disk_usage("/")
-        logger.info(f"🔍 Disk space check:")
-        logger.info(f"   - Total: {total // (1024**3)} GB")
-        logger.info(f"   - Used: {used // (1024**3)} GB")
-        logger.info(f"   - Free: {free // (1024**3)} GB")
-        
-        if free < 10 * (1024**3):  # Less than 10GB free
-            logger.warning("⚠️ Low disk space - may cause model download issues")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not check disk space: {e}")
-    
-    # Check network connectivity
-    try:
-        import requests
-        logger.info("🔍 Testing network connectivity to HuggingFace...")
-        response = requests.get("https://huggingface.co", timeout=10)
-        logger.info(f"✅ Network connectivity: {response.status_code}")
-    except Exception as e:
-        logger.error(f"❌ Network connectivity test failed: {e}")
-    
-    # Check HuggingFace cache directory
-    try:
-        from huggingface_hub import HF_HUB_CACHE
-        logger.info(f"🔍 HuggingFace cache directory: {HF_HUB_CACHE}")
-        import os
-        if os.path.exists(HF_HUB_CACHE):
-            cache_size = sum(os.path.getsize(os.path.join(dirpath, filename))
-                for dirpath, dirnames, filenames in os.walk(HF_HUB_CACHE)
-                for filename in filenames)
-            logger.info(f"✅ Cache directory exists, size: {cache_size // (1024**2)} MB")
-        else:
-            logger.warning("⚠️ HuggingFace cache directory does not exist")
-    except Exception as e:
-        logger.warning(f"⚠️ Could not check cache directory: {e}")
-    
-    try:
-        from transformers import AutoTokenizer, AutoModel
-        logger.info("✅ Successfully imported transformers")
-        logger.info(f"✅ Transformers version: {transformers.__version__}")
-        
-        # Try to load the tokenizer
-        logger.info(f"🔍 Attempting to load tokenizer: {AUDIO_TOKENIZER_PATH}")
-        logger.info(f"🔍 This may take a while if downloading...")
-        
-        tokenizer = AutoTokenizer.from_pretrained(AUDIO_TOKENIZER_PATH)
-        logger.info(f"✅ Audio tokenizer loaded successfully: {type(tokenizer)}")
-        logger.info(f"✅ Tokenizer vocab size: {tokenizer.vocab_size if hasattr(tokenizer, 'vocab_size') else 'N/A'}")
-        
-        # Try to load the model (this will download if not cached)
-        logger.info(f"🔍 Attempting to load model: {MODEL_PATH}")
-        logger.info(f"🔍 This may take a while if downloading (model is ~7GB)...")
-        
-        model = AutoModel.from_pretrained(MODEL_PATH)
-        logger.info(f"✅ Model loaded successfully: {type(model)}")
-        logger.info(f"✅ Model device: {next(model.parameters()).device if hasattr(model, 'parameters') else 'N/A'}")
-        
-        # Check model size
-        try:
-            param_count = sum(p.numel() for p in model.parameters())
-            logger.info(f"✅ Model parameter count: {param_count:,}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not count model parameters: {e}")
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"❌ Model verification failed: {e}")
-        logger.error(f"❌ Error type: {type(e)}")
-        logger.error(f"❌ Error details: {str(e)}")
-        
-        # Check if it's a network error
-        if "Connection" in str(e) or "timeout" in str(e).lower():
-            logger.error("❌ This appears to be a network connectivity issue")
-        elif "disk space" in str(e).lower() or "no space" in str(e).lower():
-            logger.error("❌ This appears to be a disk space issue")
-        elif "not found" in str(e).lower():
-            logger.error("❌ This appears to be a model path issue")
-        elif "authentication" in str(e).lower() or "token" in str(e).lower():
-            logger.error("❌ This appears to be an authentication issue")
-        
-        import traceback
-        logger.error(f"❌ Full model verification traceback: {traceback.format_exc()}")
-        return False
-
-# Local directory paths
-VOICE_PROFILES_DIR = Path("/voice_profiles")
-VOICE_SAMPLES_DIR = Path("/voice_samples")
-TEMP_VOICE_DIR = Path("/temp_voice")
-
-logger.info(f"🔧 Directory configuration:")
-logger.info(f"   - VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
-logger.info(f"   - VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
-logger.info(f"   - TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
-
-# Initialize Higgs Audio model
-model = None
-serve_engine = None
-
 def initialize_firebase():
-    """Initialize Firebase Storage client with detailed logging"""
+    """Initialize Firebase Storage client"""
     global storage_client, bucket
-    
-    logger.info("🔍 Initializing Firebase Storage...")
     
     try:
         from google.cloud import storage
         from google.oauth2 import service_account
         
-        logger.info("✅ Successfully imported Google Cloud Storage")
-        
         # Get Firebase credentials from environment
         firebase_creds = os.getenv('RUNPOD_SECRET_Firebase')
         bucket_name = os.getenv('FIREBASE_STORAGE_BUCKET')
-        
-        logger.info(f"🔍 Environment variables:")
-        logger.info(f"   - RUNPOD_SECRET_Firebase: {'SET' if firebase_creds else 'NOT SET'}")
-        logger.info(f"   - FIREBASE_STORAGE_BUCKET: {bucket_name}")
         
         if not firebase_creds or not bucket_name:
             logger.error("❌ Firebase credentials or bucket name not found in environment")
@@ -223,83 +109,49 @@ def initialize_firebase():
         
         # Parse Firebase credentials
         import json
-        logger.info("🔍 Parsing Firebase credentials...")
         creds_dict = json.loads(firebase_creds)
-        logger.info(f"✅ Firebase credentials parsed successfully")
-        logger.info(f"✅ Credentials keys: {list(creds_dict.keys())}")
         
         # Create credentials object
-        logger.info("🔍 Creating service account credentials...")
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
-        logger.info(f"✅ Service account credentials created: {credentials}")
         
         # Initialize storage client
-        logger.info("🔍 Initializing storage client...")
         storage_client = storage.Client(credentials=credentials)
         bucket = storage_client.bucket(bucket_name)
         
         logger.info(f"✅ Firebase initialized successfully")
         logger.info(f"✅ Connected to bucket: {bucket_name}")
-        logger.info(f"✅ Storage client: {storage_client}")
-        logger.info(f"✅ Bucket: {bucket}")
-        
         return True
         
     except Exception as e:
         logger.error(f"❌ Failed to initialize Firebase: {e}")
-        logger.error(f"❌ Error type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Full Firebase initialization traceback: {traceback.format_exc()}")
         return False
 
 def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
-    """Upload data to Firebase Storage with detailed logging"""
+    """Upload data to Firebase Storage"""
     global bucket
     
-    logger.info(f"🔍 Starting Firebase upload...")
-    logger.info(f"   - Destination: {destination_blob_name}")
-    logger.info(f"   - Content type: {content_type}")
-    logger.info(f"   - Data size: {len(data)} bytes")
-    logger.info(f"   - Metadata: {metadata}")
-    
     if not bucket:
-        logger.info("🔍 Bucket not initialized, attempting to initialize Firebase...")
         if not initialize_firebase():
-            logger.error("❌ Failed to initialize Firebase for upload")
             return None
     
     try:
-        logger.info("🔍 Creating blob...")
         blob = bucket.blob(destination_blob_name)
-        logger.info(f"✅ Blob created: {blob}")
         
         # Set metadata if provided
         if metadata:
-            logger.info("🔍 Setting blob metadata...")
             blob.metadata = metadata
-            logger.info(f"✅ Metadata set: {metadata}")
         
         # Upload the data
-        logger.info("🔍 Uploading data to Firebase...")
         blob.upload_from_string(data, content_type=content_type)
-        logger.info(f"✅ Data uploaded successfully")
         
         # Make the blob publicly accessible
-        logger.info("🔍 Making blob publicly accessible...")
         blob.make_public()
-        logger.info(f"✅ Blob made public")
         
-        public_url = blob.public_url
-        logger.info(f"✅ Upload completed successfully")
-        logger.info(f"✅ Public URL: {public_url}")
-        
-        return public_url
+        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name}")
+        return blob.public_url
         
     except Exception as e:
         logger.error(f"❌ Failed to upload to Firebase: {e}")
-        logger.error(f"❌ Error type: {type(e)}")
-        import traceback
-        logger.error(f"❌ Full upload traceback: {traceback.format_exc()}")
         return None
 
 def initialize_model():
@@ -327,69 +179,24 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         initialize_model()
     
     try:
-        # Save audio data to temporary file
-        logger.info("🔍 Creating temporary audio file...")
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_file.write(audio_data)
-            temp_audio_path = temp_file.name
+        # Convert audio data to numpy array
+        import io
+        import soundfile as sf
         
-        logger.info(f"✅ Temporary file created: {temp_audio_path}")
+        # Read audio data
+        audio, sample_rate = sf.read(io.BytesIO(audio_data))
         
-        # Create system prompt for voice cloning
-        system_prompt = (
-            "Generate audio following instruction.\n\n"
-            "<|scene_desc_start|>\n"
-            "Audio is recorded from a quiet room.\n"
-            "<|scene_desc_end|>"
-        )
+        # Ensure audio is mono
+        if len(audio.shape) > 1:
+            audio = audio.mean(axis=1)
         
-        logger.info(f"🔍 System prompt: {system_prompt}")
+        logger.info(f"✅ Audio loaded: shape={audio.shape}, sample_rate={sample_rate}")
         
-        # Create messages for voice profile extraction
-        logger.info("🔍 Creating messages for voice profile extraction...")
-        messages = [
-            Message(role="system", content=system_prompt),
-            Message(
-                role="user", 
-                content=AudioContent(audio=audio_data, sampling_rate=24000)  # Default sample rate
-            )
-        ]
-        
-        logger.info(f"✅ Messages created: {len(messages)} messages")
-        logger.info(f"✅ Message types: {[type(msg.content) for msg in messages]}")
-        
-        # Generate voice profile
-        logger.info("🔍 Generating voice profile using serve engine...")
-        logger.info(f"   - Max new tokens: 512")
-        logger.info(f"   - Temperature: 0.3")
-        logger.info(f"   - Top p: 0.95")
-        logger.info(f"   - Top k: 50")
-        
-        response: HiggsAudioResponse = serve_engine.generate(
-            chat_ml_sample=ChatMLSample(messages=messages),
-            max_new_tokens=512,
-            temperature=0.3,
-            top_p=0.95,
-            top_k=50,
-            stop_strings=["<|end_of_text|>", "<|eot_id|>"]
-        )
-        
-        logger.info(f"✅ Voice profile generation completed")
-        logger.info(f"✅ Response type: {type(response)}")
-        
-        # Extract voice profile from response
-        # Note: This is a simplified approach - actual voice profile extraction
-        # would require more sophisticated processing of the model's internal states
-        
-        # For now, we'll create a placeholder voice profile
-        # In a real implementation, you'd extract the actual voice embeddings
-        logger.info("🔍 Creating placeholder voice profile...")
-        voice_profile = np.random.randn(1024).astype(np.float32)  # Placeholder
+        # Create voice profile using Higgs Audio
+        # This is a simplified version - actual implementation would use Higgs Audio's voice extraction
+        voice_profile = np.array(audio, dtype=np.float32)
         
         logger.info(f"✅ Voice profile extracted: shape={voice_profile.shape}")
-        logger.info(f"✅ Voice profile dtype: {voice_profile.dtype}")
-        logger.info(f"✅ Voice profile min/max: {voice_profile.min():.4f}/{voice_profile.max():.4f}")
-        
         return voice_profile
         
     except Exception as e:
@@ -398,15 +205,6 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         import traceback
         logger.error(f"❌ Full voice profile extraction traceback: {traceback.format_exc()}")
         return None
-    finally:
-        # Clean up temporary file
-        if 'temp_audio_path' in locals():
-            try:
-                logger.info(f"🔍 Cleaning up temporary file: {temp_audio_path}")
-                os.unlink(temp_audio_path)
-                logger.info(f"✅ Temporary file cleaned up")
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to clean up temporary file: {e}")
 
 def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -> Optional[bytes]:
     """Generate voice sample using Higgs Audio with detailed logging"""
@@ -414,16 +212,14 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
     
     logger.info(f"🔍 Starting voice sample generation for: {voice_id}")
     logger.info(f"   - Voice profile shape: {voice_profile.shape}")
-    logger.info(f"   - Text: {text}")
+    logger.info(f"   - Text: {text[:50]}...")
     
     if not serve_engine:
-        logger.info("🔍 Serve engine not initialized, initializing...")
-        initialize_model()
+        logger.error("❌ Serve engine not pre-loaded")
+        return None
     
     try:
-        logger.info(f"🎤 Generating voice sample for: {voice_id}")
-        
-        # Create system prompt with voice profile
+        # Create system prompt
         system_prompt = (
             "Generate audio following instruction.\n\n"
             "<|scene_desc_start|>\n"
@@ -431,25 +227,13 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             "<|scene_desc_end|>"
         )
         
-        logger.info(f"🔍 System prompt: {system_prompt}")
-        
         # Create messages for TTS generation
-        logger.info("🔍 Creating messages for TTS generation...")
         messages = [
             Message(role="system", content=system_prompt),
             Message(role="user", content=text)
         ]
         
-        logger.info(f"✅ Messages created: {len(messages)} messages")
-        logger.info(f"✅ Message types: {[type(msg.content) for msg in messages]}")
-        
-        # Generate audio
-        logger.info("🔍 Generating audio using serve engine...")
-        logger.info(f"   - Max new tokens: 1024")
-        logger.info(f"   - Temperature: 0.3")
-        logger.info(f"   - Top p: 0.95")
-        logger.info(f"   - Top k: 50")
-        
+        # Generate audio using Higgs Audio
         response: HiggsAudioResponse = serve_engine.generate(
             chat_ml_sample=ChatMLSample(messages=messages),
             max_new_tokens=1024,
@@ -459,33 +243,20 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             stop_strings=["<|end_of_text|>", "<|eot_id|>"]
         )
         
-        logger.info(f"✅ Audio generation completed")
-        logger.info(f"✅ Response type: {type(response)}")
-        
         # Convert audio to bytes
-        logger.info("🔍 Converting audio to bytes...")
         import torch
         audio_tensor = torch.from_numpy(response.audio)
         
-        logger.info(f"✅ Audio tensor created: {audio_tensor.shape}")
-        logger.info(f"✅ Audio tensor dtype: {audio_tensor.dtype}")
-        logger.info(f"✅ Sampling rate: {response.sampling_rate}")
-        
         # Save to temporary file and read as bytes
-        logger.info("🔍 Saving audio to temporary file...")
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
             import torchaudio
             torchaudio.save(temp_file.name, audio_tensor.unsqueeze(0), response.sampling_rate)
-            logger.info(f"✅ Audio saved to temporary file: {temp_file.name}")
             
             with open(temp_file.name, 'rb') as f:
                 audio_bytes = f.read()
             
-            logger.info(f"✅ Audio bytes read: {len(audio_bytes)} bytes")
-            
             # Clean up
             os.unlink(temp_file.name)
-            logger.info(f"✅ Temporary file cleaned up")
         
         logger.info(f"✅ Voice sample generated: {len(audio_bytes)} bytes")
         return audio_bytes
@@ -597,31 +368,12 @@ def handler(event):
             profile_metadata
         )
         
-        # Upload voice sample
-        sample_filename = f"{voice_id}_sample_{timestamp}.mp3"
-        sample_path = f"audio/voices/en/samples/{sample_filename}"
+        if not profile_url:
+            logger.error("❌ Failed to upload voice profile")
+            return {"status": "error", "message": "Failed to upload voice profile"}
         
-        sample_metadata = {
-            "voice_id": voice_id,
-            "voice_name": name,
-            "created_date": str(int(start_time)),
-            "language": "en",
-            "is_kids_voice": "False",
-            "file_type": "voice_sample",
-            "model": "higgs_audio_v2",
-            "format": "96k_mp3"
-        }
-        
-        logger.info(f"🔍 Uploading voice sample: {sample_path}")
-        sample_url = upload_to_firebase(
-            sample_audio,
-            sample_path,
-            "audio/mpeg",
-            sample_metadata
-        )
-        
-        # Upload original audio
-        recorded_filename = f"{voice_id}_{timestamp}.mp3"
+        # Upload recorded audio
+        recorded_filename = f"{voice_id}_{timestamp}_recorded.wav"
         recorded_path = f"audio/voices/en/recorded/{recorded_filename}"
         
         recorded_metadata = {
@@ -631,49 +383,78 @@ def handler(event):
             "language": "en",
             "is_kids_voice": "False",
             "file_type": "recorded_audio",
-            "model": "higgs_audio_v2",
-            "format": "160k_mp3"
+            "model": "higgs_audio_v2"
         }
         
-        logger.info(f"🔍 Uploading original audio: {recorded_path}")
+        logger.info(f"🔍 Uploading recorded audio: {recorded_path}")
         recorded_url = upload_to_firebase(
             audio_data,
             recorded_path,
-            "audio/mpeg",
+            "audio/wav",
             recorded_metadata
         )
         
-        upload_time = time.time() - upload_start_time
-        logger.info(f"✅ All files uploaded to Firebase successfully in {upload_time:.2f}s")
+        if not recorded_url:
+            logger.error("❌ Failed to upload recorded audio")
+            return {"status": "error", "message": "Failed to upload recorded audio"}
         
-        # Prepare response (compatible with ChatterboxTTS format)
-        response = {
-            "status": "success",
+        # Upload sample audio
+        sample_filename = f"{voice_id}_{timestamp}_sample.wav"
+        sample_path = f"audio/voices/en/samples/{sample_filename}"
+        
+        sample_metadata = {
             "voice_id": voice_id,
-            "profile_path": profile_path,
-            "sample_path": sample_path,
-            "recorded_path": recorded_path,
-            "profile_url": profile_url,
-            "sample_url": sample_url,
-            "recorded_url": recorded_url,
-            "generation_time": generation_time,
-            "model": "higgs_audio_v2",
-            # Add ChatterboxTTS compatibility fields
-            "sample_audio_path": sample_path,
-            "embedding_path": profile_path,
             "voice_name": name,
-            "created_date": int(start_time)
+            "created_date": str(int(start_time)),
+            "language": "en",
+            "is_kids_voice": "False",
+            "file_type": "sample_audio",
+            "model": "higgs_audio_v2"
         }
         
-        logger.info("✅ Voice cloning process completed successfully")
-        logger.info(f"📤 Returning response with {len(response)} keys")
-        logger.info(f"📤 Response keys: {list(response.keys())}")
+        logger.info(f"🔍 Uploading sample audio: {sample_path}")
+        sample_url = upload_to_firebase(
+            sample_audio,
+            sample_path,
+            "audio/wav",
+            sample_metadata
+        )
         
-        return response
+        if not sample_url:
+            logger.error("❌ Failed to upload sample audio")
+            return {"status": "error", "message": "Failed to upload sample audio"}
+        
+        upload_time = time.time() - upload_start_time
+        logger.info(f"✅ Firebase upload completed in {upload_time:.2f}s")
+        
+        # Return success response
+        logger.info("✅ Voice cloning completed successfully")
+        
+        return {
+            "status": "success",
+            "profile_path": profile_path,
+            "recorded_audio_path": recorded_path,
+            "sample_audio_path": sample_path,
+            "metadata": {
+                "voice_id": voice_id,
+                "voice_name": name,
+                "created_date": int(start_time),
+                "language": "en",
+                "is_kids_voice": False,
+                "model": "higgs_audio_v2",
+                "generation_time": generation_time,
+                "upload_time": upload_time
+            }
+        }
         
     except Exception as e:
         logger.error(f"❌ Voice cloning failed: {e}")
         logger.error(f"❌ Error type: {type(e)}")
         import traceback
         logger.error(f"❌ Full voice cloning traceback: {traceback.format_exc()}")
-        return {"status": "error", "message": f"Voice cloning failed: {str(e)}"} 
+        return {"status": "error", "message": f"Voice cloning failed: {str(e)}"}
+
+# Register the handler
+logger.info("🔧 Registering Higgs Audio VC handler with RunPod...")
+runpod.serverless.start({"handler": handler})
+logger.info("✅ Higgs Audio VC handler registered successfully") 

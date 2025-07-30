@@ -82,8 +82,10 @@ Required for the FastAPI server (`api-app/`):
 ```bash
 export FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
 export RUNPOD_API_KEY="your-runpod-api-key"
-export RUNPOD_ENDPOINT_ID="your-voice-clone-endpoint"
-export TTS_ENDPOINT_ID="your-tts-endpoint"
+export VC_CB_ENDPOINT_ID="your-chatterbox-voice-clone-endpoint"
+export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
+export VC_Higgs_ENDPOINT_ID="your-higgs-voice-clone-endpoint"
+export TTS_Higgs_ENDPOINT_ID="your-higgs-tts-endpoint"
 ```
 
 ### Firebase Setup

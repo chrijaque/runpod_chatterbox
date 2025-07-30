@@ -12,8 +12,8 @@ router = APIRouter()
 # Initialize services
 runpod_client = RunPodClient(
     api_key=settings.RUNPOD_API_KEY,
-    voice_endpoint_id=settings.RUNPOD_ENDPOINT_ID,
-    tts_endpoint_id=settings.TTS_ENDPOINT_ID
+    voice_endpoint_id=settings.VC_CB_ENDPOINT_ID,
+    tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
 firebase_service = FirebaseService(
     credentials_file=settings.FIREBASE_CREDENTIALS_FILE,

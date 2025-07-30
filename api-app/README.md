@@ -75,8 +75,10 @@ api-app/
    ```bash
    export FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
    export RUNPOD_API_KEY="your-runpod-api-key"
-   export RUNPOD_ENDPOINT_ID="your-voice-clone-endpoint"
-   export TTS_ENDPOINT_ID="your-tts-endpoint"
+   export VC_CB_ENDPOINT_ID="your-chatterbox-voice-clone-endpoint"
+export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
+export VC_Higgs_ENDPOINT_ID="your-higgs-voice-clone-endpoint"
+export TTS_Higgs_ENDPOINT_ID="your-higgs-tts-endpoint"
    ```
 
 3. **Start the server**:
@@ -127,8 +129,10 @@ Key configuration options in `app/config.py`:
 Required environment variables:
 - `FIREBASE_STORAGE_BUCKET` - Firebase Storage bucket
 - `RUNPOD_API_KEY` - RunPod API key
-- `RUNPOD_ENDPOINT_ID` - Voice cloning endpoint ID
-- `TTS_ENDPOINT_ID` - TTS generation endpoint ID
+- `VC_CB_ENDPOINT_ID` - ChatterboxTTS Voice cloning endpoint ID
+- `TTS_CB_ENDPOINT_ID` - ChatterboxTTS TTS generation endpoint ID
+- `VC_Higgs_ENDPOINT_ID` - Higgs Audio Voice cloning endpoint ID
+- `TTS_Higgs_ENDPOINT_ID` - Higgs Audio TTS generation endpoint ID
 
 Optional:
 - `API_HOST` - Server host (default: 0.0.0.0)

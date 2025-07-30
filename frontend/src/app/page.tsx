@@ -32,7 +32,7 @@ export default function Home() {
     useEffect(() => {
         console.log('Environment variables check:', {
             RUNPOD_API_KEY: process.env.NEXT_PUBLIC_RUNPOD_API_KEY ? 'Set' : 'Not set',
-            RUNPOD_ENDPOINT_ID: process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID ? 'Set' : 'Not set'
+            VC_CB_ENDPOINT_ID: process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID ? 'Set' : 'Not set'
         });
     }, []);
 

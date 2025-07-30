@@ -1,19 +1,19 @@
 // Log environment variables to help debug
 console.log('Environment variables:', {
     hasApiKey: !!process.env.NEXT_PUBLIC_RUNPOD_API_KEY,
-    hasVoiceCloneEndpointId: !!process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID,
-    hasTtsEndpointId: !!process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID,
-    voiceCloneEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID}/run`,
-    ttsEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID}/run`
+    hasVoiceCloneEndpointId: !!process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID,
+    hasTtsEndpointId: !!process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID,
+    voiceCloneEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID}/run`,
+    ttsEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID}/run`
 });
 
 export const RUNPOD_API_KEY = process.env.NEXT_PUBLIC_RUNPOD_API_KEY || '';
-export const RUNPOD_ENDPOINT_ID = process.env.NEXT_PUBLIC_RUNPOD_ENDPOINT_ID || '';
-export const TTS_ENDPOINT_ID = process.env.NEXT_PUBLIC_TTS_ENDPOINT_ID || '';
+export const VC_CB_ENDPOINT_ID = process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID || '';
+export const TTS_CB_ENDPOINT_ID = process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID || '';
 
-// RunPod API endpoints
-export const API_ENDPOINT = `https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}/run`;
-export const TTS_API_ENDPOINT = `https://api.runpod.ai/v2/${TTS_ENDPOINT_ID}/run`;
+// RunPod API endpoints (ChatterboxTTS defaults)
+export const API_ENDPOINT = `https://api.runpod.ai/v2/${VC_CB_ENDPOINT_ID}/run`;
+export const TTS_API_ENDPOINT = `https://api.runpod.ai/v2/${TTS_CB_ENDPOINT_ID}/run`;
 
 // FastAPI local server endpoints
 export const FASTAPI_BASE_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';

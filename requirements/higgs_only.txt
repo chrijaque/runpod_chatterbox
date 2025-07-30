@@ -1,12 +1,10 @@
-# Lightweight Requirements for Network Volume Deployment
-# This file contains only the essential dependencies, excluding heavy models
-
-# ===== CORE DEPENDENCIES =====
+# Higgs Audio Only Requirements
+# Minimal requirements for Higgs Audio without ChatterboxTTS conflicts
 
 # RunPod SDK for handler functionality
 runpod>=1.5.0
 
-# FastAPI and web framework
+# Core dependencies
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
@@ -23,28 +21,22 @@ passlib[bcrypt]>=1.7.4
 # HTTP requests
 requests>=2.31.0
 
-# ===== AUDIO PROCESSING =====
-
-# Audio processing libraries (lightweight)
+# Audio processing
 pydub==0.25.1
 librosa>=0.10.0
 soundfile>=0.12.0
-numpy>=1.21.0
+# Use NumPy 2.x for Higgs Audio compatibility
+numpy>=2.0.0
 scipy>=1.9.0
 
-# ===== TEXT PROCESSING =====
-
-# NLTK for text processing
+# Text processing
 nltk>=3.8.1
 
 # Higgs Audio specific text processing
 langid>=1.1.6
 jieba>=0.42.1
 
-# ===== TRANSFORMERS & ML =====
-
 # Transformers ecosystem (for Higgs Audio)
-# Note: Higgs Audio requires specific transformers version
 transformers>=4.45.1,<4.47.0
 accelerate>=0.20.0
 datasets>=2.10.0
@@ -52,8 +44,6 @@ tokenizers>=0.13.0
 
 # HuggingFace Hub
 huggingface-hub>=0.15.0
-
-# ===== HIGGS AUDIO DEPENDENCIES =====
 
 # Higgs Audio specific dependencies
 einops>=0.6.0
@@ -69,8 +59,6 @@ vector_quantize_pytorch
 loguru
 ruff==0.12.2
 omegaconf
-
-# ===== UTILITIES =====
 
 # Utilities
 tqdm>=4.64.0

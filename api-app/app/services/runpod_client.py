@@ -17,16 +17,27 @@ class RunPodClient:
         logger.info(f"📞 TTS Endpoint ID: {tts_endpoint_id}")
         
         self.api_key = api_key
-        self.voice_endpoint_id = voice_endpoint_id
-        self.tts_endpoint_id = tts_endpoint_id
+        self.voice_endpoint_id = voice_endpoint_id  # Default ChatterboxTTS
+        self.tts_endpoint_id = tts_endpoint_id      # Default ChatterboxTTS
         self.base_url = "https://api.runpod.ai/v2"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        # Import settings to access endpoint IDs
+        from ..config import settings
+        self.vc_cb_endpoint_id = settings.VC_CB_ENDPOINT_ID
+        self.tts_cb_endpoint_id = settings.TTS_CB_ENDPOINT_ID
+        self.vc_higgs_endpoint_id = settings.VC_Higgs_ENDPOINT_ID
+        self.tts_higgs_endpoint_id = settings.TTS_Higgs_ENDPOINT_ID
+        
         logger.info(f"📞 Base URL: {self.base_url}")
         logger.info(f"📞 Headers configured: {bool(self.headers)}")
+        logger.info(f"📞 ChatterboxTTS VC Endpoint: {self.vc_cb_endpoint_id}")
+        logger.info(f"📞 ChatterboxTTS TTS Endpoint: {self.tts_cb_endpoint_id}")
+        logger.info(f"📞 Higgs Audio VC Endpoint: {self.vc_higgs_endpoint_id}")
+        logger.info(f"📞 Higgs Audio TTS Endpoint: {self.tts_higgs_endpoint_id}")
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
     def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64", 
@@ -49,7 +60,19 @@ class RunPodClient:
             logger.info(f"   audio_format: {audio_format}")
             logger.info(f"   response_format: {response_format}")
             
-            url = f"{self.base_url}/{self.voice_endpoint_id}/run"
+            # Route to correct endpoint based on model type
+            if model_type.lower() in ["chatterbox", "chatterboxtts", "cb"]:
+                endpoint_id = self.vc_cb_endpoint_id
+                logger.info(f"🎯 Routing to ChatterboxTTS VC endpoint: {endpoint_id}")
+            elif model_type.lower() in ["higgs", "higgs_audio", "higgsaudio"]:
+                endpoint_id = self.vc_higgs_endpoint_id
+                logger.info(f"🎯 Routing to Higgs Audio VC endpoint: {endpoint_id}")
+            else:
+                # Default to ChatterboxTTS
+                endpoint_id = self.vc_cb_endpoint_id
+                logger.info(f"🎯 Defaulting to ChatterboxTTS VC endpoint: {endpoint_id}")
+            
+            url = f"{self.base_url}/{endpoint_id}/run"
             
             payload = {
                 "input": {
@@ -123,7 +146,19 @@ class RunPodClient:
         :return: RunPod response
         """
         try:
-            url = f"{self.base_url}/{self.tts_endpoint_id}/run"
+            # Route to correct endpoint based on model type
+            if model_type.lower() in ["chatterbox", "chatterboxtts", "cb"]:
+                endpoint_id = self.tts_cb_endpoint_id
+                logger.info(f"🎯 Routing to ChatterboxTTS TTS endpoint: {endpoint_id}")
+            elif model_type.lower() in ["higgs", "higgs_audio", "higgsaudio"]:
+                endpoint_id = self.tts_higgs_endpoint_id
+                logger.info(f"🎯 Routing to Higgs Audio TTS endpoint: {endpoint_id}")
+            else:
+                # Default to ChatterboxTTS
+                endpoint_id = self.tts_cb_endpoint_id
+                logger.info(f"🎯 Defaulting to ChatterboxTTS TTS endpoint: {endpoint_id}")
+            
+            url = f"{self.base_url}/{endpoint_id}/run"
             
             payload = {
                 "input": {

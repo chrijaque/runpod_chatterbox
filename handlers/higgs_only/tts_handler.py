@@ -188,28 +188,43 @@ def chunk_text(text: str, chunk_method: str = "word", chunk_max_word_num: int = 
                 current_chunk = []
                 word_count = 0
         
+        # Add remaining words
         if current_chunk:
             chunks.append(" ".join(current_chunk))
         
         return chunks
     
-    elif chunk_method == "speaker":
-        # Speaker-based chunking for dialogue
-        # Split by speaker tags like [SPEAKER0], [SPEAKER1]
+    elif chunk_method == "sentence":
+        # Sentence-based chunking
         import re
-        speaker_pattern = r'\[SPEAKER\d+\]'
-        parts = re.split(speaker_pattern, text)
-        speakers = re.findall(speaker_pattern, text)
-        
+        sentences = re.split(r'[.!?]+', text)
         chunks = []
-        for i, (speaker, part) in enumerate(zip(speakers, parts[1:])):  # Skip first empty part
-            if part.strip():
-                chunks.append(f"{speaker} {part.strip()}")
+        current_chunk = []
+        word_count = 0
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            sentence_words = sentence.split()
+            if word_count + len(sentence_words) > chunk_max_word_num:
+                if current_chunk:
+                    chunks.append(" ".join(current_chunk))
+                    current_chunk = []
+                    word_count = 0
+            
+            current_chunk.append(sentence)
+            word_count += len(sentence_words)
+        
+        # Add remaining sentences
+        if current_chunk:
+            chunks.append(" ".join(current_chunk))
         
         return chunks
     
     else:
-        # Default: return as single chunk
+        # Default: return text as single chunk
         return [text]
 
 def generate_tts_chunk(text: str, voice_profile: np.ndarray, temperature: float = 0.3) -> Optional[bytes]:
@@ -313,6 +328,8 @@ def generate_tts_story(voice_id: str, text: str, profile_base64: str, language: 
         if not serve_engine:
             logger.error("❌ Serve engine not pre-loaded")
             return {"status": "error", "message": "Higgs Audio model not available"}
+        else:
+            logger.info("✅ Model already pre-loaded")
         
         # Load voice profile
         voice_profile = load_voice_profile(profile_base64)
@@ -410,33 +427,42 @@ def handler(event):
     
     # Extract parameters
     voice_id = input_data.get('voice_id')
-    text = input_data.get('text')
-    profile_base64 = input_data.get('profile_base64')
+    text = input_data.get('text', '')
+    profile_base64 = input_data.get('profile_base64', '')
     language = input_data.get('language', 'en')
     story_type = input_data.get('story_type', 'user')
     is_kids_voice = input_data.get('is_kids_voice', False)
     
+    logger.info(f"🔍 Extracted parameters:")
+    logger.info(f"   - Voice ID: {voice_id}")
+    logger.info(f"   - Text length: {len(text)} characters")
+    logger.info(f"   - Profile base64: {'SET' if profile_base64 else 'NOT SET'}")
+    logger.info(f"   - Language: {language}")
+    logger.info(f"   - Story type: {story_type}")
+    logger.info(f"   - Kids voice: {is_kids_voice}")
+    
     if not voice_id or not text or not profile_base64:
-        logger.error("❌ Missing required parameters: voice_id, text, and profile_base64")
+        logger.error("❌ Missing required parameters: voice_id, text, or profile_base64")
         return {"status": "error", "message": "voice_id, text, and profile_base64 are required"}
     
-    try:
-        logger.info(f"📋 TTS request: voice_id={voice_id}, text_length={len(text)}")
-        
-        # Generate TTS story
-        result = generate_tts_story(
-            voice_id=voice_id,
-            text=text,
-            profile_base64=profile_base64,
-            language=language,
-            story_type=story_type,
-            is_kids_voice=is_kids_voice
-        )
-        
+    # Generate TTS story
+    result = generate_tts_story(
+        voice_id=voice_id,
+        text=text,
+        profile_base64=profile_base64,
+        language=language,
+        story_type=story_type,
+        is_kids_voice=is_kids_voice
+    )
+    
+    if result.get("status") == "success":
+        logger.info("✅ TTS generation completed successfully")
         return result
-        
-    except Exception as e:
-        logger.error(f"❌ TTS generation failed: {e}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-        return {"status": "error", "message": f"TTS generation failed: {str(e)}"} 
+    else:
+        logger.error(f"❌ TTS generation failed: {result.get('message', 'Unknown error')}")
+        return result
+
+# Register the handler
+logger.info("🔧 Registering Higgs Audio TTS handler with RunPod...")
+runpod.serverless.start({"handler": handler})
+logger.info("✅ Higgs Audio TTS handler registered successfully") 
