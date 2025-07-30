@@ -71,5 +71,5 @@ htmlcov/
 firebase_creds.json
 firebase_cors_config.json
 
-# git
+# gits
 .gitignore
