@@ -33,10 +33,10 @@ RUN apt-get update && apt-get install -y \
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
 
-# Setup environment for Higgs Audio (network volume)
-ENV HF_HOME=/runpod-volume
-ENV TRANSFORMERS_CACHE=/runpod-volume
-ENV HUGGINGFACE_HUB_CACHE=/runpod-volume
+# Setup environment for Higgs Audio (local cache)
+ENV HF_HOME=/app/models
+ENV TRANSFORMERS_CACHE=/app/models
+ENV HUGGINGFACE_HUB_CACHE=/app/models
 
 # Install protobuf first to avoid conflicts
 RUN echo "🔧 Installing protobuf compatibility layer..." && \
@@ -62,8 +62,20 @@ RUN echo "🔧 Cloning Higgs Audio repository..." && \
     echo "🔍 Verifying Higgs Audio components..." && \
     python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
 
-# Note: Higgs Audio models will be mounted from network volume at runtime
-RUN echo "🔧 Higgs Audio models will be mounted from network volume"
+# Create models directory
+RUN mkdir -p /app/models
+
+# Download Higgs Audio models during build
+RUN echo "🔧 Downloading Higgs Audio models..." && \
+    echo "🔧 Setting up HuggingFace authentication..." && \
+    export HF_TOKEN="${HUGGINGFACE_ACCESS_TOKEN}" && \
+    echo "🔧 Downloading higgs-audio-v2-generation-3B-base..." && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='bosonai/higgs-audio-v2-generation-3B-base', local_dir='/app/models/higgs_audio_generation', token='$HF_TOKEN')" && \
+    echo "🔧 Downloading higgs-audio-v2-tokenizer..." && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='bosonai/higgs-audio-v2-tokenizer', local_dir='/app/models/higgs_audio_tokenizer', token='$HF_TOKEN')" && \
+    echo "🔧 Downloading hubert_base..." && \
+    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='bosonai/hubert_base', local_dir='/app/models/hubert_base', token='$HF_TOKEN')" && \
+    echo "✅ All Higgs Audio models downloaded successfully"
 
 # Install NLTK data
 RUN python -c "import nltk; nltk.download('punkt')"
