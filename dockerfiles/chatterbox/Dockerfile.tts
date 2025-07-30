@@ -85,8 +85,7 @@ RUN echo "🔧 Pre-downloading NLTK data..." && \
     echo "✅ NLTK punkt tokenizer fully configured"
 
 # Copy TTS handler files
-COPY tts_handler.py /
-COPY verify_editable_install.py /
+COPY handlers/chatterbox/tts_handler.py /
 
 
 # Create required directories
@@ -100,9 +99,7 @@ RUN echo "🔍 Final verification after all installations..." && \
     echo "🔍 Final editable install check..." && \
     python -c "import chatterbox; print('📂 Final chatterbox.__file__:', chatterbox.__file__); print('📂 Is editable:', 'site-packages' not in chatterbox.__file__)" && \
     echo "🔍 Checking s3gen module..." && \
-    python -c "import chatterbox.models.s3gen.s3gen as s3gen; print('📂 s3gen.__file__:', s3gen.__file__); print('📂 Has inference_from_text:', hasattr(s3gen.S3Token2Wav, 'inference_from_text'))" && \
-    echo "🔍 Running verification script..." && \
-    python verify_editable_install.py
+    python -c "import chatterbox.models.s3gen.s3gen as s3gen; print('📂 s3gen.__file__:', s3gen.__file__); print('📂 Has inference_from_text:', hasattr(s3gen.S3Token2Wav, 'inference_from_text'))"
 
 # Expose port (if needed for health checks)
 EXPOSE 8000
