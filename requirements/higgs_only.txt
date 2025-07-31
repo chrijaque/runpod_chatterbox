@@ -1,70 +1,27 @@
-# Higgs Audio Only Requirements
-# Minimal requirements for Higgs Audio without ChatterboxTTS conflicts
+# Higgs Audio Only Requirements - Optimized for disk space
+# Core dependencies only
 
-# RunPod SDK for handler functionality
+# RunPod SDK
 runpod>=1.5.0
 
-# Core dependencies
-fastapi>=0.104.1
-uvicorn[standard]>=0.24.0
-python-multipart>=0.0.6
-pydantic>=2.5.0
-
-# Firebase for cloud storage
-firebase-admin>=6.2.0
-google-cloud-storage>=2.10.0
-
-# CORS and additional utilities
-python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4
-
-# HTTP requests
-requests>=2.31.0
-
-# Audio processing
-pydub==0.25.1
-librosa>=0.10.0
-soundfile>=0.12.0
-# Use NumPy 2.x for Higgs Audio compatibility
+# Essential ML libraries
 numpy>=2.0.0
-scipy>=1.9.0
-
-# Text processing
-nltk>=3.8.1
-
-# Higgs Audio specific text processing
-langid>=1.1.6
-jieba>=0.42.1
-
-# Transformers ecosystem (for Higgs Audio)
-transformers>=4.45.1,<4.47.0
-accelerate>=0.20.0
-datasets>=2.10.0
-tokenizers>=0.13.0
+torch>=2.1.0
+transformers>=4.45.1
 
 # HuggingFace Hub
 huggingface-hub>=0.15.0
 
-# Higgs Audio specific dependencies
-einops>=0.6.0
-sentencepiece>=0.1.99
+# Audio processing (minimal)
+librosa>=0.10.0
+soundfile>=0.12.0
 
-# Higgs Audio specific dependencies from the forked repository
-dacite
-boto3==1.35.36
-s3fs
-json_repair
-pandas
-vector_quantize_pytorch
-loguru
-ruff==0.12.2
-omegaconf
+# Text processing
+nltk>=3.8.1
+langid>=1.1.6
 
 # Utilities
 tqdm>=4.64.0
-click>=8.0.0
 python-dotenv>=1.0.0
 
-# Note: PyTorch is already included in the base image
-# Note: descript-audio-codec will be installed separately to avoid protobuf conflicts
-# Note: Models will be mounted from network volume at runtime 
+# Note: Other dependencies will be installed from the Higgs Audio repository 
