@@ -632,29 +632,29 @@ class FirebaseService:
                     logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
                     continue
                     
-                    if voice_id not in voices:
-                        voices[voice_id] = {
-                            "voice_id": voice_id,
+                if voice_id not in voices:
+                    voices[voice_id] = {
+                        "voice_id": voice_id,
                         "name": voice_name or voice_id.replace('voice_', '').replace('_', ' ').title(),
-                            "recorded": [],
-                            "samples": [],
+                        "recorded": [],
+                        "samples": [],
                         "profiles": [],
                         "created_date": None,
                         "language": language or "en",
                         "is_kids_voice": is_kids_voice or False
-                        }
-                    
-                    url = blob.public_url
+                    }
+                
+                url = blob.public_url
                 
                 # Categorize based on file_type determined from directory structure
                 if file_type == 'recorded':
-                        voices[voice_id]["recorded"].append(url)
+                    voices[voice_id]["recorded"].append(url)
                     logger.info(f"   ✅ Added to recorded: {blob.name}")
                 elif file_type == 'sample':
-                        voices[voice_id]["samples"].append(url)
+                    voices[voice_id]["samples"].append(url)
                     logger.info(f"   ✅ Added to samples: {blob.name}")
                 elif file_type == 'profile':
-                        voices[voice_id]["profiles"].append(url)
+                    voices[voice_id]["profiles"].append(url)
                     logger.info(f"   ✅ Added to profiles: {blob.name}")
                 else:
                     logger.warning(f"   ⚠️ File not categorized: {blob.name}")

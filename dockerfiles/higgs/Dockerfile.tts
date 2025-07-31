@@ -1,73 +1,50 @@
 # Higgs Audio TTS Handler Dockerfile
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
+# Add build argument for HuggingFace token
+ARG HF_TOKEN
+ENV HF_TOKEN=${HF_TOKEN}
+
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsndfile1 \
+RUN apt-get update && \
+    apt-get install -y \
     git \
     wget \
     curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create app directory
-WORKDIR /app
-
-# Copy Higgs Audio requirements
-COPY requirements/higgs_only.txt /app/requirements.txt
-
-# Install system dependencies for audio processing
-RUN apt-get update && apt-get install -y \
     ffmpeg \
     libavcodec-extra \
     libavformat-dev \
     libavutil-dev \
-    libswscale-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libswscale-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
 
-# Setup environment for Higgs Audio (local cache)
-ENV HF_HOME=/app/models
-ENV TRANSFORMERS_CACHE=/app/models
-ENV HUGGINGFACE_HUB_CACHE=/app/models
-
-# Install protobuf first to avoid conflicts
-RUN echo "🔧 Installing protobuf compatibility layer..." && \
-    pip install --no-cache-dir "protobuf>=3.9.2,<3.20"
+# Copy requirements first for better caching
+COPY requirements/higgs_only.txt /requirements.txt
 
 # Install Python dependencies
-RUN echo "🔧 Installing Higgs Audio Python dependencies..." && \
-    pip install --no-cache-dir -r requirements.txt && \
-    echo "🔧 Installing compatible torchvision..." && \
-    pip install torchvision==0.16.0 --index-url https://download.pytorch.org/whl/cu121
+RUN pip install --no-cache-dir -r /requirements.txt
 
-# Clone and install Higgs Audio from forked repository
-RUN echo "🔧 Cloning Higgs Audio repository..." && \
-    git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
-    echo "🔧 Installing Higgs Audio requirements..." && \
-    pip install -r /workspace/higgs-audio/requirements.txt && \
-    echo "🔧 Installing descript-audio-codec..." && \
-    pip install --no-cache-dir descript-audio-codec && \
-    echo "🔧 Installing Higgs Audio in editable mode..." && \
-    pip install -e /workspace/higgs-audio && \
-    echo "🔍 Verifying Higgs Audio installation..." && \
-    python -c "import boson_multimodal; print('✅ boson_multimodal imported from:', boson_multimodal.__file__)" && \
-    echo "🔍 Verifying Higgs Audio components..." && \
-    python -c "from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine; print('✅ HiggsAudioServeEngine imported successfully')"
+# Install descript-audio-codec separately
+RUN pip install --no-cache-dir descript-audio-codec
+
+# Clone and install Higgs Audio
+RUN git clone https://github.com/chrijaque/higgs-audio.git /workspace/higgs-audio && \
+    pip install -e /workspace/higgs-audio
 
 # Create models directory
 RUN mkdir -p /app/models
 
-# Download Higgs Audio models during build
+# Download Higgs Audio models during build (requires token for API access)
 RUN echo "🔧 Downloading Higgs Audio models..." && \
-    echo "🔧 Using RunPod secret: $HF_TOKEN" && \
+    echo "🔧 Using HF_TOKEN: ${HF_TOKEN:0:10}..." && \
     echo "🔧 Downloading higgs-audio-v2-generation-3B-base..." && \
     python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='bosonai/higgs-audio-v2-generation-3B-base', local_dir='/app/models/higgs_audio_generation', token='$HF_TOKEN')" && \
     echo "🔧 Downloading higgs-audio-v2-tokenizer..." && \
@@ -76,22 +53,14 @@ RUN echo "🔧 Downloading Higgs Audio models..." && \
     python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='bosonai/hubert_base', local_dir='/app/models/hubert_base', token='$HF_TOKEN')" && \
     echo "✅ All Higgs Audio models downloaded successfully"
 
-# Install NLTK data
-RUN python -c "import nltk; nltk.download('punkt')"
+# Copy handler files
+COPY handlers/higgs_only/tts_handler.py /
 
-# Create directories
-RUN mkdir -p /app/handlers/higgs_only \
-    && mkdir -p /tts_generated \
-    && mkdir -p /temp_voice
+# Create required directories
+RUN mkdir -p /tts_generated /temp_voice
 
-# Copy Higgs Audio TTS handler
-COPY handlers/higgs_only/tts_handler.py /app/handlers/higgs_only/
-
-# Set the default handler
-ENV HANDLER_PATH=/app/handlers/higgs_only/tts_handler.py
-
-# Expose port (if needed for debugging)
+# Expose port (if needed for health checks)
 EXPOSE 8000
 
-# Default command
-CMD ["python", "/app/handlers/higgs_only/tts_handler.py"] 
+# Set the entrypoint to the TTS handler directly
+CMD ["python3", "-u", "tts_handler.py"] 
