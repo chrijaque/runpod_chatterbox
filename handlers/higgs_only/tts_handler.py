@@ -29,15 +29,15 @@ storage_client = None
 bucket = None
 
 # Model paths for Higgs Audio (from network volume)
-MODEL_PATH = "/runpod-volume/higgs_audio_generation"
-AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
-HUBERT_PATH = "/runpod-volume/hubert_base"
+MODEL_PATH = "/workspace/higgs_audio_generation"
+AUDIO_TOKENIZER_PATH = "/workspace/higgs_audio_tokenizer"
+HUBERT_PATH = "/workspace/hubert_base"
 
 # Set cache directory to use network volume
 import os
-os.environ["HF_HOME"] = "/runpod-volume"
-os.environ["TRANSFORMERS_CACHE"] = "/runpod-volume"
-os.environ["HUGGINGFACE_HUB_CACHE"] = "/runpod-volume"
+os.environ["HF_HOME"] = "/workspace/cache"
+os.environ["TRANSFORMERS_CACHE"] = "/workspace/cache"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/workspace/cache"
 
 # Local directory paths
 TTS_GENERATED_DIR = Path("/tts_generated")
