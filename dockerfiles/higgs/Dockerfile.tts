@@ -28,10 +28,11 @@ RUN apt-get update --fix-missing && \
 RUN git config --global --add safe.directory '*'
 
 # Copy requirements first for better caching
-COPY requirements/higgs_only.txt /requirements.txt
+COPY requirements/higgs_minimal.txt /requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r /requirements.txt
+# Install Python dependencies with better error handling
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r /requirements.txt
 
 # Install descript-audio-codec separately
 RUN pip install --no-cache-dir descript-audio-codec
