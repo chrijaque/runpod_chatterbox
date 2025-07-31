@@ -10,9 +10,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y \
+# Install system dependencies with retry logic
+RUN apt-get update --fix-missing && \
+    apt-get install -y --no-install-recommends \
     git \
     wget \
     curl \
@@ -21,6 +21,7 @@ RUN apt-get update && \
     libavformat-dev \
     libavutil-dev \
     libswscale-dev && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Set git global config to avoid warnings
