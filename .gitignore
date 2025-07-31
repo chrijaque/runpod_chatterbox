@@ -73,3 +73,6 @@ firebase_cors_config.json
 
 # gits
 .gitignore
+
+# Cursor
+.cursorrules
