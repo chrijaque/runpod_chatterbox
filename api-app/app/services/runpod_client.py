@@ -110,6 +110,8 @@ class RunPodClient:
                 logger.info(f"⏳ Waiting for job completion: {result['id']}")
                 final_result = self.wait_for_job_completion(endpoint_id, result['id'])
                 logger.info(f"✅ Job completed with result: {final_result}")
+                logger.info(f"✅ Final result type: {type(final_result)}")
+                logger.info(f"✅ Final result keys: {list(final_result.keys()) if isinstance(final_result, dict) else 'Not a dict'}")
                 return final_result
             else:
                 logger.error("❌ No job ID in response")
@@ -281,7 +283,12 @@ class RunPodClient:
                 
                 if status.get("status") == "COMPLETED":
                     logger.info(f"✅ Job {job_id} completed successfully")
-                    return status
+                    # Return the output from the completed job
+                    output = status.get("output", {})
+                    logger.info(f"📦 Job output: {output}")
+                    logger.info(f"📦 Job output type: {type(output)}")
+                    logger.info(f"📦 Job output keys: {list(output.keys()) if isinstance(output, dict) else 'Not a dict'}")
+                    return output
                 elif status.get("status") == "FAILED":
                     logger.error(f"❌ Job {job_id} failed: {status.get('error', 'Unknown error')}")
                     raise Exception(f"Job failed: {status.get('error', 'Unknown error')}")

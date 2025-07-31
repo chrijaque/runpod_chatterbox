@@ -702,7 +702,7 @@ def handle_voice_clone_request(input, responseFormat):
         # Keep original metadata for debugging
         "metadata": {
             "sample_rate": model.sr,
-            "audio_shape": list(audio_tensor.shape) if audio_tensor is not None else None,
+            "audio_shape": list(audio_tensor.shape) if 'audio_tensor' in locals() and audio_tensor is not None else None,
             "voice_id": voice_id,
             "voice_name": name,
             "profile_path_local": str(profile_path),

@@ -39,6 +39,10 @@ async def clone_voice(request: VoiceCloneRequest):
             model_type=request.model_type  # New: pass model type
         )
         
+        logger.info(f"🔍 RunPod result type: {type(result)}")
+        logger.info(f"🔍 RunPod result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        logger.info(f"🔍 RunPod result status: {result.get('status')}")
+        
         if result.get("status") == "success":
             logger.info("✅ Voice clone completed successfully")
             
