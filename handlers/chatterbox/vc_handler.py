@@ -724,6 +724,5 @@ def handle_voice_clone_request(input, responseFormat):
 
 if __name__ == '__main__':
     logger.info("🚀 Voice Clone Handler starting...")
-    initialize_model()
     logger.info("✅ Voice Clone Handler ready")
     runpod.serverless.start({'handler': handler })
