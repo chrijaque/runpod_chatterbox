@@ -38,7 +38,7 @@ RUN git config --global --add safe.directory '*'
 ENV HF_HOME=/root/.cache/huggingface
 
 # Install Python dependencies with verbose pip output
-COPY api-app/requirements.txt /requirements.txt
+COPY requirements/chatterbox.txt /requirements.txt
 
 # Debug: Show what's in requirements.txt
 RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
