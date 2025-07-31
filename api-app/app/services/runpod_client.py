@@ -101,10 +101,19 @@ class RunPodClient:
                 raise Exception(f"RunPod API error: {response.text}")
             
             result = response.json()
-            logger.info(f"✅ Voice clone created successfully")
+            logger.info(f"✅ Voice clone job submitted successfully")
+            logger.info(f"✅ Job ID: {result.get('id')}")
             logger.info(f"✅ Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
             
-            return result
+            # Wait for job completion
+            if result.get('id'):
+                logger.info(f"⏳ Waiting for job completion: {result['id']}")
+                final_result = self.wait_for_job_completion(endpoint_id, result['id'])
+                logger.info(f"✅ Job completed with result: {final_result}")
+                return final_result
+            else:
+                logger.error("❌ No job ID in response")
+                raise Exception("No job ID in response")
             
         except Exception as e:
             logger.error(f"❌ Error creating voice clone: {e}")

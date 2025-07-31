@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
 import { ModelToggle, ModelType } from '@/components/ModelToggle';
-import { API_ENDPOINT, RUNPOD_API_KEY, VOICE_API } from '@/config/api';
+import { API_ENDPOINT, VOICE_API } from '@/config/api';
 
 interface FileMetadata {
     voice_id: string;
@@ -156,12 +156,9 @@ export default function Home() {
         if (!currentJobId) return;
 
         try {
-            const cancelEndpoint = API_ENDPOINT.replace('/run', `/cancel/${currentJobId}`);
+            const cancelEndpoint = `${API_ENDPOINT}/cancel/${currentJobId}`;
             const response = await fetch(cancelEndpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                }
+                method: 'POST'
             });
 
             const data = await response.json();
@@ -183,7 +180,7 @@ export default function Home() {
     };
 
     const pollJobStatus = async (jobId: string) => {
-        const statusEndpoint = API_ENDPOINT.replace('/run', `/status/${jobId}`);
+        const statusEndpoint = `${API_ENDPOINT}/status/${jobId}`;
         abortControllerRef.current = new AbortController();
         
         try {
@@ -194,9 +191,6 @@ export default function Home() {
                 }
 
                 const response = await fetch(statusEndpoint, {
-                    headers: {
-                        'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                    },
                     signal: abortControllerRef.current.signal
                 });
                 
@@ -244,10 +238,6 @@ export default function Home() {
             }
             abortControllerRef.current = new AbortController();
 
-            if (!RUNPOD_API_KEY) {
-                throw new Error('RunPod API key not configured');
-            }
-
             if (!audioData) {
                 throw new Error('Please upload or record audio first');
             }
@@ -261,25 +251,21 @@ export default function Home() {
             const response = await fetch(API_ENDPOINT, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    input: {
-                        name: name,
-                        audio_data: audioData,
-                        audio_format: audioFormat,
-                        responseFormat: "base64",  // Explicitly request JSON response
-                        language: language,
-                        is_kids_voice: isKidsVoice,
-                        model_type: modelType,  // New: include model type
-                    },
+                    name: name,
+                    audio_data: audioData,
+                    audio_format: audioFormat,
+                    language: language,
+                    is_kids_voice: isKidsVoice,
+                    model_type: modelType,  // New: include model type
                 }),
                 signal: abortControllerRef.current.signal,
             });
 
             const data = await response.json();
-            console.log('📨 RunPod API response received:', {
+            console.log('📨 FastAPI response received:', {
                 hasId: !!data.id,
                 hasOutput: !!data.output,
                 hasError: !!data.error,
@@ -298,7 +284,7 @@ export default function Home() {
                 // Job was accepted, start polling for status
                 const result = await pollJobStatus(data.id);
                 
-                console.log('🔍 DEBUGGING: Raw result from RunPod:', result);
+                console.log('🔍 DEBUGGING: Raw result from FastAPI:', result);
                 console.log('🔍 DEBUGGING: Result type:', typeof result);
                 console.log('🔍 DEBUGGING: Result keys:', result ? Object.keys(result) : 'N/A');
                 console.log('🔍 DEBUGGING: Has audio_base64:', !!(result && result.audio_base64));

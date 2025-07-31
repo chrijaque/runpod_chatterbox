@@ -1,26 +1,26 @@
-// Log environment variables to help debug
-console.log('Environment variables:', {
-    hasApiKey: !!process.env.NEXT_PUBLIC_RUNPOD_API_KEY,
-    hasVoiceCloneEndpointId: !!process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID,
-    hasTtsEndpointId: !!process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID,
-    voiceCloneEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID}/run`,
-    ttsEndpoint: `https://api.runpod.ai/v2/${process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID}/run`
-});
-
-export const RUNPOD_API_KEY = process.env.NEXT_PUBLIC_RUNPOD_API_KEY || '';
-export const VC_CB_ENDPOINT_ID = process.env.NEXT_PUBLIC_VC_CB_ENDPOINT_ID || '';
-export const TTS_CB_ENDPOINT_ID = process.env.NEXT_PUBLIC_TTS_CB_ENDPOINT_ID || '';
-
-// RunPod API endpoints (ChatterboxTTS defaults)
-export const API_ENDPOINT = `https://api.runpod.ai/v2/${VC_CB_ENDPOINT_ID}/run`;
-export const TTS_API_ENDPOINT = `https://api.runpod.ai/v2/${TTS_CB_ENDPOINT_ID}/run`;
-
-// FastAPI local server endpoints
+// FastAPI local server endpoints (proxy for RunPod calls)
 export const FASTAPI_BASE_URL = process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://localhost:8000';
 export const VOICE_LIBRARY_API = `${FASTAPI_BASE_URL}/api`;
 export const VOICE_API = `${VOICE_LIBRARY_API}/voices`;
 export const TTS_API = `${VOICE_LIBRARY_API}/tts`;
 export const TTS_GENERATIONS_API = `${VOICE_LIBRARY_API}/tts/generations`;
+
+// RunPod API endpoints (now routed through FastAPI backend)
+export const API_ENDPOINT = `${VOICE_API}/clone`;
+export const TTS_API_ENDPOINT = `${TTS_API}/generate`;
+
+// Environment variables for debugging
+console.log('API Configuration:', {
+    fastapiUrl: FASTAPI_BASE_URL,
+    voiceApi: VOICE_API,
+    ttsApi: TTS_API,
+    voiceCloneEndpoint: API_ENDPOINT,
+    ttsEndpoint: TTS_API_ENDPOINT
+});
+
+export const RUNPOD_API_KEY = process.env.RUNPOD_API_KEY || '';
+export const VC_CB_ENDPOINT_ID = process.env.VC_CB_ENDPOINT_ID || '';
+export const TTS_CB_ENDPOINT_ID = process.env.TTS_CB_ENDPOINT_ID || '';
 
 export interface ChatterboxRequest {
     prompt: string;

@@ -30,7 +30,7 @@ async def clone_voice(request: VoiceCloneRequest):
         logger.info(f"📊 Request details: language={request.language}, kids_voice={request.is_kids_voice}")
         
         # Call RunPod for voice cloning
-        result = await runpod_client.create_voice_clone(
+        result = runpod_client.create_voice_clone(
             name=request.name,
             audio_base64=request.audio_data,
             audio_format=request.audio_format,
@@ -134,8 +134,8 @@ async def get_voice_profile(voice_id: str, language: str = "en", is_kids_voice: 
         
         if profile_base64:
             logger.info(f"✅ Found voice profile for {voice_id} (length: {len(profile_base64)})")
-        return {
-            "status": "success",
+            return {
+                "status": "success",
                 "profile_base64": profile_base64,
                 "voice_id": voice_id
             }
