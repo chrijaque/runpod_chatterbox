@@ -17,8 +17,10 @@ safetensors==0.5.3
 
 # Firebase for cloud storage
 firebase-admin>=6.2.0
+protobuf==3.20.3
 
 # Utilities
 python-dotenv>=1.0.0
+
 
 # Note: Additional dependencies will be installed from the Higgs Audio repository 
