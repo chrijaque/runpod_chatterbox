@@ -69,8 +69,8 @@ try:
         logger.info(f"   - Device: cuda")
         
         serve_engine = HiggsAudioServeEngine(
-            model_path=MODEL_PATH,
-            audio_tokenizer_path=AUDIO_TOKENIZER_PATH,
+            model_name_or_path=MODEL_PATH,
+            audio_tokenizer_name_or_path=AUDIO_TOKENIZER_PATH,
             device="cuda"
         )
         
