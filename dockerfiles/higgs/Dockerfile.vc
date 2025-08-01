@@ -1,30 +1,28 @@
-# Higgs Audio VC Handler Dockerfile - Using Network Volume for Models
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+# Use PyTorch base image for CUDA support
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
 
 # Set environment variables
+ENV PYTHONPATH=/workspace
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app
 
-# Install system dependencies with cleanup
-RUN apt-get update --fix-missing && \
-    apt-get install -y --no-install-recommends \
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
     git \
     wget \
     curl \
-    ffmpeg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    ffmpeg \
+    libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set git global config
-RUN git config --global --add safe.directory '*'
+# Set working directory
+WORKDIR /workspace
 
 # Copy requirements and install Python dependencies with cleanup
 COPY requirements/higgs_only.txt /requirements.txt
 
-# Install protobuf first to avoid conflicts
+# Install Python dependencies
 RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir "protobuf>=3.20.0,<4.0.0" && \
     pip install --no-cache-dir -r /requirements.txt && \
     pip cache purge && \
     rm -rf /root/.cache/pip
@@ -37,14 +35,8 @@ RUN git clone --depth 1 --branch main https://github.com/chrijaque/higgs-audio.g
 # Create mount points for Network Volume and other required directories
 RUN mkdir -p /runpod-volume /workspace/cache /voice_profiles /temp_voice
 
-# Copy handler file
-COPY handlers/higgs_only/vc_handler.py /
+# Copy handler files
+COPY handlers/higgs_only/vc_handler.py /workspace/vc_handler.py
 
-# Final cleanup
-RUN rm -rf /root/.cache /tmp/* /var/tmp/*
-
-# Expose port
-EXPOSE 8000
-
-# Set the entrypoint
-CMD ["python3", "-u", "vc_handler.py"]
+# Set the handler as the entry point
+CMD ["python", "/workspace/vc_handler.py"]

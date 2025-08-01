@@ -1,48 +1,24 @@
-# Higgs Audio Only Requirements - Including all dependencies from Higgs Audio repo
-# Core dependencies from Higgs Audio requirements.txt
+# Higgs Audio Only Requirements - Minimum Required Dependencies
 
 # RunPod SDK
 runpod>=1.5.0
 
-# Higgs Audio core dependencies
-descript-audio-codec
-torch
-transformers>=4.45.1,<4.47.0
-librosa
-dacite
-boto3==1.35.36
-s3fs
-torchvision
-torchaudio
-json_repair
-pandas
-pydantic
-vector_quantize_pytorch
-loguru
-pydub
-ruff==0.12.2
-omegaconf
-click
-langid
-jieba
-accelerate>=0.26.0
+# Higgs Audio minimum required dependencies
+numpy>=1.26.0
+librosa==0.11.0
+s3tokenizer
+torch==2.6.0
+torchaudio==2.6.0
+transformers==4.46.3
+diffusers==0.29.0
+resemble-perth==1.0.1
+conformer==0.3.2
+safetensors==0.5.3
 
-# Essential ML libraries
-numpy>=2.0.0
-huggingface-hub>=0.15.0
-
-# Audio processing
-soundfile>=0.12.0
-
-# Text processing
-nltk>=3.8.1
-
-# Firebase for cloud storage (same as ChatterboxTTS)
+# Firebase for cloud storage
 firebase-admin>=6.2.0
-google-cloud-storage>=2.10.0
 
 # Utilities
-tqdm>=4.64.0
 python-dotenv>=1.0.0
 
 # Note: Additional dependencies will be installed from the Higgs Audio repository 
