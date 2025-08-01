@@ -277,7 +277,37 @@ export default function Home() {
                 throw new Error(data.message || 'Failed to generate voice');
             }
 
-            if (data.id) {
+            // Check if we got a direct result (new format) or a job ID (old format)
+            if (data.status === 'success' && !data.id) {
+                // New format: FastAPI returned the final result directly
+                console.log('✅ Received final result directly from FastAPI');
+                
+                const result = data;
+                console.log('🔍 DEBUGGING: Raw result from FastAPI:', result);
+                console.log('🔍 DEBUGGING: Result type:', typeof result);
+                console.log('🔍 DEBUGGING: Result keys:', result ? Object.keys(result) : 'N/A');
+                
+                console.log('🏁 Final result received:', {
+                    hasResult: !!result,
+                    resultType: typeof result,
+                    hasMetadata: !!(result && result.metadata),
+                    status: result?.status
+                });
+                
+                setResult(result); // Store the result directly
+                
+                // Save metadata if available
+                if (result && result.metadata) {
+                    setMetadata(result.metadata);
+                    console.log('📋 Metadata saved:', result.metadata);
+                }
+                
+                // Refresh voice library after successful creation
+                console.log('🔄 Refreshing voice library...');
+                await loadVoiceLibrary();
+                
+            } else if (data.id) {
+                // Old format: Job ID returned, need to poll for completion
                 setCurrentJobId(data.id);
                 console.log('⏳ Job queued, polling for results...', { jobId: data.id });
                 
@@ -324,7 +354,7 @@ export default function Home() {
                 console.log('🔄 Refreshing voice library...');
                 await loadVoiceLibrary();
             } else {
-                throw new Error('No job ID in response');
+                throw new Error('Invalid response format - neither job ID nor final result received');
             }
         } catch (err: unknown) {
             console.error('API error:', err);
