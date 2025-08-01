@@ -28,9 +28,9 @@ storage_client = None
 bucket = None
 
 # Model paths for Higgs Audio (from network volume)
-MODEL_PATH = "/workspace/higgs_audio_generation"
-AUDIO_TOKENIZER_PATH = "/workspace/higgs_audio_tokenizer"
-HUBERT_PATH = "/workspace/hubert_base"
+MODEL_PATH = "/runpod-volume/higgs_audio_generation"
+AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
+HUBERT_PATH = "/runpod-volume/hubert_base"
 
 # Set cache directory to use network volume
 import os

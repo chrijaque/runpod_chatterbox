@@ -7,6 +7,7 @@ docker_image_tag = "latest"
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
 FIREBASE_STORAGE_BUCKET = "{{ FIREBASE_STORAGE_BUCKET }}"
+NETWORK_VOLUME_ID = "{{ NETWORK_VOLUME_ID }}"
 
 [build]
 dockerfile = "dockerfiles/higgs/Dockerfile.tts"
@@ -22,5 +23,5 @@ envs = [
     "FIREBASE_STORAGE_BUCKET"
 ]
 volumes = [
-    "dtabrd8bbd:/runpod-volume"
+    "{{ NETWORK_VOLUME_ID }}:/runpod-volume"
 ] 
