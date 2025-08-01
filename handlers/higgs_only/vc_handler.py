@@ -7,7 +7,6 @@ import logging
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Optional
-from google.cloud import storage
 import numpy as np
 
 # Configure detailed logging
@@ -92,12 +91,12 @@ except Exception as e:
     model = None
 
 def initialize_firebase():
-    """Initialize Firebase Storage client"""
+    """Initialize Firebase Storage client using firebase-admin"""
     global storage_client, bucket
     
     try:
-        from google.cloud import storage
-        from google.oauth2 import service_account
+        import firebase_admin
+        from firebase_admin import credentials, storage
         
         # Get Firebase credentials from environment
         firebase_creds = os.getenv('RUNPOD_SECRET_Firebase')
@@ -111,14 +110,17 @@ def initialize_firebase():
         import json
         creds_dict = json.loads(firebase_creds)
         
-        # Create credentials object
-        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        # Initialize Firebase Admin SDK
+        cred = credentials.Certificate(creds_dict)
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': bucket_name
+        })
         
-        # Initialize storage client
-        storage_client = storage.Client(credentials=credentials)
-        bucket = storage_client.bucket(bucket_name)
+        # Get storage bucket
+        bucket = storage.bucket()
+        storage_client = bucket
         
-        logger.info(f"✅ Firebase initialized successfully")
+        logger.info(f"✅ Firebase initialized successfully using firebase-admin")
         logger.info(f"✅ Connected to bucket: {bucket_name}")
         return True
         
