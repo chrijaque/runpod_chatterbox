@@ -38,6 +38,45 @@ os.environ["HF_HOME"] = "/workspace/cache"
 os.environ["TRANSFORMERS_CACHE"] = "/workspace/cache"
 os.environ["HUGGINGFACE_HUB_CACHE"] = "/workspace/cache"
 
+# Debug: Check Network Volume contents
+logger.info("🔍 Checking Network Volume contents...")
+runpod_volume = "/runpod-volume"
+if os.path.exists(runpod_volume):
+    logger.info(f"✅ {runpod_volume} exists")
+    try:
+        contents = os.listdir(runpod_volume)
+        logger.info(f"📁 Contents of {runpod_volume}:")
+        for item in contents:
+            logger.info(f"   - {item}")
+    except Exception as e:
+        logger.error(f"❌ Error listing {runpod_volume}: {e}")
+else:
+    logger.error(f"❌ {runpod_volume} does not exist")
+
+# Debug: Check model directory contents
+logger.info("📂 Checking model directory contents:")
+for model_path in [MODEL_PATH, AUDIO_TOKENIZER_PATH, HUBERT_PATH]:
+    logger.info(f"🔍 Checking: {model_path}")
+    if os.path.exists(model_path):
+        logger.info(f"✅ {model_path} exists")
+        try:
+            files = os.listdir(model_path)
+            logger.info(f"📁 Contents of {model_path}:")
+            for f in files[:10]:  # Show first 10 files
+                logger.info(f"   - {f}")
+            if len(files) > 10:
+                logger.info(f"   ... and {len(files) - 10} more files")
+            
+            # Check for key files
+            config_path = os.path.join(model_path, "config.json")
+            index_path = os.path.join(model_path, "model.safetensors.index.json")
+            logger.info(f"📄 Checking if config.json exists: {os.path.exists(config_path)}")
+            logger.info(f"📄 Checking if model index exists: {os.path.exists(index_path)}")
+        except Exception as e:
+            logger.error(f"❌ Error reading {model_path}: {e}")
+    else:
+        logger.error(f"❌ {model_path} does not exist")
+
 # Local directory paths
 TTS_GENERATED_DIR = Path("/tts_generated")
 TEMP_VOICE_DIR = Path("/temp_voice")
