@@ -589,6 +589,7 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         logger.info("🔍 Converting voice profile back to audio...")
         import torch
         voice_profile_tensor = torch.from_numpy(voice_profile).unsqueeze(0).to("cuda")
+        voice_profile_tensor = voice_profile_tensor.detach()  # Remove gradients to avoid numpy() error
         logger.info(f"✅ Voice profile converted to tensor: shape={voice_profile_tensor.shape}")
         
         decoded_audio = audio_tokenizer.decode(voice_profile_tensor)
@@ -632,20 +633,11 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         return audio_bytes
         
     except Exception as e:
-        logger.error(f"❌ Manual approach failed: {e}")
+        logger.error(f"❌ Voice sample generation failed: {e}")
         logger.error(f"❌ Error type: {type(e)}")
         import traceback
-        logger.error(f"❌ Full manual approach traceback: {traceback.format_exc()}")
-        
-        # Try fallback method
-        logger.info("🔄 Attempting fallback method...")
-        fallback_result = generate_with_voice_profile_fallback(voice_profile, voice_id, text)
-        if fallback_result is not None:
-            logger.info("✅ Fallback method succeeded")
-            return fallback_result
-        else:
-            logger.error("❌ Both manual and fallback methods failed")
-            return None
+        logger.error(f"❌ Full voice sample generation traceback: {traceback.format_exc()}")
+        return None
 
 def validate_voice_profile(voice_profile: np.ndarray) -> bool:
     """Validate voice profile embedding format"""
