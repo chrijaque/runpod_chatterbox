@@ -767,7 +767,7 @@ def handler(event):
     logger.info(f"📥 Input data type: {type(input_data)}")
     logger.info(f"📥 Input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'Not a dict'}")
     
-    # Extract parameters
+    # Extract parameter
     name = input_data.get('name')
     audio_data_base64 = input_data.get('audio_data')
     audio_format = input_data.get('audio_format', 'wav')
