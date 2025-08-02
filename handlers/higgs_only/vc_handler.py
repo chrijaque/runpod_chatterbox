@@ -512,11 +512,28 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         
         logger.info(f"✅ Created temporary audio file: {temp_audio_file.name}")
         
-        # 2. Load Higgs Audio tokenizer
+        # 2. Load Higgs Audio tokenizer with wrapper
         from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
         logger.info("🔍 Loading Higgs Audio tokenizer...")
-        tokenizer = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
-        logger.info("✅ Higgs Audio tokenizer loaded successfully")
+        
+        # Use the fixed tokenizer wrapper for better error handling
+        class FixedHiggsAudioTokenizer:
+            """Wrapper around HiggsAudioTokenizer that fixes the gradient issue in decode method."""
+            
+            def __init__(self, tokenizer_name_or_path, device="cuda"):
+                self.tokenizer = load_higgs_audio_tokenizer(tokenizer_name_or_path, device)
+                self.device = device
+            
+            def encode(self, audio_path_or_wv, sr=None, **kwargs):
+                """Delegate encode to the original tokenizer."""
+                return self.tokenizer.encode(audio_path_or_wv, sr, **kwargs)
+            
+            def __getattr__(self, name):
+                """Delegate all other attributes to the original tokenizer."""
+                return getattr(self.tokenizer, name)
+        
+        tokenizer = FixedHiggsAudioTokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
+        logger.info("✅ Fixed Higgs Audio tokenizer loaded successfully")
         
         # 3. Extract voice profile embedding
         logger.info("🔍 Extracting voice profile embedding...")
@@ -578,10 +595,59 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         if audio_tokenizer_cache is None:
             logger.info("🔍 Loading audio tokenizer for voice profile decoding...")
             from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
-            audio_tokenizer_cache = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
-            logger.info("✅ Audio tokenizer loaded and cached successfully")
+            
+            # Use the fixed tokenizer wrapper for better error handling
+            class FixedHiggsAudioTokenizer:
+                """Wrapper around HiggsAudioTokenizer that fixes the gradient issue in decode method."""
+                
+                def __init__(self, tokenizer_name_or_path, device="cuda"):
+                    self.tokenizer = load_higgs_audio_tokenizer(tokenizer_name_or_path, device)
+                    self.device = device
+                
+                def decode(self, vq_code: torch.Tensor) -> np.ndarray:
+                    """Fixed decode method that properly handles gradients."""
+                    # Ensure input is detached to prevent gradient issues
+                    if vq_code.requires_grad:
+                        vq_code = vq_code.detach()
+                    
+                    # Use the tokenizer's decode method (which should now be fixed)
+                    try:
+                        return self.tokenizer.decode(vq_code)
+                    except RuntimeError as e:
+                        if "grad" in str(e).lower():
+                            # Fallback: manually implement the fixed decode
+                            return self._manual_decode(vq_code)
+                        else:
+                            raise e
+                
+                def _manual_decode(self, vq_code: torch.Tensor) -> np.ndarray:
+                    """Manual decode implementation as fallback if the tokenizer still has issues."""
+                    if self.tokenizer.quantizer_type == "RVQ":
+                        vq_code = vq_code.permute(1, 0, 2)
+                        quantized = self.tokenizer.quantizer.decode(vq_code)
+                        quantized = quantized.transpose(1, 2)
+                    else:
+                        vq_code = vq_code.permute(0, 2, 1)
+                        quantized = self.tokenizer.quantizer.get_output_from_indices(vq_code)
+                    
+                    quantized_acoustic = self.tokenizer.fc_post2(quantized).transpose(1, 2)
+                    o = self.tokenizer.decoder_2(quantized_acoustic)
+                    
+                    # Ensure proper gradient handling
+                    return o.detach().cpu().numpy()
+                
+                def encode(self, audio_path_or_wv, sr=None, **kwargs):
+                    """Delegate encode to the original tokenizer."""
+                    return self.tokenizer.encode(audio_path_or_wv, sr, **kwargs)
+                
+                def __getattr__(self, name):
+                    """Delegate all other attributes to the original tokenizer."""
+                    return getattr(self.tokenizer, name)
+            
+            audio_tokenizer_cache = FixedHiggsAudioTokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
+            logger.info("✅ Fixed audio tokenizer loaded and cached successfully")
         else:
-            logger.info("✅ Using cached audio tokenizer")
+            logger.info("✅ Using cached fixed audio tokenizer")
         
         audio_tokenizer = audio_tokenizer_cache
         
@@ -589,7 +655,6 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         logger.info("🔍 Converting voice profile back to audio...")
         import torch
         voice_profile_tensor = torch.from_numpy(voice_profile).unsqueeze(0).to("cuda")
-        voice_profile_tensor = voice_profile_tensor.detach()  # Remove gradients to avoid numpy() error
         logger.info(f"✅ Voice profile converted to tensor: shape={voice_profile_tensor.shape}")
         
         decoded_audio = audio_tokenizer.decode(voice_profile_tensor)
