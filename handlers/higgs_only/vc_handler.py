@@ -43,6 +43,55 @@ bucket = None
 # Cache for audio tokenizer to avoid reloading
 audio_tokenizer_cache = None
 
+def initialize_cuda_device():
+    """Initialize and clean up CUDA device"""
+    try:
+        import torch
+        import gc
+        
+        logger.info("🔍 Initializing CUDA device...")
+        
+        # Check if CUDA is available
+        if not torch.cuda.is_available():
+            logger.error("❌ CUDA is not available")
+            return False
+        
+        # Clear GPU memory
+        logger.info("🔍 Clearing GPU memory...")
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+        # Check device availability
+        device_count = torch.cuda.device_count()
+        logger.info(f"🔍 CUDA devices available: {device_count}")
+        
+        if device_count > 0:
+            current_device = torch.cuda.current_device()
+            device_name = torch.cuda.get_device_name(current_device)
+            memory_allocated = torch.cuda.memory_allocated(current_device) / 1024**3
+            memory_reserved = torch.cuda.memory_reserved(current_device) / 1024**3
+            
+            logger.info(f"🔍 Current CUDA device: {current_device}")
+            logger.info(f"🔍 Device name: {device_name}")
+            logger.info(f"🔍 Memory allocated: {memory_allocated:.2f} GB")
+            logger.info(f"🔍 Memory reserved: {memory_reserved:.2f} GB")
+            
+            # Set device explicitly
+            torch.cuda.set_device(current_device)
+            logger.info(f"✅ CUDA device {current_device} set successfully")
+            
+            return True
+        else:
+            logger.error("❌ No CUDA devices available")
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ CUDA initialization failed: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full CUDA initialization traceback: {traceback.format_exc()}")
+        return False
+
 # Model paths for Higgs Audio (from network volume)
 MODEL_PATH = "/runpod-volume/higgs_audio_generation"
 AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
@@ -202,34 +251,67 @@ logger.info("🔧 Pre-loading Higgs Audio models...")
 serve_engine = None
 model = None
 
-try:
-    if HIGGS_AVAILABLE:
-        logger.info("🔍 Attempting to pre-load Higgs Audio serve engine...")
-        logger.info(f"   - Model path: {MODEL_PATH}")
-        logger.info(f"   - Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
-        logger.info(f"   - Device: cuda")
-        
-        serve_engine = HiggsAudioServeEngine(
-            model_name_or_path=MODEL_PATH,
-            audio_tokenizer_name_or_path=AUDIO_TOKENIZER_PATH,
-            device="cuda"
-        )
-        
-        model = serve_engine  # For compatibility with existing code
-        logger.info("✅ Higgs Audio models pre-loaded successfully")
-        logger.info(f"✅ Serve engine type: {type(serve_engine)}")
-    else:
-        logger.error("❌ Higgs Audio components not available for pre-loading")
-        serve_engine = None
-        model = None
-        
-except Exception as e:
-    logger.error(f"❌ Failed to pre-load Higgs Audio models: {e}")
-    logger.error(f"❌ Error type: {type(e)}")
-    import traceback
-    logger.error(f"❌ Full pre-load traceback: {traceback.format_exc()}")
+# Step 1: Initialize CUDA device
+logger.info("🔍 Step 1: Initializing CUDA device...")
+if not initialize_cuda_device():
+    logger.error("❌ CUDA device initialization failed")
     serve_engine = None
     model = None
+else:
+    # Step 2: Try to load models with retry logic
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if HIGGS_AVAILABLE:
+                logger.info(f"🔍 Step 2: Attempt {attempt + 1}/{max_retries} to pre-load Higgs Audio serve engine...")
+                logger.info(f"   - Model path: {MODEL_PATH}")
+                logger.info(f"   - Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
+                logger.info(f"   - Device: cuda")
+                
+                serve_engine = HiggsAudioServeEngine(
+                    model_name_or_path=MODEL_PATH,
+                    audio_tokenizer_name_or_path=AUDIO_TOKENIZER_PATH,
+                    device="cuda"
+                )
+                
+                model = serve_engine  # For compatibility with existing code
+                logger.info("✅ Higgs Audio models pre-loaded successfully")
+                logger.info(f"✅ Serve engine type: {type(serve_engine)}")
+                break  # Success, exit retry loop
+            else:
+                logger.error("❌ Higgs Audio components not available for pre-loading")
+                serve_engine = None
+                model = None
+                break
+                
+        except RuntimeError as e:
+            if "CUDA" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"⚠️ CUDA error on attempt {attempt + 1}, retrying in 5 seconds...")
+                import time
+                time.sleep(5)  # Wait 5 seconds before retry
+                
+                # Clear memory before retry
+                import torch
+                import gc
+                torch.cuda.empty_cache()
+                gc.collect()
+                continue
+            else:
+                logger.error(f"❌ Failed to pre-load Higgs Audio models: {e}")
+                logger.error(f"❌ Error type: {type(e)}")
+                import traceback
+                logger.error(f"❌ Full pre-load traceback: {traceback.format_exc()}")
+                serve_engine = None
+                model = None
+                break
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during model loading: {e}")
+            logger.error(f"❌ Error type: {type(e)}")
+            import traceback
+            logger.error(f"❌ Full pre-load traceback: {traceback.format_exc()}")
+            serve_engine = None
+            model = None
+            break
 
 def initialize_firebase():
     """Initialize Firebase storage client using google-cloud-storage"""
@@ -350,6 +432,67 @@ def initialize_model():
     else:
         logger.error("❌ Model not pre-loaded")
         raise RuntimeError("Higgs Audio model not available - pre-loading failed")
+
+def ensure_model_loaded():
+    """Ensure model is loaded, try runtime loading if pre-loading failed"""
+    global serve_engine, model
+    
+    if serve_engine is not None and model is not None:
+        logger.info("✅ Model already loaded")
+        return True
+    
+    logger.warning("⚠️ Model not pre-loaded, attempting runtime loading...")
+    
+    # Step 1: Initialize CUDA device
+    logger.info("🔍 Step 1: Initializing CUDA device for runtime loading...")
+    if not initialize_cuda_device():
+        logger.error("❌ CUDA device initialization failed for runtime loading")
+        return False
+    
+    # Step 2: Try to load models with retry logic
+    max_retries = 2  # Fewer retries for runtime loading
+    for attempt in range(max_retries):
+        try:
+            if HIGGS_AVAILABLE:
+                logger.info(f"🔍 Step 2: Runtime loading attempt {attempt + 1}/{max_retries}...")
+                logger.info(f"   - Model path: {MODEL_PATH}")
+                logger.info(f"   - Audio tokenizer path: {AUDIO_TOKENIZER_PATH}")
+                logger.info(f"   - Device: cuda")
+                
+                serve_engine = HiggsAudioServeEngine(
+                    model_name_or_path=MODEL_PATH,
+                    audio_tokenizer_name_or_path=AUDIO_TOKENIZER_PATH,
+                    device="cuda"
+                )
+                
+                model = serve_engine  # For compatibility with existing code
+                logger.info("✅ Higgs Audio models loaded successfully at runtime")
+                logger.info(f"✅ Serve engine type: {type(serve_engine)}")
+                return True
+            else:
+                logger.error("❌ Higgs Audio components not available for runtime loading")
+                return False
+                
+        except RuntimeError as e:
+            if "CUDA" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"⚠️ CUDA error on runtime attempt {attempt + 1}, retrying in 3 seconds...")
+                import time
+                time.sleep(3)  # Shorter wait for runtime loading
+                
+                # Clear memory before retry
+                import torch
+                import gc
+                torch.cuda.empty_cache()
+                gc.collect()
+                continue
+            else:
+                logger.error(f"❌ Failed to load Higgs Audio models at runtime: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during runtime model loading: {e}")
+            return False
+    
+    return False
 
 def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarray]:
     """Extract voice profile embedding using Higgs Audio tokenizer"""
@@ -612,12 +755,12 @@ def handler(event):
         logger.info(f"   - First 100 bytes: {audio_data[:100]}")
         logger.info(f"   - Last 100 bytes: {audio_data[-100:]}")
         
-        # Check if model is pre-loaded
-        if not model:
-            logger.error("❌ Model not pre-loaded")
+        # Check if model is loaded (with runtime loading fallback)
+        if not ensure_model_loaded():
+            logger.error("❌ Model loading failed")
             return {"status": "error", "message": "Higgs Audio model not available"}
         else:
-            logger.info("✅ Model already pre-loaded")
+            logger.info("✅ Model loaded successfully")
         
         start_time = time.time()
         logger.info(f"⏱️ Starting voice cloning process at: {datetime.fromtimestamp(start_time)}")
