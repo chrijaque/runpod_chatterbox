@@ -28,6 +28,23 @@ async def clone_voice(request: VoiceCloneRequest):
     try:
         logger.info(f"🎤 Voice clone request received for: {request.name}")
         logger.info(f"📊 Request details: language={request.language}, kids_voice={request.is_kids_voice}")
+        logger.info(f"🎯 Model type: {request.model_type}")
+        
+        # Debug audio data received from frontend
+        logger.info(f"🔍 Audio data details from frontend:")
+        logger.info(f"   - Has audio data: {bool(request.audio_data)}")
+        logger.info(f"   - Audio data length: {len(request.audio_data) if request.audio_data else 0}")
+        logger.info(f"   - Audio format: {request.audio_format}")
+        logger.info(f"   - Audio data preview: {request.audio_data[:200] + '...' if request.audio_data and len(request.audio_data) > 200 else request.audio_data}")
+        logger.info(f"   - Audio data end: {request.audio_data[-100:] if request.audio_data and len(request.audio_data) > 100 else request.audio_data}")
+        
+        # Validate audio data before sending to RunPod
+        if not request.audio_data or len(request.audio_data) < 1000:
+            logger.error(f"❌ Invalid audio data received from frontend:")
+            logger.error(f"   - Has audio data: {bool(request.audio_data)}")
+            logger.error(f"   - Audio data length: {len(request.audio_data) if request.audio_data else 0}")
+            logger.error(f"   - Minimum expected: 1000")
+            raise HTTPException(status_code=400, detail="Invalid audio data - please provide a proper audio file")
         
         # Call RunPod for voice cloning
         result = runpod_client.create_voice_clone(
@@ -63,6 +80,11 @@ async def clone_voice(request: VoiceCloneRequest):
                 sample_audio_path=sample_audio_path,
                 metadata=metadata
             )
+        elif result.get("status") == "error":
+            # Handle error response from RunPod
+            error_message = result.get("message", "Unknown error occurred")
+            logger.error(f"❌ RunPod job failed: {error_message}")
+            raise HTTPException(status_code=500, detail=error_message)
         else:
             error_message = result.get("message", "Unknown error occurred")
             logger.error(f"❌ Voice clone failed: {error_message}")

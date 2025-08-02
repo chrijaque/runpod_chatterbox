@@ -248,19 +248,47 @@ export default function Home() {
 
             console.log('🚀 Starting voice generation...', { name, audioFormat, hasAudioData: !!audioData });
 
+            // Debug audio data before sending
+            console.log('🔍 Audio data details before API call:', {
+                hasAudioData: !!audioData,
+                audioDataLength: audioData?.length || 0,
+                audioFormat: audioFormat,
+                audioDataPreview: audioData?.substring(0, 200) + '...' || 'No data',
+                audioDataEnd: audioData?.substring(-100) || 'No data'
+            });
+
+            // Validate audio data before sending
+            if (!audioData || audioData.length < 1000) {
+                console.error('❌ Invalid audio data before API call:', {
+                    hasAudioData: !!audioData,
+                    audioDataLength: audioData?.length || 0,
+                    minimumExpected: 1000
+                });
+                throw new Error('Invalid audio data - please record or upload a proper audio file');
+            }
+
+            const requestBody = {
+                name: name,
+                audio_data: audioData,
+                audio_format: audioFormat,
+                language: language,
+                is_kids_voice: isKidsVoice,
+                model_type: modelType,  // New: include model type
+            };
+
+            console.log('📤 Sending request to API:', {
+                endpoint: API_ENDPOINT,
+                requestBodyKeys: Object.keys(requestBody),
+                audioDataLength: requestBody.audio_data?.length || 0,
+                modelType: requestBody.model_type
+            });
+
             const response = await fetch(API_ENDPOINT, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    name: name,
-                    audio_data: audioData,
-                    audio_format: audioFormat,
-                    language: language,
-                    is_kids_voice: isKidsVoice,
-                    model_type: modelType,  // New: include model type
-                }),
+                body: JSON.stringify(requestBody),
                 signal: abortControllerRef.current.signal,
             });
 
@@ -379,15 +407,49 @@ export default function Home() {
     }, []);
 
     const handleAudioReady = (base64Audio: string) => {
-        console.log('Audio recording ready');
+        console.log('🎤 Audio recording ready');
+        console.log('🔍 Audio data details:', {
+            hasData: !!base64Audio,
+            dataType: typeof base64Audio,
+            dataLength: base64Audio?.length || 0,
+            dataPreview: base64Audio?.substring(0, 100) + '...' || 'No data'
+        });
+        
+        // Validate the audio data
+        if (!base64Audio || base64Audio.length < 100) {
+            console.error('❌ Invalid audio data received:', {
+                hasData: !!base64Audio,
+                dataLength: base64Audio?.length || 0
+            });
+            return;
+        }
+        
         setAudioData(base64Audio);
         setAudioFormat('wav');
+        console.log('✅ Audio data set successfully');
     };
 
     const handleFileSelect = (base64Audio: string, format: string) => {
-        console.log('File selected:', { format, audioLength: base64Audio?.length });
+        console.log('📁 File selected:', { 
+            format, 
+            audioLength: base64Audio?.length || 0,
+            dataType: typeof base64Audio,
+            dataPreview: base64Audio?.substring(0, 100) + '...' || 'No data'
+        });
+        
+        // Validate the audio data
+        if (!base64Audio || base64Audio.length < 100) {
+            console.error('❌ Invalid audio file data received:', {
+                hasData: !!base64Audio,
+                dataLength: base64Audio?.length || 0,
+                format: format
+            });
+            return;
+        }
+        
         setAudioData(base64Audio);
         setAudioFormat(format);
+        console.log('✅ File audio data set successfully');
     };
 
     return (

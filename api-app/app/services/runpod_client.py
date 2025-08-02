@@ -59,6 +59,23 @@ class RunPodClient:
             logger.info(f"   audio_base64 length: {len(audio_base64) if audio_base64 else 0}")
             logger.info(f"   audio_format: {audio_format}")
             logger.info(f"   response_format: {response_format}")
+            logger.info(f"   model_type: {model_type}")
+            
+            # Debug audio data being sent to RunPod
+            logger.info(f"🔍 Audio data details being sent to RunPod:")
+            logger.info(f"   - Has audio data: {bool(audio_base64)}")
+            logger.info(f"   - Audio data length: {len(audio_base64) if audio_base64 else 0}")
+            logger.info(f"   - Audio format: {audio_format}")
+            logger.info(f"   - Audio data preview: {audio_base64[:200] + '...' if audio_base64 and len(audio_base64) > 200 else audio_base64}")
+            logger.info(f"   - Audio data end: {audio_base64[-100:] if audio_base64 and len(audio_base64) > 100 else audio_base64}")
+            
+            # Validate audio data before sending to RunPod
+            if not audio_base64 or len(audio_base64) < 1000:
+                logger.error(f"❌ Invalid audio data being sent to RunPod:")
+                logger.error(f"   - Has audio data: {bool(audio_base64)}")
+                logger.error(f"   - Audio data length: {len(audio_base64) if audio_base64 else 0}")
+                logger.error(f"   - Minimum expected: 1000")
+                raise Exception("Invalid audio data - audio file too small or empty")
             
             # Route to correct endpoint based on model type
             if model_type.lower() in ["chatterbox", "chatterboxtts", "cb"]:
@@ -88,7 +105,8 @@ class RunPodClient:
             
             logger.info(f"🚀 Creating voice clone for: {name}")
             logger.info(f"📡 Calling RunPod API: {url}")
-            logger.info(f"📡 Endpoint ID: {self.voice_endpoint_id}")
+            logger.info(f"📡 Endpoint ID: {endpoint_id}")
+            logger.info(f"📡 Payload audio data length: {len(payload['input']['audio_data']) if payload['input']['audio_data'] else 0}")
             logger.info(f"📡 Headers: {self.headers}")
             
             response = requests.post(url, json=payload, headers=self.headers)
@@ -290,11 +308,21 @@ class RunPodClient:
                     logger.info(f"📦 Job output keys: {list(output.keys()) if isinstance(output, dict) else 'Not a dict'}")
                     return output
                 elif status.get("status") == "FAILED":
-                    logger.error(f"❌ Job {job_id} failed: {status.get('error', 'Unknown error')}")
-                    raise Exception(f"Job failed: {status.get('error', 'Unknown error')}")
+                    error_message = status.get('error', 'Unknown error')
+                    logger.error(f"❌ Job {job_id} failed: {error_message}")
+                    # Return the error message instead of raising an exception
+                    return {
+                        "status": "error",
+                        "message": error_message,
+                        "job_id": job_id
+                    }
                 elif status.get("status") == "CANCELLED":
                     logger.warning(f"⚠️ Job {job_id} was cancelled")
-                    raise Exception("Job was cancelled")
+                    return {
+                        "status": "error",
+                        "message": "Job was cancelled",
+                        "job_id": job_id
+                    }
                 
                 logger.info(f"⏳ Job {job_id} status: {status.get('status')} - waiting {poll_interval}s...")
                 time.sleep(poll_interval)
@@ -303,7 +331,13 @@ class RunPodClient:
                 logger.error(f"❌ Error polling job status: {e}")
                 raise
         
-        raise Exception(f"Job {job_id} timed out after {timeout} seconds")
+        # Timeout reached
+        logger.error(f"❌ Job {job_id} timed out after {timeout} seconds")
+        return {
+            "status": "error",
+            "message": f"Job timed out after {timeout} seconds",
+            "job_id": job_id
+        }
     
     def is_configured(self) -> bool:
         """Check if RunPod is properly configured"""

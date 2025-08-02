@@ -321,22 +321,43 @@ def handler(event):
     logger.info(f"📥 Input data type: {type(input_data)}")
     logger.info(f"📥 Input keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'Not a dict'}")
     
-    # Extract parameters (compatible with API format)
+    # Extract parameters
     name = input_data.get('name')
     audio_data_base64 = input_data.get('audio_data')
-    text = input_data.get('text', "Hello, this is a test of the voice cloning system.")
+    audio_format = input_data.get('audio_format', 'wav')
+    response_format = input_data.get('responseFormat', 'base64')
+    language = input_data.get('language', 'en')
+    is_kids_voice = input_data.get('is_kids_voice', False)
+    model_type = input_data.get('model_type', 'higgs')
+    text = f"Hello, this is a test of the voice cloning system."
     
-    logger.info(f"🔍 Extracted parameters:")
+    logger.info("🔍 Extracted parameters:")
     logger.info(f"   - Name: {name}")
     logger.info(f"   - Audio data base64: {'SET' if audio_data_base64 else 'NOT SET'}")
+    logger.info(f"   - Audio format: {audio_format}")
+    logger.info(f"   - Response format: {response_format}")
+    logger.info(f"   - Language: {language}")
+    logger.info(f"   - Is kids voice: {is_kids_voice}")
+    logger.info(f"   - Model type: {model_type}")
     logger.info(f"   - Text: {text}")
     
-    if not name or not audio_data_base64:
-        logger.error("❌ Missing required parameters: name and audio_data")
-        return {"status": "error", "message": "name and audio_data are required"}
+    # Debug audio data received from API
+    logger.info(f"🔍 Audio data details received from API:")
+    logger.info(f"   - Has audio data: {bool(audio_data_base64)}")
+    logger.info(f"   - Audio data length: {len(audio_data_base64) if audio_data_base64 else 0}")
+    logger.info(f"   - Audio format: {audio_format}")
+    logger.info(f"   - Audio data preview: {audio_data_base64[:200] + '...' if audio_data_base64 and len(audio_data_base64) > 200 else audio_data_base64}")
+    logger.info(f"   - Audio data end: {audio_data_base64[-100:] if audio_data_base64 and len(audio_data_base64) > 100 else audio_data_base64}")
     
-    # Generate voice_id from name (compatible with ChatterboxTTS format)
-    import hashlib
+    # Validate audio data before processing
+    if not audio_data_base64 or len(audio_data_base64) < 1000:
+        logger.error(f"❌ Invalid audio data received from API:")
+        logger.error(f"   - Has audio data: {bool(audio_data_base64)}")
+        logger.error(f"   - Audio data length: {len(audio_data_base64) if audio_data_base64 else 0}")
+        logger.error(f"   - Minimum expected: 1000")
+        return {"status": "error", "message": "Invalid audio data - audio file too small or empty"}
+    
+    # Generate voice ID
     voice_id = f"voice_{name.lower().replace(' ', '_')}"
     logger.info(f"🎯 Generated voice_id: {voice_id} from name: {name}")
     
@@ -345,6 +366,12 @@ def handler(event):
         logger.info("🔍 Decoding audio data from base64...")
         audio_data = base64.b64decode(audio_data_base64)
         logger.info(f"✅ Audio data decoded: {len(audio_data)} bytes")
+        
+        # Debug decoded audio data
+        logger.info(f"🔍 Decoded audio data details:")
+        logger.info(f"   - Decoded data length: {len(audio_data)} bytes")
+        logger.info(f"   - First 100 bytes: {audio_data[:100]}")
+        logger.info(f"   - Last 100 bytes: {audio_data[-100:]}")
         
         # Check if model is pre-loaded
         if not model:
