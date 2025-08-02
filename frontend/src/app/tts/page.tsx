@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_API, TTS_GENERATIONS_API } from '@/config/api';
-import { ModelToggle, ModelType } from '@/components/ModelToggle';
+
 import Link from 'next/link';
 
 interface Voice {
@@ -47,7 +47,7 @@ export default function TTSPage() {
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
     const [storyType, setStoryType] = useState<string>('user');
-    const [modelType, setModelType] = useState<ModelType>('chatterbox');
+    const [modelType] = useState<'chatterbox'>('chatterbox');
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
     const [ttsGenerations, setTtsGenerations] = useState<TTSGeneration[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -374,12 +374,14 @@ export default function TTSPage() {
                             </p>
                         </div>
 
-                        {/* Model Selection */}
-                        <ModelToggle 
-                            modelType={modelType}
-                            onModelChange={setModelType}
-                            disabled={isLoading}
-                        />
+                        {/* Model Info */}
+                        <div className="mb-6">
+                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                <div className="text-sm text-blue-800">
+                                    <strong>ChatterboxTTS:</strong> Fast, efficient TTS generation optimized for real-time applications.
+                                </div>
+                            </div>
+                        </div>
 
                         <div>
                             <label htmlFor="voice" className="form-label">

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
-import { ModelToggle, ModelType } from '@/components/ModelToggle';
+
 import { API_ENDPOINT, VOICE_API } from '@/config/api';
 
 interface FileMetadata {
@@ -41,7 +41,7 @@ export default function Home() {
     const [audioFormat, setAudioFormat] = useState<string>('wav');
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
-    const [modelType, setModelType] = useState<ModelType>('chatterbox');
+    const [modelType] = useState<'chatterbox'>('chatterbox');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<string | null>(null);
@@ -485,12 +485,14 @@ export default function Home() {
                             />
                         </div>
 
-                        {/* Model Selection */}
-                        <ModelToggle 
-                            modelType={modelType}
-                            onModelChange={setModelType}
-                            disabled={isLoading}
-                        />
+                        {/* Model Info */}
+                        <div className="mb-6">
+                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                <div className="text-sm text-blue-800">
+                                    <strong>ChatterboxTTS:</strong> Fast, efficient voice cloning optimized for real-time applications.
+                                </div>
+                            </div>
+                        </div>
 
                         <div>
                             <label className="form-label mb-2">

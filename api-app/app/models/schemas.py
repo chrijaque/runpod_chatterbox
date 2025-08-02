@@ -7,7 +7,7 @@ class VoiceCloneRequest(BaseModel):
     audio_format: str = "wav"
     language: str = "en"
     is_kids_voice: bool = False
-    model_type: str = "chatterbox"  # New: model selection (chatterbox, higgs)
+    model_type: str = "chatterbox"  # Model selection (chatterbox only)
 
 class VoiceCloneResponse(BaseModel):
     status: str
@@ -23,7 +23,7 @@ class TTSGenerateRequest(BaseModel):
     language: str = "en"
     story_type: str = "user"
     is_kids_voice: bool = False
-    model_type: str = "chatterbox"  # New: model selection (chatterbox, higgs)
+    model_type: str = "chatterbox"  # Model selection (chatterbox only)
 
 class TTSGenerateResponse(BaseModel):
     status: str

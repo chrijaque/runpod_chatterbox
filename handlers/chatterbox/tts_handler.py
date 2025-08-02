@@ -1005,7 +1005,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
         )
         logger.info(f"🎵 TTS story uploaded: {audio_path_firebase}")
         
-        # Return response (compatible with Higgs Audio format)
+        # Return response
         response = {
             "status": "success",
             "voice_id": voice_id,

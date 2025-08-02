@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Model Comparison Script
-Compare ChatterboxTTS vs Higgs Audio performance and quality
+Compare ChatterboxTTS performance and quality
 """
 
 import time
@@ -93,9 +93,9 @@ def test_tts_generation(voice_id: str, text: str, model_type: str, api_url: str 
         }
 
 def compare_models():
-    """Compare both models"""
+    """Test ChatterboxTTS performance"""
     
-    print("🔍 ===== MODEL COMPARISON =====")
+    print("🔍 ===== CHATTERBOXTTS PERFORMANCE TEST =====")
     
     # Test audio file (you can replace with your own)
     test_audio_path = "reference.wav"  # Use your test audio file
@@ -110,54 +110,30 @@ def compare_models():
     print(f"✅ Loaded test audio: {len(audio_base64)} characters")
     
     # Test voice cloning
-    print("\n🎤 ===== VOICE CLONING COMPARISON =====")
+    print("\n🎤 ===== VOICE CLONING TEST =====")
     
     chatterbox_vc = test_voice_cloning(audio_base64, "chatterbox")
-    higgs_vc = test_voice_cloning(audio_base64, "higgs")
     
     print(f"\n📊 Voice Cloning Results:")
     print(f"ChatterboxTTS: {chatterbox_vc['duration']:.2f}s - {chatterbox_vc['status']}")
-    print(f"Higgs Audio: {higgs_vc['duration']:.2f}s - {higgs_vc['status']}")
     
     # Test TTS generation
-    print("\n🎵 ===== TTS GENERATION COMPARISON =====")
+    print("\n🎵 ===== TTS GENERATION TEST =====")
     
-    test_text = "Hello, this is a test of the unified TTS system. We are comparing the performance and quality of different models."
+    test_text = "Hello, this is a test of the ChatterboxTTS system. We are testing the performance and quality of the model."
     
     chatterbox_tts = test_tts_generation("test_voice_chatterbox", test_text, "chatterbox")
-    higgs_tts = test_tts_generation("test_voice_higgs", test_text, "higgs")
     
     print(f"\n📊 TTS Generation Results:")
     print(f"ChatterboxTTS: {chatterbox_tts['duration']:.2f}s - {chatterbox_tts['status']}")
-    print(f"Higgs Audio: {higgs_tts['duration']:.2f}s - {higgs_tts['status']}")
     
     # Summary
     print("\n📋 ===== SUMMARY =====")
-    print(f"Voice Cloning Speed:")
-    print(f"  ChatterboxTTS: {chatterbox_vc['duration']:.2f}s")
-    print(f"  Higgs Audio: {higgs_vc['duration']:.2f}s")
-    print(f"  Speed difference: {abs(chatterbox_vc['duration'] - higgs_vc['duration']):.2f}s")
-    
-    print(f"\nTTS Generation Speed:")
-    print(f"  ChatterboxTTS: {chatterbox_tts['duration']:.2f}s")
-    print(f"  Higgs Audio: {higgs_tts['duration']:.2f}s")
-    print(f"  Speed difference: {abs(chatterbox_tts['duration'] - higgs_tts['duration']):.2f}s")
-    
-    # Recommendations
-    print(f"\n💡 ===== RECOMMENDATIONS =====")
-    if chatterbox_vc['duration'] < higgs_vc['duration']:
-        print("✅ ChatterboxTTS is faster for voice cloning")
-    else:
-        print("✅ Higgs Audio is faster for voice cloning")
-    
-    if chatterbox_tts['duration'] < higgs_tts['duration']:
-        print("✅ ChatterboxTTS is faster for TTS generation")
-    else:
-        print("✅ Higgs Audio is faster for TTS generation")
+    print(f"Voice Cloning Speed: {chatterbox_vc['duration']:.2f}s")
+    print(f"TTS Generation Speed: {chatterbox_tts['duration']:.2f}s")
     
     print("\n🎯 Use Cases:")
-    print("  ChatterboxTTS: Real-time applications, quick prototyping")
-    print("  Higgs Audio: High-quality content, audiobooks, podcasts")
+    print("  ChatterboxTTS: Real-time applications, quick prototyping, voice cloning")
 
 if __name__ == "__main__":
     compare_models() 

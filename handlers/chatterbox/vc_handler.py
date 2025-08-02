@@ -682,7 +682,7 @@ def handle_voice_clone_request(input, responseFormat):
     logger.info(f"🎵 Recorded audio uploaded: {'YES' if recorded_audio_path else 'NO'}")
     logger.info(f"🎵 Voice sample uploaded: {'YES' if sample_audio_path else 'NO'}")
     
-    # Return response (compatible with Higgs Audio format)
+    # Return response
     response = {
         "status": "success",
         "voice_id": voice_id,
@@ -694,7 +694,7 @@ def handle_voice_clone_request(input, responseFormat):
         "recorded_url": recorded_audio_path,  # Use path as URL for compatibility
         "generation_time": time.time() - start_time if 'start_time' in locals() else 0,
         "model": "chatterbox_tts",
-        # Add Higgs Audio compatibility fields
+        # Add metadata fields
         "sample_audio_path": sample_audio_path,
         "embedding_path": profile_path_firebase,
         "voice_name": name,

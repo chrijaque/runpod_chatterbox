@@ -22,8 +22,6 @@ services:
       - RUNPOD_API_KEY=${RUNPOD_API_KEY}
       - VC_CB_ENDPOINT_ID=${VC_CB_ENDPOINT_ID}
       - TTS_CB_ENDPOINT_ID=${TTS_CB_ENDPOINT_ID}
-      - VC_Higgs_ENDPOINT_ID=${VC_Higgs_ENDPOINT_ID}
-      - TTS_Higgs_ENDPOINT_ID=${TTS_Higgs_ENDPOINT_ID}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]

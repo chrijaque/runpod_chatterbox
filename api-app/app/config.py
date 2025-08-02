@@ -39,9 +39,7 @@ class Settings:
     VC_CB_ENDPOINT_ID: Optional[str] = os.getenv("VC_CB_ENDPOINT_ID")
     TTS_CB_ENDPOINT_ID: Optional[str] = os.getenv("TTS_CB_ENDPOINT_ID")
     
-    # RunPod Configuration - Higgs Audio
-    VC_Higgs_ENDPOINT_ID: Optional[str] = os.getenv("VC_Higgs_ENDPOINT_ID")
-    TTS_Higgs_ENDPOINT_ID: Optional[str] = os.getenv("TTS_Higgs_ENDPOINT_ID")
+    # RunPod Configuration - ChatterboxTTS Only
 
     @classmethod
     def validate_firebase_config(cls) -> bool:
@@ -67,9 +65,7 @@ class Settings:
         return all([
             cls.RUNPOD_API_KEY,
             cls.VC_CB_ENDPOINT_ID,
-            cls.TTS_CB_ENDPOINT_ID,
-            cls.VC_Higgs_ENDPOINT_ID,
-            cls.TTS_Higgs_ENDPOINT_ID
+            cls.TTS_CB_ENDPOINT_ID
         ])
 
     @classmethod
@@ -87,10 +83,6 @@ class Settings:
                 missing.append("VC_CB_ENDPOINT_ID")
             if not cls.TTS_CB_ENDPOINT_ID:
                 missing.append("TTS_CB_ENDPOINT_ID")
-            if not cls.VC_Higgs_ENDPOINT_ID:
-                missing.append("VC_Higgs_ENDPOINT_ID")
-            if not cls.TTS_Higgs_ENDPOINT_ID:
-                missing.append("TTS_Higgs_ENDPOINT_ID")
         
         return missing
 
@@ -104,8 +96,6 @@ logger.info("🔍 ===== CONFIGURATION DEBUG =====")
 logger.info(f"📋 RUNPOD_API_KEY: {'SET' if settings.RUNPOD_API_KEY else 'NOT SET'}")
 logger.info(f"📋 VC_CB_ENDPOINT_ID: {settings.VC_CB_ENDPOINT_ID}")
 logger.info(f"📋 TTS_CB_ENDPOINT_ID: {settings.TTS_CB_ENDPOINT_ID}")
-logger.info(f"📋 VC_Higgs_ENDPOINT_ID: {settings.VC_Higgs_ENDPOINT_ID}")
-logger.info(f"📋 TTS_Higgs_ENDPOINT_ID: {settings.TTS_Higgs_ENDPOINT_ID}")
 logger.info(f"📋 FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
 logger.info(f"📋 FIREBASE_CREDENTIALS_FILE: {settings.FIREBASE_CREDENTIALS_FILE}")
 logger.info(f"📋 FIREBASE_CREDENTIALS_EXISTS: {Path(settings.FIREBASE_CREDENTIALS_FILE).exists()}")
