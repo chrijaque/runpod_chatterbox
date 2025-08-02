@@ -597,6 +597,9 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
             
             # Use the fixed tokenizer wrapper for better error handling
+            import torch
+            import numpy as np
+            
             class FixedHiggsAudioTokenizer:
                 """Wrapper around HiggsAudioTokenizer that fixes the gradient issue in decode method."""
                 
