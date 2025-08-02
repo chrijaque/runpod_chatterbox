@@ -40,6 +40,15 @@ except ImportError as e:
 storage_client = None
 bucket = None
 
+# Set cache directory to use network volume
+import os
+os.environ["HF_HOME"] = "/workspace/cache"
+os.environ["TRANSFORMERS_CACHE"] = "/workspace/cache"
+os.environ["HUGGINGFACE_HUB_CACHE"] = "/workspace/cache"
+
+# Configure PyTorch CUDA memory management
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 # Cache for audio tokenizer to avoid reloading
 audio_tokenizer_cache = None
 
@@ -96,12 +105,6 @@ def initialize_cuda_device():
 MODEL_PATH = "/runpod-volume/higgs_audio_generation"
 AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
 HUBERT_PATH = "/runpod-volume/hubert_base"
-
-# Set cache directory to use network volume
-import os
-os.environ["HF_HOME"] = "/workspace/cache"
-os.environ["TRANSFORMERS_CACHE"] = "/workspace/cache"
-os.environ["HUGGINGFACE_HUB_CACHE"] = "/workspace/cache"
 
 # MP3 conversion functions (from ChatterboxTTS implementation)
 def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
@@ -495,7 +498,7 @@ def ensure_model_loaded():
     return False
 
 def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarray]:
-    """Extract voice profile embedding using Higgs Audio tokenizer"""
+    """Extract voice profile embedding using Higgs Audio tokenizer with HuBERT cleanup"""
     global serve_engine
     
     logger.info(f"🔍 Starting voice profile extraction for: {voice_id}")
@@ -528,6 +531,25 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         
         logger.info(f"✅ Voice profile extracted: shape={voice_profile_np.shape}")
         logger.info(f"✅ Voice profile size: {voice_profile_np.nbytes / 1024 / 1024:.2f} MB")
+        
+        # 6. HuBERT cleanup after voice profile extraction
+        logger.info("🔍 HuBERT cleanup: Unloading HuBERT model after voice profile extraction...")
+        import torch
+        import gc
+        
+        # Clear GPU memory
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+        # Check memory after cleanup
+        memory_allocated = torch.cuda.memory_allocated() / 1024**3
+        memory_reserved = torch.cuda.memory_reserved() / 1024**3
+        memory_free = torch.cuda.get_device_properties(0).total_memory / 1024**3 - memory_reserved
+        
+        logger.info(f"✅ After HuBERT cleanup:")
+        logger.info(f"   - Allocated: {memory_allocated:.2f} GB")
+        logger.info(f"   - Reserved: {memory_reserved:.2f} GB")
+        logger.info(f"   - Free: {memory_free:.2f} GB")
         
         return voice_profile_np
         
@@ -765,8 +787,14 @@ def handler(event):
         start_time = time.time()
         logger.info(f"⏱️ Starting voice cloning process at: {datetime.fromtimestamp(start_time)}")
         
-        # Step 1: Extract voice profile embedding
-        logger.info("🔄 Step 1: Extracting voice profile embedding...")
+        # Step 1: Extract voice profile embedding (with HuBERT cleanup)
+        logger.info("🔄 Step 1: Extracting voice profile embedding with HuBERT cleanup...")
+        
+        # Check memory before voice profile extraction
+        import torch
+        memory_before = torch.cuda.memory_allocated() / 1024**3
+        logger.info(f"🔍 Memory before voice profile extraction: {memory_before:.2f} GB")
+        
         voice_profile = extract_voice_profile(audio_data, voice_id)
         
         if voice_profile is None:
@@ -779,6 +807,12 @@ def handler(event):
             return {"status": "error", "message": "Invalid voice profile format"}
         
         logger.info(f"✅ Voice profile embedding extraction completed in {time.time() - start_time:.2f}s")
+        
+        # Check memory after voice profile extraction
+        memory_after = torch.cuda.memory_allocated() / 1024**3
+        memory_freed = memory_before - memory_after
+        logger.info(f"🔍 Memory after voice profile extraction: {memory_after:.2f} GB")
+        logger.info(f"🔍 Memory freed by HuBERT cleanup: {memory_freed:.2f} GB")
         
         # Step 2: Generate voice sample
         logger.info("🔄 Step 2: Generating voice sample...")
