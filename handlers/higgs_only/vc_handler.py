@@ -130,69 +130,110 @@ except Exception as e:
     model = None
 
 def initialize_firebase():
-    """Initialize Firebase Storage client using firebase-admin"""
+    """Initialize Firebase storage client using google-cloud-storage"""
     global storage_client, bucket
     
     try:
-        import firebase_admin
-        from firebase_admin import credentials, storage
+        from google.cloud import storage
         
-        # Get Firebase credentials from environment
-        firebase_creds = os.getenv('RUNPOD_SECRET_Firebase')
-        bucket_name = os.getenv('FIREBASE_STORAGE_BUCKET')
+        # Debug: Check environment variables
+        logger.info("🔍 Checking Firebase environment variables...")
+        firebase_secret = os.getenv('RUNPOD_SECRET_Firebase')
+        google_creds = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        logger.info(f"🔍 RUNPOD_SECRET_Firebase exists: {firebase_secret is not None}")
+        logger.info(f"🔍 GOOGLE_APPLICATION_CREDENTIALS exists: {google_creds is not None}")
         
-        if not firebase_creds or not bucket_name:
-            logger.error("❌ Firebase credentials or bucket name not found in environment")
-            return False
+        # Check if we're in RunPod and have the secret
+        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
         
-        # Parse Firebase credentials
-        import json
-        creds_dict = json.loads(firebase_creds)
+        if firebase_secret_path:
+            if firebase_secret_path.startswith('{'):
+                # It's JSON content, create a temporary file
+                logger.info("✅ Using RunPod Firebase secret as JSON content")
+                import tempfile
+                import json
+                
+                # Validate JSON first
+                try:
+                    creds_data = json.loads(firebase_secret_path)
+                    logger.info(f"✅ Valid JSON with project_id: {creds_data.get('project_id', 'unknown')}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Invalid JSON in RUNPOD_SECRET_Firebase: {e}")
+                    raise
+                
+                # Create temporary file with the JSON content
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                    json.dump(creds_data, tmp_file)
+                    tmp_path = tmp_file.name
+                
+                logger.info(f"✅ Created temporary credentials file: {tmp_path}")
+                storage_client = storage.Client.from_service_account_json(tmp_path)
+                
+            elif os.path.exists(firebase_secret_path):
+                # It's a file path
+                logger.info(f"✅ Using RunPod Firebase secret file: {firebase_secret_path}")
+                storage_client = storage.Client.from_service_account_json(firebase_secret_path)
+            else:
+                logger.warning(f"⚠️ RUNPOD_SECRET_Firebase exists but is not JSON content or valid file path")
+                # Fallback to GOOGLE_APPLICATION_CREDENTIALS
+                logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+                storage_client = storage.Client()
+        else:
+            # No RunPod secret, fallback to GOOGLE_APPLICATION_CREDENTIALS
+            logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+            storage_client = storage.Client()
         
-        # Initialize Firebase Admin SDK
-        cred = credentials.Certificate(creds_dict)
-        firebase_admin.initialize_app(cred, {
-            'storageBucket': bucket_name
-        })
-        
-        # Get storage bucket
-        bucket = storage.bucket()
-        storage_client = bucket
-        
-        logger.info(f"✅ Firebase initialized successfully using firebase-admin")
-        logger.info(f"✅ Connected to bucket: {bucket_name}")
+        bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
+        logger.info("✅ Firebase storage client initialized successfully")
         return True
-        
     except Exception as e:
-        logger.error(f"❌ Failed to initialize Firebase: {e}")
+        logger.error(f"❌ Failed to initialize Firebase storage: {e}")
         return False
 
 def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
-    """Upload data to Firebase Storage"""
-    global bucket
+    """
+    Upload data directly to Firebase Storage with metadata
     
-    if not bucket:
+    :param data: Binary data to upload
+    :param destination_blob_name: Destination path in Firebase
+    :param content_type: MIME type of the file
+    :param metadata: Optional metadata to store with the file
+    :return: Public URL or None if failed
+    """
+    global bucket # Ensure bucket is accessible
+    if bucket is None:
+        logger.info("🔍 Bucket is None, initializing Firebase...")
         if not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot upload")
             return None
     
     try:
+        logger.info(f"🔍 Creating blob: {destination_blob_name}")
         blob = bucket.blob(destination_blob_name)
+        logger.info(f"🔍 Uploading {len(data)} bytes...")
         
         # Set metadata if provided
         if metadata:
             blob.metadata = metadata
+            logger.info(f"🔍 Set metadata: {metadata}")
+        
+        # Set content type
+        blob.content_type = content_type
+        logger.info(f"🔍 Set content type: {content_type}")
         
         # Upload the data
         blob.upload_from_string(data, content_type=content_type)
+        logger.info(f"🔍 Upload completed, making public...")
         
         # Make the blob publicly accessible
         blob.make_public()
         
-        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name}")
-        return blob.public_url
+        public_url = blob.public_url
+        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+        return public_url
         
     except Exception as e:
-        logger.error(f"❌ Failed to upload to Firebase: {e}")
+        logger.error(f"❌ Firebase upload failed: {e}")
         return None
 
 def initialize_model():
@@ -329,7 +370,7 @@ def handler(event):
     language = input_data.get('language', 'en')
     is_kids_voice = input_data.get('is_kids_voice', False)
     model_type = input_data.get('model_type', 'higgs')
-    text = f"Hello, this is a test of the voice cloning system."
+    text = f"Hello, this is the voice clone of {name}. This voice is used to narrate whimsical stories and fairytales."
     
     logger.info("🔍 Extracted parameters:")
     logger.info(f"   - Name: {name}")

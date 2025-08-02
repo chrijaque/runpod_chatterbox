@@ -15,8 +15,9 @@ resemble-perth==1.0.1
 conformer==0.3.2
 safetensors==0.5.3
 
-# Firebase for cloud storage (let firebase-admin handle dependencies)
+# Firebase for cloud storage (matching ChatterboxTTS implementation)
 firebase-admin>=6.2.0
+google-cloud-storage>=2.10.0
 
 # Utilities
 python-dotenv>=1.0.0
