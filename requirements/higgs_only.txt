@@ -22,6 +22,9 @@ google-cloud-storage==2.10.0
 # Fix protobuf version conflict
 protobuf==3.19.6
 
+# Fix cryptography conflict (pinning to exact version compatible with pyopenssl)
+cryptography==41.0.0
+
 # Utilities
 python-dotenv>=1.0.0,<2.0.0
 
