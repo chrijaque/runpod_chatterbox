@@ -21,6 +21,11 @@ logger.info("🔍 Attempting to import Higgs Audio components...")
 try:
     from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine, HiggsAudioResponse
     from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
+    from boson_multimodal.model.higgs_audio import HiggsAudioModel
+    from boson_multimodal.data_collator.higgs_audio_collator import HiggsAudioSampleCollator
+    from boson_multimodal.dataset.chatml_dataset import ChatMLDatasetSample, prepare_chatml_sample
+    from boson_multimodal.model.higgs_audio.utils import revert_delay_pattern
+    from transformers import AutoConfig, AutoTokenizer
     HIGGS_AVAILABLE = True
     logger.info("✅ Successfully imported Higgs Audio components")
     logger.info(f"✅ HiggsAudioServeEngine: {HiggsAudioServeEngine}")
@@ -28,6 +33,8 @@ try:
     logger.info(f"✅ ChatMLSample: {ChatMLSample}")
     logger.info(f"✅ Message: {Message}")
     logger.info(f"✅ AudioContent: {AudioContent}")
+    logger.info(f"✅ HiggsAudioModel: {HiggsAudioModel}")
+    logger.info(f"✅ HiggsAudioSampleCollator: {HiggsAudioSampleCollator}")
 except ImportError as e:
     HIGGS_AVAILABLE = False
     logger.error(f"❌ Could not import Higgs Audio components: {e}")
@@ -561,7 +568,7 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         return None
 
 def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -> Optional[bytes]:
-    """Generate voice sample using voice profile tokens directly (following official example)"""
+    """Generate voice sample using voice profile tokens with proper voice cloning API"""
     global serve_engine
     
     logger.info(f"🔍 Starting voice sample generation for: {voice_id}")
@@ -573,37 +580,105 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         return None
     
     try:
-        # Step 1: Convert voice profile to tensor format (following official example)
+        # Step 1: Convert voice profile to tensor format
         logger.info("🔍 Converting voice profile to tensor format...")
         import torch
         voice_profile_tensor = torch.from_numpy(voice_profile).unsqueeze(0).to("cuda")
         logger.info(f"✅ Voice profile converted to tensor: shape={voice_profile_tensor.shape}")
         
-        # Step 2: Create messages following official example pattern
-        logger.info("🔍 Creating messages with voice profile...")
+        # Step 2: Create messages and audio_ids for voice cloning
+        logger.info("🔍 Creating messages and audio_ids for voice cloning...")
         messages = [
             Message(role="user", content=text)
         ]
-        chat_ml_sample = ChatMLSample(messages=messages)
-        logger.info(f"✅ ChatMLSample created with {len(messages)} messages")
         
-        # Step 3: Generate using voice profile tokens directly (no decoding!)
-        logger.info("🔍 Generating audio with voice profile tokens directly...")
-        response: HiggsAudioResponse = serve_engine.generate(
-            chat_ml_sample=chat_ml_sample,
-            max_new_tokens=1024,
-            temperature=0.3,
-            top_p=0.95,
-            top_k=50,
-            stop_strings=["<|end_of_text|>", "<|eot_id|>"]
+        # Create audio_ids list with voice profile tokens (following official example)
+        audio_ids = [voice_profile_tensor]
+        logger.info(f"✅ Audio IDs created: {len(audio_ids)} voice profile tokens")
+        
+        # Step 3: Use the correct voice cloning API
+        logger.info("🔍 Generating audio with voice cloning API...")
+        
+        # Create ChatMLSample
+        chat_ml_sample = ChatMLSample(messages=messages)
+        
+        # Prepare input tokens
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+        input_tokens, _, _, _ = prepare_chatml_sample(chat_ml_sample, tokenizer)
+        postfix = tokenizer.encode(
+            "<|start_header_id|>assistant<|end_header_id|>\n\n", add_special_tokens=False
+        )
+        input_tokens.extend(postfix)
+        
+        # Create sample with audio_ids
+        curr_sample = ChatMLDatasetSample(
+            input_ids=torch.LongTensor(input_tokens),
+            label_ids=None,
+            audio_ids_concat=torch.concat([ele.cpu() for ele in audio_ids], dim=1) if audio_ids else None,
+            audio_ids_start=torch.cumsum(
+                torch.tensor([0] + [ele.shape[1] for ele in audio_ids], dtype=torch.long), dim=0
+            ) if audio_ids else None,
+            audio_waveforms_concat=None,
+            audio_waveforms_start=None,
+            audio_sample_rate=None,
+            audio_speaker_indices=None,
         )
         
-        # Step 4: Convert response to MP3 bytes
-        logger.info("🔍 Converting response to MP3 bytes...")
-        audio_tensor = torch.from_numpy(response.audio)
-        logger.info(f"✅ Audio generated: shape={audio_tensor.shape}, sample_rate={response.sampling_rate}")
+        # Create collator and batch
+        config = AutoConfig.from_pretrained(MODEL_PATH)
+        collator = HiggsAudioSampleCollator(
+            whisper_processor=None,
+            audio_in_token_id=config.audio_in_token_idx,
+            audio_out_token_id=config.audio_out_token_idx,
+            audio_stream_bos_id=config.audio_stream_bos_id,
+            audio_stream_eos_id=config.audio_stream_eos_id,
+            encode_whisper_embed=config.encode_whisper_embed,
+            pad_token_id=config.pad_token_id,
+            return_audio_in_tokens=config.encode_audio_in_tokens,
+            use_delay_pattern=config.use_delay_pattern,
+            round_to=1,
+            audio_num_codebooks=config.audio_num_codebooks,
+        )
         
-        audio_bytes = tensor_to_mp3_bytes(audio_tensor, response.sampling_rate, "96k")
+        batch_data = collator([curr_sample])
+        batch = {k: v.contiguous().to("cuda") if isinstance(v, torch.Tensor) else v 
+                for k, v in batch_data.__dict__.items()}
+        
+        # Generate with voice cloning
+        logger.info("🔍 Generating audio with voice profile...")
+        outputs = serve_engine.model.generate(
+            **batch,
+            max_new_tokens=1024,
+            use_cache=True,
+            do_sample=True,
+            temperature=0.3,
+            top_k=50,
+            top_p=0.95,
+            stop_strings=["<|end_of_text|>", "<|eot_id|>"],
+            tokenizer=tokenizer,
+            seed=123,
+        )
+        
+        # Process output
+        step_audio_out_ids_l = []
+        for ele in outputs[1]:
+            audio_out_ids = ele
+            if config.use_delay_pattern:
+                audio_out_ids = revert_delay_pattern(audio_out_ids)
+            step_audio_out_ids_l.append(audio_out_ids.clip(0, serve_engine.audio_tokenizer.codebook_size - 1)[:, 1:-1])
+        
+        audio_out_ids = torch.concat(step_audio_out_ids_l, dim=1)
+        
+        # Decode audio
+        concat_audio_out_ids_cpu = audio_out_ids.detach().cpu()
+        concat_wv = serve_engine.audio_tokenizer.decode(concat_audio_out_ids_cpu.unsqueeze(0))[0, 0]
+        
+        # Convert to MP3 bytes
+        logger.info("🔍 Converting response to MP3 bytes...")
+        audio_tensor = torch.from_numpy(concat_wv)
+        logger.info(f"✅ Audio generated: shape={audio_tensor.shape}")
+        
+        audio_bytes = tensor_to_mp3_bytes(audio_tensor, 24000, "96k")
         logger.info(f"✅ Voice sample generated: {len(audio_bytes)} bytes (96k MP3)")
         return audio_bytes
         
