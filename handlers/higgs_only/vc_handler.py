@@ -669,9 +669,9 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         
         audio_out_ids = torch.concat(step_audio_out_ids_l, dim=1)
         
-        # Decode audio
-        concat_audio_out_ids_cpu = audio_out_ids.detach().cpu()
-        concat_wv = serve_engine.audio_tokenizer.decode(concat_audio_out_ids_cpu.unsqueeze(0))[0, 0]
+        # Decode audio (keep on CUDA)
+        concat_audio_out_ids = audio_out_ids.detach()
+        concat_wv = serve_engine.audio_tokenizer.decode(concat_audio_out_ids.unsqueeze(0))[0, 0]
         
         # Convert to MP3 bytes
         logger.info("🔍 Converting response to MP3 bytes...")
