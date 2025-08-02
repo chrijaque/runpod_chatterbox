@@ -466,9 +466,9 @@ def validate_voice_profile(voice_profile: np.ndarray) -> bool:
             logger.error(f"❌ Invalid codebook values in voice profile")
             return False
         
-        # Check reasonable size (1-10 MB)
+        # Check reasonable size (0.01-10 MB) - allow smaller profiles for short audio
         size_mb = voice_profile.nbytes / 1024 / 1024
-        if size_mb < 0.1 or size_mb > 10:
+        if size_mb < 0.01 or size_mb > 10:
             logger.error(f"❌ Voice profile size too large/small: {size_mb:.2f} MB")
             return False
         
