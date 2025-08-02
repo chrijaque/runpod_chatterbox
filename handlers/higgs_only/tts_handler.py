@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, Optional, List
 import numpy as np
 
-# Configure logging
+# Config logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
