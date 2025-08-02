@@ -28,4 +28,7 @@ cryptography==41.0.0
 # Utilities
 python-dotenv>=1.0.0,<2.0.0
 
+# Audio processing for MP3 conversion
+pydub>=0.25.0,<1.0.0
+
 # Note: Additional dependencies will be installed from the Higgs Audio repository 

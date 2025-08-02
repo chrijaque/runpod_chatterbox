@@ -51,6 +51,105 @@ os.environ["HF_HOME"] = "/workspace/cache"
 os.environ["TRANSFORMERS_CACHE"] = "/workspace/cache"
 os.environ["HUGGINGFACE_HUB_CACHE"] = "/workspace/cache"
 
+# MP3 conversion functions (from ChatterboxTTS implementation)
+def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
+    """
+    Convert audio tensor directly to MP3 bytes.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :param bitrate: MP3 bitrate (e.g., "96k", "128k", "160k")
+    :return: MP3 bytes
+    """
+    try:
+        from pydub import AudioSegment
+        # Convert tensor to AudioSegment
+        audio_segment = tensor_to_audiosegment(audio_tensor, sample_rate)
+        # Export to MP3 bytes
+        mp3_file = audio_segment.export(format="mp3", bitrate=bitrate)
+        # Read the bytes from the file object
+        mp3_bytes = mp3_file.read()
+        return mp3_bytes
+    except ImportError:
+        logger.warning("pydub not available, falling back to WAV")
+        return tensor_to_wav_bytes(audio_tensor, sample_rate)
+    except Exception as e:
+        logger.warning(f"Direct MP3 conversion failed: {e}, falling back to WAV")
+        return tensor_to_wav_bytes(audio_tensor, sample_rate)
+
+def tensor_to_audiosegment(audio_tensor, sample_rate):
+    """
+    Convert PyTorch audio tensor to pydub AudioSegment.
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: pydub AudioSegment
+    """
+    from pydub import AudioSegment
+    
+    # Convert tensor to numpy array
+    if audio_tensor.dim() == 2:
+        # Stereo: (channels, samples)
+        audio_np = audio_tensor.numpy()
+    else:
+        # Mono: (samples,) -> (1, samples)
+        audio_np = audio_tensor.unsqueeze(0).numpy()
+    
+    # Convert to int16 for pydub
+    audio_np = (audio_np * 32767).astype(np.int16)
+    
+    # Create AudioSegment
+    audio_segment = AudioSegment(
+        audio_np.tobytes(),
+        frame_rate=sample_rate,
+        sample_width=2,  # 16-bit
+        channels=audio_np.shape[0]
+    )
+    
+    return audio_segment
+
+def tensor_to_wav_bytes(audio_tensor, sample_rate):
+    """
+    Convert audio tensor to WAV bytes (fallback).
+    
+    :param audio_tensor: PyTorch audio tensor
+    :param sample_rate: Audio sample rate
+    :return: WAV bytes
+    """
+    # Save to temporary WAV file
+    temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    torchaudio.save(temp_wav.name, audio_tensor, sample_rate)
+    
+    # Read WAV bytes
+    with open(temp_wav.name, 'rb') as f:
+        wav_bytes = f.read()
+    
+    # Clean up temp file
+    os.unlink(temp_wav.name)
+    
+    return wav_bytes
+
+def convert_audio_file_to_mp3(input_path, output_path, bitrate="160k"):
+    """
+    Convert audio file to MP3 with specified bitrate.
+    
+    :param input_path: Path to input audio file
+    :param output_path: Path to output MP3 file
+    :param bitrate: MP3 bitrate
+    """
+    try:
+        from pydub import AudioSegment
+        # Load audio file
+        audio = AudioSegment.from_file(input_path)
+        # Export as MP3
+        audio.export(output_path, format="mp3", bitrate=bitrate)
+        logger.info(f"✅ Converted {input_path} to MP3: {output_path}")
+    except ImportError:
+        raise ImportError("pydub is required for audio conversion")
+    except Exception as e:
+        logger.error(f"❌ Failed to convert {input_path} to MP3: {e}")
+        raise
+
 logger.info(f"🔧 Model configuration:")
 logger.info(f"   - MODEL_PATH: {MODEL_PATH}")
 logger.info(f"   - AUDIO_TOKENIZER_PATH: {AUDIO_TOKENIZER_PATH}")
@@ -250,36 +349,41 @@ def initialize_model():
         raise RuntimeError("Higgs Audio model not available - pre-loading failed")
 
 def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarray]:
-    """Extract voice profile from audio data using Higgs Audio with detailed logging"""
+    """Extract voice profile embedding using Higgs Audio tokenizer"""
     global serve_engine
     
     logger.info(f"🔍 Starting voice profile extraction for: {voice_id}")
     logger.info(f"   - Audio data size: {len(audio_data)} bytes")
     
-    if not serve_engine:
-        logger.info("🔍 Serve engine not initialized, initializing...")
-        initialize_model()
-    
     try:
-        # Convert audio data to numpy array
-        import io
-        import soundfile as sf
+        # 1. Save audio data to temporary file
+        temp_audio_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_audio_file.write(audio_data)
+        temp_audio_file.close()
         
-        # Read audio data
-        audio, sample_rate = sf.read(io.BytesIO(audio_data))
+        logger.info(f"✅ Created temporary audio file: {temp_audio_file.name}")
         
-        # Ensure audio is mono
-        if len(audio.shape) > 1:
-            audio = audio.mean(axis=1)
+        # 2. Load Higgs Audio tokenizer
+        from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
+        logger.info("🔍 Loading Higgs Audio tokenizer...")
+        tokenizer = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
+        logger.info("✅ Higgs Audio tokenizer loaded successfully")
         
-        logger.info(f"✅ Audio loaded: shape={audio.shape}, sample_rate={sample_rate}")
+        # 3. Extract voice profile embedding
+        logger.info("🔍 Extracting voice profile embedding...")
+        voice_profile_tokens = tokenizer.encode(temp_audio_file.name)
         
-        # Create voice profile using Higgs Audio
-        # This is a simplified version - actual implementation would use Higgs Audio's voice extraction
-        voice_profile = np.array(audio, dtype=np.float32)
+        # 4. Convert to numpy array
+        voice_profile_np = voice_profile_tokens.squeeze(0).cpu().numpy()
         
-        logger.info(f"✅ Voice profile extracted: shape={voice_profile.shape}")
-        return voice_profile
+        # 5. Clean up temp file
+        os.unlink(temp_audio_file.name)
+        logger.info(f"✅ Cleaned up temporary file: {temp_audio_file.name}")
+        
+        logger.info(f"✅ Voice profile extracted: shape={voice_profile_np.shape}")
+        logger.info(f"✅ Voice profile size: {voice_profile_np.nbytes / 1024 / 1024:.2f} MB")
+        
+        return voice_profile_np
         
     except Exception as e:
         logger.error(f"❌ Failed to extract voice profile: {e}")
@@ -289,7 +393,7 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         return None
 
 def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -> Optional[bytes]:
-    """Generate voice sample using Higgs Audio with detailed logging"""
+    """Generate voice sample using voice profile embedding"""
     global serve_engine
     
     logger.info(f"🔍 Starting voice sample generation for: {voice_id}")
@@ -301,7 +405,12 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         return None
     
     try:
-        # Create system prompt
+        # 1. Convert voice profile back to tensor
+        import torch
+        voice_profile_tensor = torch.from_numpy(voice_profile).unsqueeze(0).to("cuda")
+        logger.info(f"✅ Voice profile converted to tensor: shape={voice_profile_tensor.shape}")
+        
+        # 2. Create system prompt with voice profile context
         system_prompt = (
             "Generate audio following instruction.\n\n"
             "<|scene_desc_start|>\n"
@@ -309,15 +418,17 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             "<|scene_desc_end|>"
         )
         
-        # Create messages for TTS generation
+        # 3. Create messages for TTS generation with voice profile
         messages = [
             Message(role="system", content=system_prompt),
             Message(role="user", content=text)
         ]
         
-        # Generate audio using Higgs Audio
+        # 4. Generate audio using voice profile embedding
+        logger.info("🔍 Generating audio with voice profile embedding...")
         response: HiggsAudioResponse = serve_engine.generate(
             chat_ml_sample=ChatMLSample(messages=messages),
+            voice_profile=voice_profile_tensor,  # Add voice profile parameter
             max_new_tokens=1024,
             temperature=0.3,
             top_p=0.95,
@@ -325,22 +436,14 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             stop_strings=["<|end_of_text|>", "<|eot_id|>"]
         )
         
-        # Convert audio to bytes
-        import torch
+        # 5. Convert audio to bytes
         audio_tensor = torch.from_numpy(response.audio)
+        logger.info(f"✅ Audio generated: shape={audio_tensor.shape}, sample_rate={response.sampling_rate}")
         
-        # Save to temporary file and read as bytes
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            import torchaudio
-            torchaudio.save(temp_file.name, audio_tensor.unsqueeze(0), response.sampling_rate)
-            
-            with open(temp_file.name, 'rb') as f:
-                audio_bytes = f.read()
-            
-            # Clean up
-            os.unlink(temp_file.name)
+        # 6. Convert to MP3 bytes (96 kbps for samples)
+        audio_bytes = tensor_to_mp3_bytes(audio_tensor, response.sampling_rate, "96k")
         
-        logger.info(f"✅ Voice sample generated: {len(audio_bytes)} bytes")
+        logger.info(f"✅ Voice sample generated: {len(audio_bytes)} bytes (96k MP3)")
         return audio_bytes
         
     except Exception as e:
@@ -349,6 +452,32 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         import traceback
         logger.error(f"❌ Full voice sample generation traceback: {traceback.format_exc()}")
         return None
+
+def validate_voice_profile(voice_profile: np.ndarray) -> bool:
+    """Validate voice profile embedding format"""
+    try:
+        # Check shape (should be 2D: num_codebooks x sequence_length)
+        if len(voice_profile.shape) != 2:
+            logger.error(f"❌ Invalid voice profile shape: {voice_profile.shape}")
+            return False
+        
+        # Check codebook values (should be integers 0-1023)
+        if not np.all((voice_profile >= 0) & (voice_profile < 1024)):
+            logger.error(f"❌ Invalid codebook values in voice profile")
+            return False
+        
+        # Check reasonable size (1-10 MB)
+        size_mb = voice_profile.nbytes / 1024 / 1024
+        if size_mb < 0.1 or size_mb > 10:
+            logger.error(f"❌ Voice profile size too large/small: {size_mb:.2f} MB")
+            return False
+        
+        logger.info(f"✅ Voice profile validation passed: shape={voice_profile.shape}, size={size_mb:.2f} MB")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Voice profile validation failed: {e}")
+        return False
 
 def handler(event):
     """Handle voice cloning requests using Higgs Audio with comprehensive debugging"""
@@ -424,15 +553,20 @@ def handler(event):
         start_time = time.time()
         logger.info(f"⏱️ Starting voice cloning process at: {datetime.fromtimestamp(start_time)}")
         
-        # Step 1: Extract voice profile
-        logger.info("🔄 Step 1: Extracting voice profile...")
+        # Step 1: Extract voice profile embedding
+        logger.info("🔄 Step 1: Extracting voice profile embedding...")
         voice_profile = extract_voice_profile(audio_data, voice_id)
         
         if voice_profile is None:
             logger.error("❌ Voice profile extraction failed")
             return {"status": "error", "message": "Failed to extract voice profile"}
         
-        logger.info(f"✅ Voice profile extraction completed in {time.time() - start_time:.2f}s")
+        # Validate voice profile embedding
+        if not validate_voice_profile(voice_profile):
+            logger.error("❌ Voice profile validation failed")
+            return {"status": "error", "message": "Invalid voice profile format"}
+        
+        logger.info(f"✅ Voice profile embedding extraction completed in {time.time() - start_time:.2f}s")
         
         # Step 2: Generate voice sample
         logger.info("🔄 Step 2: Generating voice sample...")
@@ -465,11 +599,17 @@ def handler(event):
             "created_date": str(int(start_time)),
             "language": "en",
             "is_kids_voice": "False",
-            "file_type": "voice_profile",
-            "model": "higgs_audio_v2"
+            "file_type": "voice_profile_embedding",  # Updated type
+            "model": "higgs_audio_v2",
+            "embedding_shape": voice_profile.shape,  # Add embedding info
+            "embedding_size_mb": voice_profile.nbytes / 1024 / 1024,
+            "num_codebooks": voice_profile.shape[0],
+            "sequence_length": voice_profile.shape[1]
         }
         
-        logger.info(f"🔍 Uploading voice profile: {profile_path}")
+        logger.info(f"🔍 Uploading voice profile embedding: {profile_path}")
+        logger.info(f"   - Shape: {voice_profile.shape}")
+        logger.info(f"   - Size: {voice_profile.nbytes / 1024 / 1024:.2f} MB")
         profile_url = upload_to_firebase(
             voice_profile.tobytes(),
             profile_path,
@@ -481,9 +621,24 @@ def handler(event):
             logger.error("❌ Failed to upload voice profile")
             return {"status": "error", "message": "Failed to upload voice profile"}
         
-        # Upload recorded audio
-        recorded_filename = f"{voice_id}_{timestamp}_recorded.wav"
+        # Upload recorded audio (160 kbps MP3)
+        recorded_filename = f"{voice_id}_{timestamp}_recorded.mp3"
         recorded_path = f"audio/voices/en/recorded/{recorded_filename}"
+        
+        # Convert recorded audio to MP3
+        temp_recorded_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_recorded_wav.write(audio_data)
+        temp_recorded_wav.close()
+        
+        temp_recorded_mp3 = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        convert_audio_file_to_mp3(temp_recorded_wav.name, temp_recorded_mp3.name, "160k")
+        
+        with open(temp_recorded_mp3.name, 'rb') as f:
+            recorded_mp3_data = f.read()
+        
+        # Clean up temp files
+        os.unlink(temp_recorded_wav.name)
+        os.unlink(temp_recorded_mp3.name)
         
         recorded_metadata = {
             "voice_id": voice_id,
@@ -492,14 +647,15 @@ def handler(event):
             "language": "en",
             "is_kids_voice": "False",
             "file_type": "recorded_audio",
-            "model": "higgs_audio_v2"
+            "model": "higgs_audio_v2",
+            "format": "160k_mp3"
         }
         
         logger.info(f"🔍 Uploading recorded audio: {recorded_path}")
         recorded_url = upload_to_firebase(
-            audio_data,
+            recorded_mp3_data,
             recorded_path,
-            "audio/wav",
+            "audio/mpeg",
             recorded_metadata
         )
         
@@ -507,8 +663,8 @@ def handler(event):
             logger.error("❌ Failed to upload recorded audio")
             return {"status": "error", "message": "Failed to upload recorded audio"}
         
-        # Upload sample audio
-        sample_filename = f"{voice_id}_{timestamp}_sample.wav"
+        # Upload sample audio (96 kbps MP3)
+        sample_filename = f"{voice_id}_{timestamp}_sample.mp3"
         sample_path = f"audio/voices/en/samples/{sample_filename}"
         
         sample_metadata = {
@@ -518,14 +674,15 @@ def handler(event):
             "language": "en",
             "is_kids_voice": "False",
             "file_type": "sample_audio",
-            "model": "higgs_audio_v2"
+            "model": "higgs_audio_v2",
+            "format": "96k_mp3"
         }
         
         logger.info(f"🔍 Uploading sample audio: {sample_path}")
         sample_url = upload_to_firebase(
             sample_audio,
             sample_path,
-            "audio/wav",
+            "audio/mpeg",
             sample_metadata
         )
         
