@@ -40,6 +40,9 @@ except ImportError as e:
 storage_client = None
 bucket = None
 
+# Cache for audio tokenizer to avoid reloading
+audio_tokenizer_cache = None
+
 # Model paths for Higgs Audio (from network volume)
 MODEL_PATH = "/runpod-volume/higgs_audio_generation"
 AUDIO_TOKENIZER_PATH = "/runpod-volume/higgs_audio_tokenizer"
@@ -393,7 +396,7 @@ def extract_voice_profile(audio_data: bytes, voice_id: str) -> Optional[np.ndarr
         return None
 
 def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -> Optional[bytes]:
-    """Generate voice sample using voice profile embedding"""
+    """Generate voice sample using voice profile embedding with correct API"""
     global serve_engine
     
     logger.info(f"🔍 Starting voice sample generation for: {voice_id}")
@@ -405,30 +408,48 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
         return None
     
     try:
-        # 1. Convert voice profile back to tensor
+        # Step 1: Load audio tokenizer for decoding voice profile (with caching)
+        global audio_tokenizer_cache
+        if audio_tokenizer_cache is None:
+            logger.info("🔍 Loading audio tokenizer for voice profile decoding...")
+            from boson_multimodal.audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
+            audio_tokenizer_cache = load_higgs_audio_tokenizer("bosonai/higgs-audio-v2-tokenizer", device="cuda")
+            logger.info("✅ Audio tokenizer loaded and cached successfully")
+        else:
+            logger.info("✅ Using cached audio tokenizer")
+        
+        audio_tokenizer = audio_tokenizer_cache
+        
+        # Step 2: Convert voice profile back to audio
+        logger.info("🔍 Converting voice profile back to audio...")
         import torch
         voice_profile_tensor = torch.from_numpy(voice_profile).unsqueeze(0).to("cuda")
         logger.info(f"✅ Voice profile converted to tensor: shape={voice_profile_tensor.shape}")
         
-        # 2. Create system prompt with voice profile context
-        system_prompt = (
-            "Generate audio following instruction.\n\n"
-            "<|scene_desc_start|>\n"
-            "Audio is recorded from a quiet room.\n"
-            "<|scene_desc_end|>"
-        )
+        decoded_audio = audio_tokenizer.decode(voice_profile_tensor)
+        logger.info(f"✅ Voice profile decoded to audio: shape={decoded_audio.shape}")
         
-        # 3. Create messages for TTS generation with voice profile
+        # Step 3: Convert to AudioContent
+        logger.info("🔍 Converting decoded audio to AudioContent...")
+        audio_int16 = (decoded_audio[0, 0] * 32767).astype(np.int16)
+        audio_bytes = audio_int16.tobytes()
+        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+        audio_content = AudioContent(raw_audio=audio_base64, audio_url="placeholder")
+        logger.info(f"✅ AudioContent created: {len(audio_base64)} characters")
+        
+        # Step 4: Create ChatMLSample with voice profile
+        logger.info("🔍 Creating ChatMLSample with voice profile...")
         messages = [
-            Message(role="system", content=system_prompt),
-            Message(role="user", content=text)
+            Message(role="user", content=text),
+            Message(role="assistant", content=audio_content)  # Voice profile as audio
         ]
+        chat_ml_sample = ChatMLSample(messages=messages)
+        logger.info(f"✅ ChatMLSample created with {len(messages)} messages")
         
-        # 4. Generate audio using voice profile embedding
+        # Step 5: Generate with correct API
         logger.info("🔍 Generating audio with voice profile embedding...")
         response: HiggsAudioResponse = serve_engine.generate(
-            chat_ml_sample=ChatMLSample(messages=messages),
-            voice_profile=voice_profile_tensor,  # Add voice profile parameter
+            chat_ml_sample=chat_ml_sample,
             max_new_tokens=1024,
             temperature=0.3,
             top_p=0.95,
@@ -436,22 +457,30 @@ def generate_voice_sample(voice_profile: np.ndarray, voice_id: str, text: str) -
             stop_strings=["<|end_of_text|>", "<|eot_id|>"]
         )
         
-        # 5. Convert audio to bytes
+        # Step 6: Convert response to MP3 bytes
+        logger.info("🔍 Converting response to MP3 bytes...")
         audio_tensor = torch.from_numpy(response.audio)
         logger.info(f"✅ Audio generated: shape={audio_tensor.shape}, sample_rate={response.sampling_rate}")
         
-        # 6. Convert to MP3 bytes (96 kbps for samples)
         audio_bytes = tensor_to_mp3_bytes(audio_tensor, response.sampling_rate, "96k")
-        
         logger.info(f"✅ Voice sample generated: {len(audio_bytes)} bytes (96k MP3)")
         return audio_bytes
         
     except Exception as e:
-        logger.error(f"❌ Failed to generate voice sample: {e}")
+        logger.error(f"❌ Manual approach failed: {e}")
         logger.error(f"❌ Error type: {type(e)}")
         import traceback
-        logger.error(f"❌ Full voice sample generation traceback: {traceback.format_exc()}")
-        return None
+        logger.error(f"❌ Full manual approach traceback: {traceback.format_exc()}")
+        
+        # Try fallback method
+        logger.info("🔄 Attempting fallback method...")
+        fallback_result = generate_with_voice_profile_fallback(voice_profile, voice_id, text)
+        if fallback_result is not None:
+            logger.info("✅ Fallback method succeeded")
+            return fallback_result
+        else:
+            logger.error("❌ Both manual and fallback methods failed")
+            return None
 
 def validate_voice_profile(voice_profile: np.ndarray) -> bool:
     """Validate voice profile embedding format"""
@@ -478,6 +507,46 @@ def validate_voice_profile(voice_profile: np.ndarray) -> bool:
     except Exception as e:
         logger.error(f"❌ Voice profile validation failed: {e}")
         return False
+
+def generate_with_voice_profile_fallback(voice_profile: np.ndarray, voice_id: str, text: str) -> Optional[bytes]:
+    """Fallback method using VoiceProfileTTSGenerator if manual approach fails"""
+    logger.info(f"🔄 Attempting fallback method with VoiceProfileTTSGenerator for: {voice_id}")
+    
+    try:
+        from tts import VoiceProfileTTSGenerator
+        
+        # Initialize TTS generator
+        logger.info("🔍 Initializing VoiceProfileTTSGenerator...")
+        tts_generator = VoiceProfileTTSGenerator(
+            model_path="bosonai/higgs-audio-v2-generation-3B-base",
+            audio_tokenizer_path="bosonai/higgs-audio-v2-tokenizer", 
+            device="cuda"
+        )
+        logger.info("✅ VoiceProfileTTSGenerator initialized successfully")
+        
+        # Generate with voice profile
+        logger.info("🔍 Generating TTS with voice profile...")
+        response = tts_generator.generate_tts_with_voice_profile(
+            text=text,
+            voice_profile=voice_profile,
+            temperature=0.3,
+            max_new_tokens=1024
+        )
+        logger.info("✅ TTS generation completed successfully")
+        
+        # Convert to MP3 bytes
+        import torch
+        audio_tensor = torch.from_numpy(response.audio)
+        audio_bytes = tensor_to_mp3_bytes(audio_tensor, response.sampling_rate, "96k")
+        logger.info(f"✅ Fallback voice sample generated: {len(audio_bytes)} bytes (96k MP3)")
+        return audio_bytes
+        
+    except Exception as e:
+        logger.error(f"❌ Fallback method also failed: {e}")
+        logger.error(f"❌ Error type: {type(e)}")
+        import traceback
+        logger.error(f"❌ Full fallback traceback: {traceback.format_exc()}")
+        return None
 
 def handler(event):
     """Handle voice cloning requests using Higgs Audio with comprehensive debugging"""
