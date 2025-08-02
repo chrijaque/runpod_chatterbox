@@ -1,10 +1,10 @@
 # Higgs Audio Only Requirements - Minimum Required Dependencies
 
 # RunPod SDK
-runpod>=1.5.0
+runpod>=1.5.0,<2.0.0
 
 # Higgs Audio minimum required dependencies
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 librosa==0.11.0
 s3tokenizer
 torch==2.6.0
@@ -15,14 +15,14 @@ resemble-perth==1.0.1
 conformer==0.3.2
 safetensors==0.5.3
 
-# Firebase for cloud storage (matching ChatterboxTTS implementation)
-firebase-admin>=6.2.0
-google-cloud-storage>=2.10.0
+# Firebase for cloud storage (conservative versions)
+firebase-admin==6.2.0
+google-cloud-storage==2.10.0
 
-# Fix protobuf version conflict (matching api-app requirements)
-protobuf>=3.9.2,<3.20
+# Fix protobuf version conflict
+protobuf==3.19.6
 
 # Utilities
-python-dotenv>=1.0.0
+python-dotenv>=1.0.0,<2.0.0
 
 # Note: Additional dependencies will be installed from the Higgs Audio repository 
