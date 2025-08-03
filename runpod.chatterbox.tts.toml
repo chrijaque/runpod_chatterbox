@@ -2,12 +2,12 @@ name = "chatterbox-tts"
 description = "ChatterboxTTS TTS Generation Handler"
 repository = "https://github.com/chrijaque/runpod_chatterbox"
 docker_image_name = "chatterbox-tts"
-docker_image_tag = "v2.0.0"
+docker_image_tag = "latest"
 
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
 FIREBASE_STORAGE_BUCKET = "{{ FIREBASE_STORAGE_BUCKET }}"
-CACHE_BUST = "v2.0.0-{{ timestamp }}"
+CACHE_BUST = "latest-{{ timestamp }}"
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.tts"

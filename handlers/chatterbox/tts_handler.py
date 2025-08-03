@@ -4,6 +4,10 @@ import os
 import tempfile
 import base64
 import logging
+import sys
+import glob
+import pathlib
+import shutil
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -12,6 +16,37 @@ from typing import Optional
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def clear_python_cache():
+    """Clear all Python cache files to force fresh loading."""
+    logger.info("🧹 Clearing Python cache...")
+    
+    # Remove .pyc files
+    pyc_files = glob.glob("/workspace/**/*.pyc", recursive=True)
+    for pyc_file in pyc_files:
+        try:
+            os.remove(pyc_file)
+            logger.info(f"  - Removed: {pyc_file}")
+        except Exception as e:
+            logger.warning(f"  - Failed to remove {pyc_file}: {e}")
+    
+    # Remove __pycache__ directories
+    pycache_dirs = list(pathlib.Path("/workspace").rglob("__pycache__"))
+    for pycache_dir in pycache_dirs:
+        try:
+            shutil.rmtree(pycache_dir)
+            logger.info(f"  - Removed: {pycache_dir}")
+        except Exception as e:
+            logger.warning(f"  - Failed to remove {pycache_dir}: {e}")
+    
+    # Clear sys.modules for chatterbox
+    modules_to_clear = [name for name in sys.modules.keys() if 'chatterbox' in name]
+    for module_name in modules_to_clear:
+        del sys.modules[module_name]
+        logger.info(f"  - Cleared from sys.modules: {module_name}")
+
+# Clear cache BEFORE importing any chatterbox modules
+clear_python_cache()
 
 # Import the models from the forked repository
 try:
