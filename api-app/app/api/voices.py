@@ -20,32 +20,44 @@ runpod_client = RunPodClient(
 # Initialize Firebase service for library display
 firebase_service = None
 
-# Try to use local Firebase credentials file first
-if settings.FIREBASE_LOCAL_CREDS_FILE and os.path.exists(settings.FIREBASE_LOCAL_CREDS_FILE):
-    try:
-        with open(settings.FIREBASE_LOCAL_CREDS_FILE, 'r') as f:
-            credentials_json = f.read()
-        firebase_service = FirebaseService(
-            credentials_json=credentials_json,
-            bucket_name=settings.get_firebase_bucket_name()
-        )
-        logger.info("✅ Firebase service initialized with local credentials file")
-    except Exception as e:
-        logger.warning(f"⚠️ Firebase service initialization failed with local file: {e}")
-        firebase_service = None
-# Fallback to environment variable
-elif settings.FIREBASE_CREDENTIALS and settings.FIREBASE_STORAGE_BUCKET:
-    try:
-        firebase_service = FirebaseService(
-            credentials_json=settings.FIREBASE_CREDENTIALS,
-            bucket_name=settings.get_firebase_bucket_name()
-        )
-        logger.info("✅ Firebase service initialized with environment credentials")
-    except Exception as e:
-        logger.warning(f"⚠️ Firebase service initialization failed: {e}")
-        firebase_service = None
-else:
-    logger.warning("⚠️ Firebase credentials not available - voice library will be empty")
+def get_firebase_service():
+    """Get or initialize Firebase service"""
+    global firebase_service
+    
+    if firebase_service is not None:
+        return firebase_service
+    
+    # Try to use local Firebase credentials file first
+    if settings.FIREBASE_LOCAL_CREDS_FILE and os.path.exists(settings.FIREBASE_LOCAL_CREDS_FILE):
+        try:
+            with open(settings.FIREBASE_LOCAL_CREDS_FILE, 'r') as f:
+                credentials_json = f.read()
+            firebase_service = FirebaseService(
+                credentials_json=credentials_json,
+                bucket_name=settings.get_firebase_bucket_name()
+            )
+            logger.info("✅ Firebase service initialized with local credentials file")
+            return firebase_service
+        except Exception as e:
+            logger.warning(f"⚠️ Firebase service initialization failed with local file: {e}")
+            firebase_service = None
+    # Fallback to environment variable
+    elif settings.FIREBASE_CREDENTIALS and settings.FIREBASE_STORAGE_BUCKET:
+        try:
+            firebase_service = FirebaseService(
+                credentials_json=settings.FIREBASE_CREDENTIALS,
+                bucket_name=settings.get_firebase_bucket_name()
+            )
+            logger.info("✅ Firebase service initialized with environment credentials")
+            return firebase_service
+        except Exception as e:
+            logger.warning(f"⚠️ Firebase service initialization failed: {e}")
+            firebase_service = None
+    else:
+        logger.warning("⚠️ Firebase credentials not available - voice library will be empty")
+        return None
+    
+    return firebase_service
 
 @router.post("/clone", response_model=VoiceCloneResponse)
 async def clone_voice(request: VoiceCloneRequest):
@@ -129,6 +141,9 @@ async def list_voices():
     try:
         logger.info("📚 Listing voices from Firebase...")
         
+        # Get Firebase service
+        firebase_service = get_firebase_service()
+        
         # Check if Firebase service is available
         if firebase_service is None:
             logger.warning("⚠️ Firebase service not available - returning empty voice list")
@@ -193,6 +208,9 @@ async def get_voice_profile(voice_id: str, language: str = "en", is_kids_voice: 
         logger.info(f"🔍 Getting voice profile for: {voice_id}")
         logger.info(f"🔍 Parameters: language={language}, is_kids_voice={is_kids_voice}")
         
+        # Get Firebase service
+        firebase_service = get_firebase_service()
+        
         # Check if Firebase service is available
         if firebase_service is None:
             logger.warning("⚠️ Firebase service not available - cannot get voice profile")
@@ -224,6 +242,10 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
     try:
         logger.info(f"📚 Listing voices for language: {language}, is_kids_voice: {is_kids_voice}")
         
+        # Get Firebase service
+        firebase_service = get_firebase_service()
+        logger.info(f"🔍 Firebase service available: {firebase_service is not None}")
+        
         # Check if Firebase service is available
         if firebase_service is None:
             logger.warning("⚠️ Firebase service not available - returning empty voice list")
@@ -234,6 +256,9 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
                 "is_kids_voice": is_kids_voice,
                 "total": 0
             }
+        
+        logger.info(f"🔍 Firebase service bucket: {firebase_service.bucket}")
+        logger.info(f"🔍 Firebase service connected: {firebase_service.is_connected()}")
         
         # Get voices from Firebase
         voices = firebase_service.list_voices_by_language(language, is_kids_voice)
@@ -285,6 +310,9 @@ async def test_firebase_files():
     """
     try:
         logger.info("🔍 Testing Firebase file listing...")
+        
+        # Get Firebase service
+        firebase_service = get_firebase_service()
         
         # Check if Firebase service is available
         if firebase_service is None:
