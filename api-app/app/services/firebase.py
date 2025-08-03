@@ -22,11 +22,6 @@ class FirebaseService:
         try:
             # Check if Firebase is already initialized
             if not firebase_admin._apps:
-                # Debug: Log credentials initialization
-                logger.info("🔍 ===== FIREBASE CREDENTIALS DEBUG =====")
-                logger.info(f"🔍 Credentials JSON length: {len(self.credentials_json)} characters")
-                logger.info(f"🔍 Credentials JSON preview: {self.credentials_json[:200]}...")
-                
                 # Parse JSON credentials from environment
                 import json
                 import tempfile
@@ -34,14 +29,6 @@ class FirebaseService:
                 try:
                     # Parse the JSON credentials
                     cred_data = json.loads(self.credentials_json)
-                    logger.info("✅ Successfully parsed JSON credentials")
-                    
-                    # Debug: Log credential details (safely)
-                    logger.info(f"🔍 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
-                    logger.info(f"🔍 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
-                    logger.info(f"🔍 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
-                    logger.info(f"🔍 Token URI: {cred_data.get('token_uri', 'NOT FOUND')}")
-                    logger.info(f"🔍 Auth URI: {cred_data.get('auth_uri', 'NOT FOUND')}")
                     
                     # Validate required fields
                     required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
@@ -50,12 +37,9 @@ class FirebaseService:
                     if missing_fields:
                         logger.error(f"❌ Missing required credential fields: {missing_fields}")
                         raise ValueError(f"Missing required credential fields: {missing_fields}")
-                    else:
-                        logger.info("✅ All required credential fields present")
                     
                 except json.JSONDecodeError as e:
                     logger.error(f"❌ Failed to parse JSON credentials: {e}")
-                    logger.error(f"❌ Credentials JSON: {self.credentials_json}")
                     raise
                 except Exception as e:
                     logger.error(f"❌ Error processing credentials: {e}")
@@ -66,36 +50,25 @@ class FirebaseService:
                     json.dump(cred_data, tmp_file)
                     tmp_path = tmp_file.name
                 
-                logger.info(f"🔍 Created temporary credentials file: {tmp_path}")
-                
                 # Initialize Firebase with the temporary file
                 try:
                     cred = credentials.Certificate(tmp_path)
-                    logger.info("✅ Firebase credentials certificate created successfully")
-                    
-                    logger.info(f"🔍 Initializing Firebase with storageBucket: {self.bucket_name}")
                     firebase_admin.initialize_app(cred)
                     logger.info("✅ Firebase initialized successfully")
                     
                 except Exception as e:
                     logger.error(f"❌ Firebase initialization failed: {e}")
-                    logger.error(f"❌ Error type: {type(e).__name__}")
                     raise
                 finally:
                     # Clean up temporary file
                     try:
                         os.unlink(tmp_path)
-                        logger.info("✅ Cleaned up temporary credentials file")
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to clean up temporary credentials file: {e}")
-                
-                logger.info("🔍 ===== END FIREBASE CREDENTIALS DEBUG =====")
             
             # Try to get the bucket
             try:
-                logger.info(f"🔍 Getting bucket with name: {self.bucket_name}")
                 self.bucket = storage.bucket(self.bucket_name)
-                logger.info(f"🔍 Bucket object created: {self.bucket.name}")
                 
                 # Test if the bucket actually exists by trying to list blobs
                 try:
@@ -621,19 +594,7 @@ class FirebaseService:
             
             # Convert to list to get count
             blob_list = list(blobs)
-            logger.info(f"📁 Found {len(blob_list)} blobs in Firebase with prefix: {prefix}")
-            
-            # Log first few blobs for debugging
-            for i, blob in enumerate(blob_list[:5]):
-                logger.info(f"   Blob {i+1}: {blob.name}")
-            
-            if len(blob_list) > 5:
-                logger.info(f"   ... and {len(blob_list) - 5} more blobs")
-            
-            # Debug: Log all blobs found
-            logger.info(f"🔍 All blobs found with prefix '{prefix}':")
-            for blob in blob_list:
-                logger.info(f"   📁 {blob.name}")
+            logger.info(f"📁 Found {len(blob_list)} blobs in Firebase")
             
             voices = {}
             
@@ -645,8 +606,7 @@ class FirebaseService:
                 if blob.name.endswith('/.placeholder'):
                     continue
                 
-                # Debug: Log each blob being processed
-                logger.info(f"🔍 Processing blob: {blob.name}")
+
                 
                 # Extract path information
                 path_parts = blob.name.split('/')
@@ -681,7 +641,7 @@ class FirebaseService:
                         language = metadata.get('language', 'en')
                         is_kids_voice = metadata.get('is_kids_voice', 'false').lower() == 'true'
                         
-                        logger.info(f"   📄 {file_type.title()} file with metadata: voice_id={voice_id}, voice_name={voice_name}")
+
                         
                     except Exception as e:
                         logger.warning(f"   ⚠️ Could not read metadata from {blob.name}: {e}")
@@ -700,16 +660,14 @@ class FirebaseService:
                             # Fallback: use filename without extension as voice_id
                             voice_id = filename.rsplit('.', 1)[0]
                         
-                        logger.info(f"   📄 {file_type.title()} file (fallback parsing): voice_id={voice_id}")
+
                     
                     # Skip if we still couldn't determine voice_id
                     if not voice_id:
-                        logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
                         continue
                 
                 # Skip if we couldn't determine file type or voice_id
                 if not file_type or not voice_id:
-                    logger.info(f"   ⚠️ Skipping file with unknown structure: {blob.name}")
                     continue
                     
                 if voice_id not in voices:
@@ -729,15 +687,10 @@ class FirebaseService:
                 # Categorize based on file_type determined from directory structure
                 if file_type == 'recorded':
                     voices[voice_id]["recorded"].append(url)
-                    logger.info(f"   ✅ Added to recorded: {blob.name}")
                 elif file_type == 'sample':
                     voices[voice_id]["samples"].append(url)
-                    logger.info(f"   ✅ Added to samples: {blob.name}")
                 elif file_type == 'profile':
                     voices[voice_id]["profiles"].append(url)
-                    logger.info(f"   ✅ Added to profiles: {blob.name}")
-                else:
-                    logger.warning(f"   ⚠️ File not categorized: {blob.name}")
                 
                 # Try to extract creation time from metadata or filename
                 try:
@@ -768,7 +721,7 @@ class FirebaseService:
                     logger.debug(f"Could not parse timestamp from {blob.name}: {e}")
             
             result = list(voices.values())
-            logger.info(f"✅ Processed {len(result)} voices from Firebase")
+            logger.info(f"✅ Found {len(result)} voices")
             return result
             
         except Exception as e:

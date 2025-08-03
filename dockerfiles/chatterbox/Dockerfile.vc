@@ -50,6 +50,11 @@ RUN echo "🔧 Cloning forked repository..." && \
     pip uninstall -y torch torchvision torchaudio chatterbox-tts || true && \
     echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    cd /workspace/chatterbox_embed && \
+    echo "🔧 Fetching latest changes..." && \
+    git fetch origin && \
+    echo "🔧 Resetting to latest main branch..." && \
+    git reset --hard origin/main && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \

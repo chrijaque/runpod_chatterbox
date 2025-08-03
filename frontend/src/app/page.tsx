@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
@@ -57,11 +57,6 @@ export default function Home() {
         loadVoiceLibrary();
     }, []);
 
-    // Reload voice library when metadata settings change
-    useEffect(() => {
-        loadVoiceLibrary();
-    }, [language, isKidsVoice]);
-
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
         try {
             console.log('💾 Saving voice to API...', { result, voiceName });
@@ -87,7 +82,7 @@ export default function Home() {
         }
     };
 
-    const loadVoiceLibrary = async () => {
+    const loadVoiceLibrary = useCallback(async () => {
         setIsLoadingLibrary(true);
         try {
             // Use the new Firebase-based endpoint to list voices by language
@@ -123,7 +118,7 @@ export default function Home() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    };
+    }, []);
 
     const playVoiceSample = async (voiceId: string) => {
         setPlayingVoice(voiceId);
@@ -330,10 +325,6 @@ export default function Home() {
                     console.log('📋 Metadata saved:', result.metadata);
                 }
                 
-                // Refresh voice library after successful creation
-                console.log('🔄 Refreshing voice library...');
-                await loadVoiceLibrary();
-                
             } else if (data.id) {
                 // Old format: Job ID returned, need to poll for completion
                 setCurrentJobId(data.id);
@@ -377,10 +368,6 @@ export default function Home() {
                         resultKeys: result ? Object.keys(result) : []
                     });
                 }
-                
-                // Refresh voice library after successful creation
-                console.log('🔄 Refreshing voice library...');
-                await loadVoiceLibrary();
             } else {
                 throw new Error('Invalid response format - neither job ID nor final result received');
             }

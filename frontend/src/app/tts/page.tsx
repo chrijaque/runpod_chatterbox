@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_API, TTS_GENERATIONS_API } from '@/config/api';
 
 import Link from 'next/link';
@@ -65,12 +65,9 @@ export default function TTSPage() {
         loadTTSGenerations();
     }, []);
 
-    // Reload TTS generations when metadata settings change
-    useEffect(() => {
-        loadTTSGenerations();
-    }, [language, storyType, isKidsVoice]);
 
-    const loadVoiceLibrary = async () => {
+
+    const loadVoiceLibrary = useCallback(async () => {
         setIsLoadingLibrary(true);
         try {
             // Use the voice library endpoint with language and kids voice parameters
@@ -105,9 +102,9 @@ export default function TTSPage() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    };
+    }, []);
 
-    const loadTTSGenerations = async () => {
+    const loadTTSGenerations = useCallback(async () => {
         setIsLoadingGenerations(true);
         try {
             // Use the new Firebase-based endpoint to list stories by language and type
@@ -147,7 +144,7 @@ export default function TTSPage() {
         } finally {
             setIsLoadingGenerations(false);
         }
-    };
+    }, [language, storyType]);
 
     const playTTSGeneration = async (fileId: string) => {
         setPlayingGeneration(fileId);

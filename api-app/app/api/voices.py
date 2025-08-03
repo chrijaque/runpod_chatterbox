@@ -244,7 +244,6 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
         
         # Get Firebase service
         firebase_service = get_firebase_service()
-        logger.info(f"🔍 Firebase service available: {firebase_service is not None}")
         
         # Check if Firebase service is available
         if firebase_service is None:
@@ -257,18 +256,8 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
                 "total": 0
             }
         
-        logger.info(f"🔍 Firebase service bucket: {firebase_service.bucket}")
-        logger.info(f"🔍 Firebase service connected: {firebase_service.is_connected()}")
-        
         # Get voices from Firebase
         voices = firebase_service.list_voices_by_language(language, is_kids_voice)
-        
-        logger.info(f"🔍 Firebase returned {len(voices)} voices")
-        if voices:
-            logger.info(f"🔍 First voice structure: {voices[0]}")
-        
-        # Debug: Log the raw Firebase data
-        logger.info(f"🔍 Raw Firebase data for first voice: {voices[0] if voices else 'No voices found'}")
         
         # Convert to VoiceInfo objects with frontend-expected field names
         voice_list = []
