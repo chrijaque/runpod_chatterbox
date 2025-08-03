@@ -10,7 +10,7 @@ load_dotenv(env_path)
 
 class Settings:
     # Firebase Configuration
-    FIREBASE_CREDENTIALS_FILE: str = "firebase_creds.json"
+    FIREBASE_CREDENTIALS: Optional[str] = os.getenv("RUNPOD_SECRET_Firebase")
     FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET")
     
     # API Configuration
@@ -46,7 +46,7 @@ class Settings:
         """Validate Firebase configuration"""
         if not cls.FIREBASE_STORAGE_ENABLED:
             return True
-        if not Path(cls.FIREBASE_CREDENTIALS_FILE).exists():
+        if not cls.FIREBASE_CREDENTIALS:
             return False
         if not cls.FIREBASE_STORAGE_BUCKET:
             return False
@@ -74,7 +74,7 @@ class Settings:
         missing = []
         
         if cls.FIREBASE_STORAGE_ENABLED and not cls.validate_firebase_config():
-            missing.append("Firebase configuration (check firebase_creds.json and FIREBASE_STORAGE_BUCKET)")
+            missing.append("Firebase configuration (check RUNPOD_SECRET_Firebase and FIREBASE_STORAGE_BUCKET)")
         
         if not cls.validate_runpod_config():
             if not cls.RUNPOD_API_KEY:
@@ -97,8 +97,13 @@ logger.info(f"📋 RUNPOD_API_KEY: {'SET' if settings.RUNPOD_API_KEY else 'NOT S
 logger.info(f"📋 VC_CB_ENDPOINT_ID: {settings.VC_CB_ENDPOINT_ID}")
 logger.info(f"📋 TTS_CB_ENDPOINT_ID: {settings.TTS_CB_ENDPOINT_ID}")
 logger.info(f"📋 FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
-logger.info(f"📋 FIREBASE_CREDENTIALS_FILE: {settings.FIREBASE_CREDENTIALS_FILE}")
-logger.info(f"📋 FIREBASE_CREDENTIALS_EXISTS: {Path(settings.FIREBASE_CREDENTIALS_FILE).exists()}")
+logger.info(f"📋 FIREBASE_CREDENTIALS: {'SET' if settings.FIREBASE_CREDENTIALS else 'NOT SET'}")
+if settings.FIREBASE_CREDENTIALS:
+    logger.info(f"📋 FIREBASE_CREDENTIALS_LENGTH: {len(settings.FIREBASE_CREDENTIALS)} characters")
+    logger.info(f"📋 FIREBASE_CREDENTIALS_PREVIEW: {settings.FIREBASE_CREDENTIALS[:200]}...")
+else:
+    logger.warning("⚠️ RUNPOD_SECRET_Firebase environment variable is not set!")
+    logger.warning("⚠️ Firebase functionality will not work without proper credentials")
 logger.info(f"📋 RunPod config valid: {settings.validate_runpod_config()}")
 logger.info(f"📋 Firebase config valid: {settings.validate_firebase_config()}")
 logger.info("🔍 ===== END CONFIGURATION DEBUG =====") 

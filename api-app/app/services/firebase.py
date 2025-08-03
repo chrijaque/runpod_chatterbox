@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 class FirebaseService:
     """Firebase Storage service for file operations"""
     
-    def __init__(self, credentials_file: str, bucket_name: str):
-        self.credentials_file = credentials_file
+    def __init__(self, credentials_json: str, bucket_name: str):
+        self.credentials_json = credentials_json
         self.bucket_name = bucket_name
         self.bucket = None
         self._initialize()
@@ -22,11 +22,74 @@ class FirebaseService:
         try:
             # Check if Firebase is already initialized
             if not firebase_admin._apps:
-                cred = credentials.Certificate(self.credentials_file)
-                logger.info(f"🔍 Initializing Firebase with storageBucket: {self.bucket_name}")
-                # Don't specify storageBucket in the config, let it use the default
-                firebase_admin.initialize_app(cred)
-                logger.info("✅ Firebase initialized successfully")
+                # Debug: Log credentials initialization
+                logger.info("🔍 ===== FIREBASE CREDENTIALS DEBUG =====")
+                logger.info(f"🔍 Credentials JSON length: {len(self.credentials_json)} characters")
+                logger.info(f"🔍 Credentials JSON preview: {self.credentials_json[:200]}...")
+                
+                # Parse JSON credentials from environment
+                import json
+                import tempfile
+                
+                try:
+                    # Parse the JSON credentials
+                    cred_data = json.loads(self.credentials_json)
+                    logger.info("✅ Successfully parsed JSON credentials")
+                    
+                    # Debug: Log credential details (safely)
+                    logger.info(f"🔍 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
+                    logger.info(f"🔍 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
+                    logger.info(f"🔍 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
+                    logger.info(f"🔍 Token URI: {cred_data.get('token_uri', 'NOT FOUND')}")
+                    logger.info(f"🔍 Auth URI: {cred_data.get('auth_uri', 'NOT FOUND')}")
+                    
+                    # Validate required fields
+                    required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+                    missing_fields = [field for field in required_fields if field not in cred_data]
+                    
+                    if missing_fields:
+                        logger.error(f"❌ Missing required credential fields: {missing_fields}")
+                        raise ValueError(f"Missing required credential fields: {missing_fields}")
+                    else:
+                        logger.info("✅ All required credential fields present")
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Failed to parse JSON credentials: {e}")
+                    logger.error(f"❌ Credentials JSON: {self.credentials_json}")
+                    raise
+                except Exception as e:
+                    logger.error(f"❌ Error processing credentials: {e}")
+                    raise
+                
+                # Create temporary file with the credentials
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                    json.dump(cred_data, tmp_file)
+                    tmp_path = tmp_file.name
+                
+                logger.info(f"🔍 Created temporary credentials file: {tmp_path}")
+                
+                # Initialize Firebase with the temporary file
+                try:
+                    cred = credentials.Certificate(tmp_path)
+                    logger.info("✅ Firebase credentials certificate created successfully")
+                    
+                    logger.info(f"🔍 Initializing Firebase with storageBucket: {self.bucket_name}")
+                    firebase_admin.initialize_app(cred)
+                    logger.info("✅ Firebase initialized successfully")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Firebase initialization failed: {e}")
+                    logger.error(f"❌ Error type: {type(e).__name__}")
+                    raise
+                finally:
+                    # Clean up temporary file
+                    try:
+                        os.unlink(tmp_path)
+                        logger.info("✅ Cleaned up temporary credentials file")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to clean up temporary credentials file: {e}")
+                
+                logger.info("🔍 ===== END FIREBASE CREDENTIALS DEBUG =====")
             
             # Try to get the bucket
             try:
@@ -73,7 +136,24 @@ class FirebaseService:
             from google.cloud import storage as gcs_storage
             
             # Create a client using the same credentials
-            client = gcs_storage.Client.from_service_account_json(self.credentials_file)
+            import json
+            import tempfile
+            
+            # Parse the JSON credentials
+            cred_data = json.loads(self.credentials_json)
+            
+            # Create temporary file with the credentials
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                json.dump(cred_data, tmp_file)
+                tmp_path = tmp_file.name
+            
+            client = gcs_storage.Client.from_service_account_json(tmp_path)
+            
+            # Clean up temporary file
+            try:
+                os.unlink(tmp_path)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to clean up temporary credentials file: {e}")
             logger.info(f"🔍 Google Cloud Storage client created")
             
             # Extract project ID from bucket name

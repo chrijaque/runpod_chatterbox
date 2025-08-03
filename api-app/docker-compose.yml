@@ -11,9 +11,9 @@ services:
       - ./voice_profiles:/app/voice_profiles
       - ./voice_samples:/app/voice_samples
       - ./temp_voice:/app/temp_voice
-      - ../firebase_creds.json:/app/firebase_creds.json:ro
     environment:
       - FIREBASE_STORAGE_BUCKET=${FIREBASE_STORAGE_BUCKET}
+      - RUNPOD_SECRET_Firebase=${RUNPOD_SECRET_Firebase}
       - API_HOST=0.0.0.0
       - API_PORT=8000
       - DEBUG=False

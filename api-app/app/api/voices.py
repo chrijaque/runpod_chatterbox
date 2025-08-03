@@ -16,7 +16,7 @@ runpod_client = RunPodClient(
     tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
 firebase_service = FirebaseService(
-    credentials_file=settings.FIREBASE_CREDENTIALS_FILE,
+    credentials_json=settings.FIREBASE_CREDENTIALS,
     bucket_name=settings.get_firebase_bucket_name()
 )
 

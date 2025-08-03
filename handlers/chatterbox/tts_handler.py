@@ -55,13 +55,13 @@ bucket = None
 logger.info("🔧 Initializing models from forked repository...")
 try:
     if FORKED_HANDLER_AVAILABLE:
-        # Initialize VC model
-        vc_model = ChatterboxVC(device='cuda')
-        logger.info("✅ ChatterboxVC model initialized successfully")
-        
-        # Initialize TTS model  
+        # Initialize TTS model first (needed for s3gen)
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxTTS model initialized successfully")
+        
+        # Initialize VC model with s3gen from TTS model
+        vc_model = ChatterboxVC(s3gen=tts_model.s3gen, device='cuda')
+        logger.info("✅ ChatterboxVC model initialized successfully")
         
         # Validate models have expected methods
         logger.info("🔍 Validating model methods...")
@@ -283,6 +283,25 @@ def initialize_firebase():
         logger.info(f"🔍 RUNPOD_SECRET_Firebase exists: {firebase_secret is not None}")
         logger.info(f"🔍 GOOGLE_APPLICATION_CREDENTIALS exists: {google_creds is not None}")
         
+        # Debug: Log Firebase credentials details
+        if firebase_secret:
+            logger.info(f"🔍 RUNPOD_SECRET_Firebase length: {len(firebase_secret)} characters")
+            logger.info(f"🔍 RUNPOD_SECRET_Firebase preview: {firebase_secret[:200]}...")
+            
+            # Try to parse and validate the JSON
+            try:
+                import json
+                cred_data = json.loads(firebase_secret)
+                logger.info(f"🔍 Firebase Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
+                logger.info(f"🔍 Firebase Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
+                logger.info("✅ Firebase credentials JSON is valid")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Firebase credentials JSON is invalid: {e}")
+                logger.error(f"❌ Credentials preview: {firebase_secret[:500]}...")
+        else:
+            logger.warning("⚠️ RUNPOD_SECRET_Firebase is not set!")
+            logger.warning("⚠️ Firebase functionality will not work")
+        
         # Check if we're in RunPod and have the secret
         firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
         
@@ -307,6 +326,11 @@ def initialize_firebase():
                     tmp_path = tmp_file.name
                 
                 logger.info(f"✅ Created temporary credentials file: {tmp_path}")
+                
+                # Set the environment variable for Google Cloud SDK
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = tmp_path
+                logger.info(f"✅ Set GOOGLE_APPLICATION_CREDENTIALS to: {tmp_path}")
+                
                 storage_client = storage.Client.from_service_account_json(tmp_path)
                 
             elif os.path.exists(firebase_secret_path):

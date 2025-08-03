@@ -14,7 +14,7 @@ router = APIRouter(tags=["health"])
 
 # Initialize Firebase service for health checks
 firebase_service = FirebaseService(
-    credentials_file=settings.FIREBASE_CREDENTIALS_FILE,
+    credentials_json=settings.FIREBASE_CREDENTIALS,
     bucket_name=settings.get_firebase_bucket_name()
 )
 
