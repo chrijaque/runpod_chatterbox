@@ -1,75 +1,31 @@
 import runpod
 import time  
-import torchaudio 
 import os
 import tempfile
 import base64
-import torch
 import logging
-import hashlib
-from chatterbox.tts import ChatterboxTTS
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 from google.cloud import storage
-import numpy as np
 from typing import Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import the handler from the forked repository
+# Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
+    from chatterbox.tts import ChatterboxTTS
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("✅ Successfully imported ChatterboxVC from forked repository")
+    logger.info("✅ Successfully imported ChatterboxVC and ChatterboxTTS from forked repository")
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
-    logger.warning(f"⚠️ Could not import ChatterboxVC from forked repository: {e}")
+    logger.warning(f"⚠️ Could not import models from forked repository: {e}")
 
-# Check for NLTK availability
-try:
-    import nltk
-    from nltk.tokenize.punkt import PunktSentenceTokenizer
-    NLTK_AVAILABLE = True
-    logger.info("✅ NLTK available for sentence tokenization")
-except ImportError:
-    NLTK_AVAILABLE = False
-    logger.warning("⚠️ nltk not available - will use simple text splitting")
-
-try:
-    from pydub import AudioSegment, effects
-    PYDUB_AVAILABLE = True
-except ImportError:
-    PYDUB_AVAILABLE = False
-    logger.warning("⚠️ pydub not available - will use torchaudio for audio processing")
-
-# Pre-load ChatterboxTTS model at module level (avoids re-initialization)
-logger.info("🔧 Pre-loading ChatterboxTTS model...")
-try:
-    model = ChatterboxTTS.from_pretrained(device='cuda')
-    logger.info("✅ ChatterboxTTS model pre-loaded successfully")
-    
-    # Initialize the forked repository handler if available
-    if FORKED_HANDLER_AVAILABLE:
-        logger.info("🔧 Pre-loading ChatterboxVC...")
-        try:
-            forked_handler = ChatterboxVC(
-                s3gen=model.s3gen,
-                device=model.device
-            )
-            logger.info("✅ ChatterboxVC pre-loaded successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to pre-load ChatterboxVC: {e}")
-            forked_handler = None
-    else:
-        logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
-        forked_handler = None
-        
-except Exception as e:
-    logger.error(f"❌ Failed to pre-load ChatterboxTTS model: {e}")
-    model = None
-    forked_handler = None
+# Initialize models once at startup
+vc_model = None
+tts_model = None
 
 # Local directory paths (use absolute paths for RunPod deployment)
 VOICE_PROFILES_DIR = Path("/voice_profiles")
@@ -95,112 +51,213 @@ logger.info(f"  TEMP_VOICE_DIR exists: {TEMP_VOICE_DIR.exists()}")
 storage_client = None
 bucket = None
 
-# -------------------------------------------------------------------
-# 🎵 MP3 Conversion Utilities
-# -------------------------------------------------------------------
-def tensor_to_mp3_bytes(audio_tensor, sample_rate, bitrate="96k"):
-    """
-    Convert audio tensor directly to MP3 bytes.
-    
-    :param audio_tensor: PyTorch audio tensor
-    :param sample_rate: Audio sample rate
-    :param bitrate: MP3 bitrate (e.g., "96k", "128k", "160k")
-    :return: MP3 bytes
-    """
-    try:
-        from pydub import AudioSegment
-        # Convert tensor to AudioSegment
-        audio_segment = tensor_to_audiosegment(audio_tensor, sample_rate)
-        # Export to MP3 bytes
-        mp3_file = audio_segment.export(format="mp3", bitrate=bitrate)
-        # Read the bytes from the file object
-        mp3_bytes = mp3_file.read()
-        return mp3_bytes
-    except ImportError:
-        logger.warning("pydub not available, falling back to WAV")
-        return tensor_to_wav_bytes(audio_tensor, sample_rate)
-    except Exception as e:
-        logger.warning(f"Direct MP3 conversion failed: {e}, falling back to WAV")
-        return tensor_to_wav_bytes(audio_tensor, sample_rate)
-
-def tensor_to_audiosegment(audio_tensor, sample_rate):
-    """
-    Convert PyTorch audio tensor to pydub AudioSegment.
-    
-    :param audio_tensor: PyTorch audio tensor
-    :param sample_rate: Audio sample rate
-    :return: pydub AudioSegment
-    """
-    from pydub import AudioSegment
-    
-    # Convert tensor to numpy array
-    if audio_tensor.dim() == 2:
-        # Stereo: (channels, samples)
-        audio_np = audio_tensor.numpy()
+# Initialize models once at startup
+logger.info("🔧 Initializing models from forked repository...")
+try:
+    if FORKED_HANDLER_AVAILABLE:
+        # Initialize VC model
+        vc_model = ChatterboxVC(device='cuda')
+        logger.info("✅ ChatterboxVC model initialized successfully")
+        
+        # Initialize TTS model  
+        tts_model = ChatterboxTTS.from_pretrained(device='cuda')
+        logger.info("✅ ChatterboxTTS model initialized successfully")
+        
+        # Validate models have expected methods
+        logger.info("🔍 Validating model methods...")
+        
+        # Check VC model methods
+        vc_expected_methods = ['create_voice_clone']
+        vc_available_methods = [method for method in dir(vc_model) if not method.startswith('_')]
+        vc_missing_methods = [method for method in vc_expected_methods if not hasattr(vc_model, method)]
+        
+        logger.info(f"🔍 VC Available methods: {vc_available_methods}")
+        logger.info(f"🔍 VC Expected methods: {vc_expected_methods}")
+        if vc_missing_methods:
+            logger.warning(f"⚠️ Missing VC methods: {vc_missing_methods}")
+        else:
+            logger.info("✅ All VC methods are available")
+        
+        # Check TTS model methods
+        tts_expected_methods = ['generate_tts_story', 'generate_long_text']
+        tts_available_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+        tts_missing_methods = [method for method in tts_expected_methods if not hasattr(tts_model, method)]
+        
+        logger.info(f"🔍 TTS Available methods: {tts_available_methods}")
+        logger.info(f"🔍 TTS Expected methods: {tts_expected_methods}")
+        if tts_missing_methods:
+            logger.warning(f"⚠️ Missing TTS methods: {tts_missing_methods}")
+        else:
+            logger.info("✅ All TTS methods are available")
+        
+        # Log model details for debugging
+        import inspect
+        logger.info(f"📦 VC model type: {type(vc_model).__name__}")
+        logger.info(f"📦 TTS model type: {type(tts_model).__name__}")
+        
+        try:
+            vc_file = inspect.getfile(vc_model.__class__)
+            tts_file = inspect.getfile(tts_model.__class__)
+            logger.info(f"📦 VC model file: {vc_file}")
+            logger.info(f"📦 TTS model file: {tts_file}")
+            if "chatterbox_embed" in vc_file and "chatterbox_embed" in tts_file:
+                logger.info("✅ Models are from the correct repository")
+            else:
+                logger.warning("⚠️ Models are NOT from the expected repository")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not determine model files: {e}")
+        
+        # Debug: Check Git commit of forked repository
+        logger.info("🔍 ===== FORKED REPOSITORY GIT DEBUG =====")
+        try:
+            import subprocess
+            import os
+            
+            # Find the chatterbox_embed directory
+            chatterbox_embed_path = None
+            for root, dirs, files in os.walk("/workspace"):
+                if "chatterbox_embed" in dirs:
+                    chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
+                    break
+            
+            if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+                logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
+                
+                # Check if it's a git repository
+                git_dir = os.path.join(chatterbox_embed_path, ".git")
+                if os.path.exists(git_dir):
+                    logger.info("✅ Found .git directory - it's a git repository")
+                    
+                    # Get current commit hash
+                    try:
+                        result = subprocess.run(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_hash = result.stdout.strip()
+                            logger.info(f"🔍 Current commit hash: {commit_hash}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit hash: {result.stderr}")
+                            commit_hash = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit hash: {e}")
+                        commit_hash = "error"
+                    
+                    # Get commit message
+                    try:
+                        result = subprocess.run(
+                            ["git", "log", "-1", "--pretty=format:%s"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_message = result.stdout.strip()
+                            logger.info(f"📝 Last commit message: {commit_message}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit message: {result.stderr}")
+                            commit_message = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit message: {e}")
+                        commit_message = "error"
+                    
+                    # Get commit date
+                    try:
+                        result = subprocess.run(
+                            ["git", "log", "-1", "--pretty=format:%ci"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_date = result.stdout.strip()
+                            logger.info(f"📅 Last commit date: {commit_date}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit date: {result.stderr}")
+                            commit_date = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit date: {e}")
+                        commit_date = "error"
+                    
+                    # Get remote URL
+                    try:
+                        result = subprocess.run(
+                            ["git", "remote", "get-url", "origin"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            remote_url = result.stdout.strip()
+                            logger.info(f"🌐 Remote URL: {remote_url}")
+                        else:
+                            logger.warning(f"⚠️ Could not get remote URL: {result.stderr}")
+                            remote_url = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting remote URL: {e}")
+                        remote_url = "error"
+                    
+                    # Check if there are uncommitted changes
+                    try:
+                        result = subprocess.run(
+                            ["git", "status", "--porcelain"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            if result.stdout.strip():
+                                logger.warning("⚠️ Repository has uncommitted changes!")
+                                logger.warning(f"📋 Changes: {result.stdout.strip()}")
+                            else:
+                                logger.info("✅ Repository is clean (no uncommitted changes)")
+                        else:
+                            logger.warning(f"⚠️ Could not check git status: {result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error checking git status: {e}")
+                    
+                    # Summary
+                    logger.info("📊 ===== FORKED REPO SUMMARY =====")
+                    logger.info(f"🔍 Commit Hash: {commit_hash}")
+                    logger.info(f"📝 Commit Message: {commit_message}")
+                    logger.info(f"📅 Commit Date: {commit_date}")
+                    logger.info(f"🌐 Remote URL: {remote_url}")
+                    
+                else:
+                    logger.warning("⚠️ No .git directory found - not a git repository")
+            else:
+                logger.warning("⚠️ Could not find chatterbox_embed directory")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during git debugging: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        logger.info("🔍 ===== END GIT DEBUG =====")
+        
     else:
-        # Mono: (samples,) -> (1, samples)
-        audio_np = audio_tensor.unsqueeze(0).numpy()
-    
-    # Convert to int16 for pydub
-    audio_np = (audio_np * 32767).astype(np.int16)
-    
-    # Create AudioSegment
-    audio_segment = AudioSegment(
-        audio_np.tobytes(),
-        frame_rate=sample_rate,
-        sample_width=2,  # 16-bit
-        channels=audio_np.shape[0]
-    )
-    
-    return audio_segment
-
-def tensor_to_wav_bytes(audio_tensor, sample_rate):
-    """
-    Convert audio tensor to WAV bytes (fallback).
-    
-    :param audio_tensor: PyTorch audio tensor
-    :param sample_rate: Audio sample rate
-    :return: WAV bytes
-    """
-    # Save to temporary WAV file
-    temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    torchaudio.save(temp_wav.name, audio_tensor, sample_rate)
-    
-    # Read WAV bytes
-    with open(temp_wav.name, 'rb') as f:
-        wav_bytes = f.read()
-    
-    # Clean up temp file
-    os.unlink(temp_wav.name)
-    
-    return wav_bytes
-
-def convert_audio_file_to_mp3(input_path, output_path, bitrate="160k"):
-    """
-    Convert audio file to MP3 with specified bitrate.
-    
-    :param input_path: Path to input audio file
-    :param output_path: Path to output MP3 file
-    :param bitrate: MP3 bitrate
-    """
-    try:
-        from pydub import AudioSegment
-        # Load audio file
-        audio = AudioSegment.from_file(input_path)
-        # Export as MP3
-        audio.export(output_path, format="mp3", bitrate=bitrate)
-        logger.info(f"✅ Converted {input_path} to MP3: {output_path}")
-    except ImportError:
-        raise ImportError("pydub is required for audio conversion")
-    except Exception as e:
-        logger.error(f"❌ Failed to convert {input_path} to MP3: {e}")
-        raise
+        logger.error("❌ Forked repository models not available")
+        vc_model = None
+        tts_model = None
+        
+except Exception as e:
+    logger.error(f"❌ Failed to initialize models: {e}")
+    vc_model = None
+    tts_model = None
 
 # -------------------------------------------------------------------
 # 🐞  Firebase / GCS credential debug helper
 # -------------------------------------------------------------------
 def _debug_gcs_creds():
-    """Minimal Firebase credential check - removed extensive debugging since voice cloning is working"""
+    """Minimal Firebase credential check"""
     import os
     logger.info("🔍 Firebase credentials check")
     
@@ -217,8 +274,6 @@ def _debug_gcs_creds():
 def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
-    
-    # Firebase initialization
     
     try:
         # Debug: Check environment variables
@@ -321,94 +376,6 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         logger.error(f"❌ Firebase upload failed: {e}")
         return None
 
-def initialize_model():
-    global model, forked_handler
-    
-    if model is not None:
-        logger.info("Model already initialized")
-        return model
-    
-    logger.info("Initializing S3Token2Wav model...")
-    
-    # Check CUDA availability
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required but not available")
-    
-    logger.info(f"CUDA available: {torch.cuda.is_available()}")
-    logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
-    
-    try:
-        # Minimal initialization - focus on core functionality
-        model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxTTS model initialized")
-
-        # Initialize the forked repository handler if available
-        if FORKED_HANDLER_AVAILABLE:
-            logger.info("🔧 Initializing ChatterboxVC...")
-            try:
-                forked_handler = ChatterboxVC(
-                    s3gen=model.s3gen,
-                    device=model.device
-                )
-                logger.info("✅ ChatterboxVC initialized successfully")
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize ChatterboxVC: {e}")
-                forked_handler = None
-        else:
-            logger.warning("⚠️ ChatterboxVC not available - will use fallback methods")
-
-        # Additional model introspection logs
-        import inspect
-        logger.info(f"📦 Model class: {model.__class__}")
-        logger.info(f"📁 Model module: {model.__class__.__module__}")
-        logger.info(f"📂 Loaded model from file: {inspect.getfile(model.__class__)}")
-        logger.info(f"🧠 Model dir(): {dir(model)}")
-        logger.info(f"🔎 Has method load_voice_profile: {hasattr(model, 'load_voice_profile')}")
-
-        # List all methods that contain 'voice' or 'profile'
-        voice_methods = [method for method in dir(model) if 'voice' in method.lower() or 'profile' in method.lower()]
-        logger.info(f"🔍 Voice/Profile related methods: {voice_methods}")
-
-        # Fast-fail check for required method
-        assert hasattr(model, 'load_voice_profile'), "🚨 Loaded model is missing `load_voice_profile`. Wrong class?"
-
-        # Verify s3gen module source
-        logger.info("🔍 ===== S3GEN VERIFICATION =====")
-        if hasattr(model, "s3gen"):
-            logger.info(f"📂 s3gen module path: {model.s3gen.__class__.__module__}")
-            logger.info(f"📂 s3gen class: {model.s3gen.__class__}")
-            logger.info(f"📂 s3gen class file: {model.s3gen.__class__.__module__}")
-            
-            # Check s3gen module file path
-            try:
-                s3gen_file = inspect.getfile(model.s3gen.__class__)
-                logger.info(f"📂 s3gen file path: {s3gen_file}")
-                logger.info(f"📂 s3gen file exists: {os.path.exists(s3gen_file)}")
-                
-                # Check if it's from the forked repository
-                if "chatterbox_embed" in s3gen_file:
-                    logger.info("✅ s3gen is from forked repository")
-                else:
-                    logger.warning("⚠️ s3gen is NOT from forked repository")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Could not determine s3gen file path: {e}")
-        else:
-            logger.error("❌ Model doesn't have s3gen attribute")
-            
-        # Check for generate_long_text method
-        logger.info(f"🔎 Has method generate_long_text: {hasattr(model, 'generate_long_text')}")
-        if hasattr(model, 'generate_long_text'):
-            logger.info("✅ Model has generate_long_text method - can use built-in chunking/stitching")
-        else:
-            logger.warning("⚠️ Model doesn't have generate_long_text method - will use fallback")
-
-        return model
-        
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize model: {e}")
-        raise
-
 def list_files_for_debug():
     """List files in our directories for debugging"""
     logger.info("📂 Directory contents:")
@@ -419,342 +386,107 @@ def list_files_for_debug():
         else:
             logger.info(f"  {directory}: [DIRECTORY NOT FOUND]")
 
-def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voice, temp_profile_path, start_time):
-    """Generate voice sample using saved voice profile"""
-    global model, forked_handler
+def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata):
+    """
+    Pure API orchestration: Call the TTS model's generate_tts_story method.
     
-    logger.info("🎵 ===== VOICE SAMPLE GENERATION =====")
-    logger.info(f"🔍 Parameters received:")
-    logger.info(f"  voice_id: {voice_id}")
-    logger.info(f"  language: {language}")
-    logger.info(f"  is_kids_voice: {is_kids_voice}")
-    logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
+    The TTS model handles all the model logic:
+    - Voice profile loading
+    - Text-to-speech generation
+    - Audio processing
+    - Firebase upload
+    - Error handling
+    - Logging
     
-    # Create output filename for voice sample (MP3)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    local_dir = VOICE_SAMPLES_DIR / language
-    if is_kids_voice:
-        local_dir = local_dir / "kids"
+    This API app only:
+    - Calls the model method
+    - Handles the returned data
+    - Returns API responses
+    """
+    global tts_model
     
-    logger.info(f"🔍 Local directory path: {local_dir}")
-    
-    # Create directory if it doesn't exist
-    logger.info(f"🔍 Creating directory: {local_dir}")
-    logger.info(f"🔍 Directory parent exists: {local_dir.parent.exists()}")
-    logger.info(f"🔍 Directory parent: {local_dir.parent}")
-    
-    local_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"🔍 Directory created/exists: {local_dir.exists()}")
-    logger.info(f"🔍 Directory absolute path: {local_dir.absolute()}")
-    
-    # Test write permissions
-    try:
-        test_file = local_dir / "test_write.tmp"
-        test_file.write_text("test")
-        test_file.unlink()
-        logger.info(f"🔍 Write permissions: OK")
-    except Exception as e:
-        logger.error(f"🔍 Write permissions: FAILED - {e}")
-    
-    sample_filename = local_dir / f"{voice_id}_sample_{timestamp}.mp3"  # Changed to .mp3
-    logger.info(f"🎯 Voice sample local path: {sample_filename}")
-    logger.info(f"🔍 Full absolute path: {sample_filename.absolute()}")
-    
-    try:
-        logger.info("🔄 Starting voice sample processing...")
-        
-        # Use the forked repository's generate_long_text method
-        logger.info(f"🎵 Using voice profile: {temp_profile_path}")
-        
-        if hasattr(model, 'generate_long_text'):
-            logger.info("✅ Using forked repository's generate_long_text method")
-            audio_tensor, sample_rate, metadata = model.generate_long_text(
-                text=text,
-                voice_profile_path=str(temp_profile_path),
-                output_path=str(sample_filename),
-                max_chars=500,      # Maximum characters per chunk
-                pause_ms=150,        # Pause between chunks in milliseconds
-                temperature=0.8,     # Generation temperature
-                exaggeration=0.5,    # Voice exaggeration
-                cfg_weight=0.5       # CFG weight
-            )
-            logger.info(f"✅ Generated using forked repository's long text method")
-            logger.info(f"🔍 Metadata: {metadata}")
-        else:
-            logger.warning("⚠️ Forked repository doesn't have generate_long_text, using fallback")
-            # Fallback to simple generation
-            audio_tensor = model.generate(
-                text=text,
-                voice_profile_path=str(temp_profile_path),
-                temperature=0.8,
-                exaggeration=0.5,
-                cfg_weight=0.5
-            )
-        
-        generation_time = time.time() - start_time
-        logger.info(f"✅ Voice sample generated in {generation_time:.2f}s")
-        logger.info(f"🔍 Audio tensor shape: {audio_tensor.shape}")
-        
-        # Convert to MP3 bytes
-        mp3_bytes = tensor_to_mp3_bytes(audio_tensor, model.sr, "96k")
-        logger.info(f"🎵 Converted to MP3: {len(mp3_bytes)} bytes")
-        
-        # Save MP3 file
-        with open(sample_filename, 'wb') as f:
-            f.write(mp3_bytes)
-        
-        logger.info(f"🔍 Final output path: {sample_filename}")
-        logger.info(f"🔍 Output file exists: {sample_filename.exists()}")
-        logger.info(f"🔍 File size: {sample_filename.stat().st_size if sample_filename.exists() else 'N/A'} bytes")
-        
-    except Exception as e:
-        generation_time = time.time() - start_time
-        logger.error(f"❌ Failed to generate voice sample after {generation_time:.2f}s")
-        logger.error(f"❌ Error type: {type(e)}")
-        logger.error(f"❌ Error message: {str(e)}")
-        logger.error(f"❌ Error details: {e}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-        return {"status": "error", "message": f"Failed to generate voice sample: {e}"}
-    
-    # Upload voice sample to Firebase
-    if is_kids_voice:
-        sample_firebase_path = f"audio/voices/{language}/kids/samples/{voice_id}_sample_{timestamp}.mp3"
-    else:
-        sample_firebase_path = f"audio/voices/{language}/samples/{voice_id}_sample_{timestamp}.mp3"
-    
-    logger.info(f"🎯 Voice sample Firebase path: {sample_firebase_path}")
-    
-    try:
-        logger.info(f"🔍 About to read file: {sample_filename}")
-        logger.info(f"🔍 File exists before reading: {sample_filename.exists()}")
-        logger.info(f"🔍 File absolute path: {sample_filename.absolute()}")
-        
-        with open(sample_filename, 'rb') as f:
-            sample_mp3_bytes = f.read()
-        
-        logger.info(f"🔍 Read {len(sample_mp3_bytes)} bytes from file")
-        
-        # Store metadata with the voice sample file
-        sample_metadata = {
-            'voice_id': voice_id,
-            'file_type': 'voice_sample',
-            'language': language,
-            'is_kids_voice': str(is_kids_voice),
-            'format': '96k_mp3',
-            'timestamp': timestamp,
-            'created_date': datetime.now().isoformat(),
-            'model': 'chatterbox_tts',
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=3600'
-        }
-        
-        sample_uploaded = upload_to_firebase(
-            sample_mp3_bytes,
-            sample_firebase_path,
-            "audio/mpeg",
-            sample_metadata
-        )
-        
-        if sample_uploaded:
-            logger.info(f"🎵 Voice sample uploaded: {sample_firebase_path}")
-            return {
-                "status": "success",
-                "sample_path": sample_firebase_path,
-                "sample_url": sample_uploaded,
-                "generation_time": generation_time,
-                "model": "chatterbox_tts"
-            }
-        else:
-            logger.error(f"❌ Failed to upload voice sample to Firebase")
-            return {"status": "error", "message": "Failed to upload voice sample to Firebase"}
-            
-    except Exception as e:
-        logger.error(f"❌ Failed to read/upload voice sample: {e}")
-        return {"status": "error", "message": f"Failed to read/upload voice sample: {e}"}
-
-def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_kids_voice, temp_profile_path, start_time):
-    """Generate TTS story using built-in long text generation"""
-    global model, forked_handler
-    
-    logger.info("📖 ===== TTS STORY GENERATION =====")
-    logger.info(f"🔍 Parameters received:")
+    logger.info(f"🎯 ===== CALLING TTS MODEL =====")
+    logger.info(f"🔍 Parameters:")
     logger.info(f"  voice_id: {voice_id}")
     logger.info(f"  language: {language}")
     logger.info(f"  story_type: {story_type}")
     logger.info(f"  is_kids_voice: {is_kids_voice}")
-    logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
+    logger.info(f"  text_length: {len(text)} characters")
     
-    # Create output filename for TTS story (MP3)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    local_dir = TTS_GENERATED_DIR / language / story_type
-    logger.info(f"🔍 Local directory path: {local_dir}")
-    
-    # Create directory if it doesn't exist
-    logger.info(f"🔍 Creating directory: {local_dir}")
-    logger.info(f"🔍 Directory parent exists: {local_dir.parent.exists()}")
-    logger.info(f"🔍 Directory parent: {local_dir.parent}")
-    
-    local_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"🔍 Directory created/exists: {local_dir.exists()}")
-    logger.info(f"🔍 Directory absolute path: {local_dir.absolute()}")
-    
-    # Test write permissions
-    try:
-        test_file = local_dir / "test_write.tmp"
-        test_file.write_text("test")
-        test_file.unlink()
-        logger.info(f"🔍 Write permissions: OK")
-    except Exception as e:
-        logger.error(f"🔍 Write permissions: FAILED - {e}")
-    
-    tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.mp3"  # Changed to .mp3
-    logger.info(f"🎯 TTS story local path: {tts_filename}")
-    logger.info(f"🔍 Full absolute path: {tts_filename.absolute()}")
+    start_time = time.time()
     
     try:
-        logger.info("🔄 Starting TTS story processing...")
+        # Check if TTS model is available
+        if tts_model is None:
+            logger.error("❌ TTS model not available")
+            return {
+                "status": "error",
+                "message": "TTS model not available",
+                "generation_time": time.time() - start_time
+            }
         
-        # Use the model's built-in long text generation
-        if hasattr(model, 'generate_long_text'):
-            logger.info("✅ Using model's built-in generate_long_text method")
-            audio_tensor, sample_rate, metadata = model.generate_long_text(
-                text=text,
-                voice_profile_path=str(temp_profile_path),
-                output_path=str(tts_filename),
-                max_chars=500,      # Maximum characters per chunk
-                pause_ms=150,        # Pause between chunks in milliseconds
-                temperature=0.8,     # Generation temperature
-                exaggeration=0.5,    # Voice exaggeration
-                cfg_weight=0.5       # CFG weight
-            )
-            logger.info(f"✅ TTS story generated using built-in method")
-            logger.info(f"🔍 Metadata: {metadata}")
-        else:
-            logger.warning("⚠️ Model doesn't have generate_long_text, using fallback")
-            # Fallback to simple generation
-            audio_tensor = model.generate(
-                text=text,
-                voice_profile_path=str(temp_profile_path),
-                temperature=0.8,
-                exaggeration=0.5,
-                cfg_weight=0.5
-            )
-            # Convert to MP3 and save
-            mp3_bytes = tensor_to_mp3_bytes(audio_tensor, model.sr, "96k")
-            with open(tts_filename, 'wb') as f:
-                f.write(mp3_bytes)
-            metadata = {"chunk_count": 1, "duration_sec": audio_tensor.shape[-1] / model.sr}
+        # Check if generate_tts_story method exists
+        if not hasattr(tts_model, 'generate_tts_story'):
+            logger.error("❌ TTS model doesn't have generate_tts_story method")
+            logger.error("🔍 This means the RunPod deployment is using an older version of the forked repository")
+            
+            # Debug: List all available methods
+            available_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+            logger.info(f"🔍 Available methods in tts_model: {available_methods}")
+            
+            return {
+                "status": "error",
+                "message": "TTS model doesn't have generate_tts_story method. Please update the RunPod deployment with the latest forked repository version.",
+                "generation_time": time.time() - start_time,
+                "debug_info": {
+                    "available_methods": available_methods,
+                    "tts_model_type": type(tts_model).__name__,
+                    "tts_model_module": tts_model.__class__.__module__
+                }
+            }
         
-        generation_time = time.time() - start_time
-        logger.info(f"✅ TTS story generated in {generation_time:.2f}s")
-        logger.info(f"🔍 Final output path: {tts_filename}")
-        logger.info(f"🔍 Output file exists: {tts_filename.exists()}")
-        logger.info(f"🔍 File size: {tts_filename.stat().st_size if tts_filename.exists() else 'N/A'} bytes")
+        # Call the TTS model's generate_tts_story method
+        logger.info("🔄 Calling TTS model's generate_tts_story method...")
         
-    except Exception as e:
-        generation_time = time.time() - start_time
-        logger.error(f"❌ Failed to generate TTS story after {generation_time:.2f}s")
-        logger.error(f"❌ Error type: {type(e)}")
-        logger.error(f"❌ Error message: {str(e)}")
-        logger.error(f"❌ Error details: {e}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-        
-        # Try with smaller chunks if it's a CUDA error
-        if "CUDA error" in str(e) and len(text) > 300:
-            logger.info("🔄 Retrying with smaller chunks due to CUDA error...")
-            try:
-                audio_tensor, sample_rate, metadata = model.generate_long_text(
-                    text=text,
-                    voice_profile_path=str(temp_profile_path),
-                    output_path=str(tts_filename),
-                    max_chars=300,       # Smaller chunks for better memory management
-                    pause_ms=200,        # Longer pauses between chunks
-                    temperature=0.7,     # Lower temperature for more consistent voice
-                    exaggeration=0.6,    # Slightly more expressive
-                    cfg_weight=0.4       # Lower CFG for more natural pacing
-                )
-                generation_time = time.time() - start_time
-                logger.info(f"✅ TTS story generated with smaller chunks in {generation_time:.2f}s")
-            except Exception as retry_error:
-                logger.error(f"❌ Retry also failed: {retry_error}")
-                return {"status": "error", "message": f"Failed to generate TTS story even with chunking: {retry_error}"}
-        else:
-            return {"status": "error", "message": f"Failed to generate TTS story: {e}"}
-    
-    # Upload TTS story to Firebase
-    audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.mp3"  # Changed to .mp3
-    
-    logger.info(f"🎯 TTS story Firebase path: {audio_path_firebase}")
-    
-    try:
-        logger.info(f"🔍 About to read file: {tts_filename}")
-        logger.info(f"🔍 File exists before reading: {tts_filename.exists()}")
-        logger.info(f"🔍 File absolute path: {tts_filename.absolute()}")
-        
-        with open(tts_filename, 'rb') as f:
-            tts_mp3_bytes = f.read()
-        
-        logger.info(f"🔍 Read {len(tts_mp3_bytes)} bytes from file")
-        
-        # Store metadata with the TTS story file
-        tts_metadata = {
-            'voice_id': voice_id,
-            'file_type': 'tts_story',
-            'language': language,
-            'story_type': story_type,
-            'is_kids_voice': str(is_kids_voice),
-            'format': '96k_mp3',
-            'timestamp': timestamp,
-            'created_date': datetime.now().isoformat(),
-            'model': 'chatterbox_tts',
-            'chunk_count': metadata.get('chunk_count', 1),
-            'duration_sec': metadata.get('duration_sec', 0),
-            'Access-Control-Allow-Origin': '*',
-            'Cache-Control': 'public, max-age=3600'
-        }
-        
-        tts_uploaded = upload_to_firebase(
-            tts_mp3_bytes,
-            audio_path_firebase,
-            "audio/mpeg",
-            tts_metadata
+        result = tts_model.generate_tts_story(
+            text=text,
+            voice_id=voice_id,
+            profile_base64=profile_base64,
+            language=language,
+            story_type=story_type,
+            is_kids_voice=is_kids_voice,
+            metadata=api_metadata
         )
         
-        if tts_uploaded:
-            logger.info(f"📖 TTS story uploaded: {audio_path_firebase}")
-            return {
-                "status": "success",
-                "tts_path": audio_path_firebase,
-                "tts_url": tts_uploaded,
-                "generation_time": generation_time,
-                "model": "chatterbox_tts",
-                "metadata": metadata
-            }
-        else:
-            logger.error(f"❌ Failed to upload TTS story to Firebase")
-            return {"status": "error", "message": "Failed to upload TTS story to Firebase"}
-            
+        generation_time = time.time() - start_time
+        logger.info(f"✅ TTS model generate_tts_story completed in {generation_time:.2f}s")
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"❌ Failed to read/upload TTS story: {e}")
-        return {"status": "error", "message": f"Failed to read/upload TTS story: {e}"}
+        generation_time = time.time() - start_time
+        logger.error(f"❌ TTS model call failed after {generation_time:.2f}s: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "generation_time": generation_time
+        }
 
 def handler(event, responseFormat="base64"):
-    """Handle TTS generation requests using ChatterboxTTS.generate_tts_story()"""
-    global model, forked_handler
+    """Pure API orchestration: Handle TTS generation requests"""
+    global tts_model
     
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
         return {"status": "error", "message": "Failed to initialize Firebase storage"}
     
-    # Check if model is pre-loaded
-    if model is None:
-        logger.error("❌ ChatterboxTTS model not pre-loaded")
-        return {"status": "error", "message": "ChatterboxTTS model not available"}
+    # Check if TTS model is available
+    if tts_model is None:
+        logger.error("❌ TTS model not available")
+        return {"status": "error", "message": "TTS model not available"}
     
-    logger.info("✅ Using pre-loaded ChatterboxTTS model")
+    logger.info("✅ Using pre-initialized TTS model")
     
     # Handle TTS generation request according to API contract
     text = event["input"].get("text")
@@ -773,156 +505,27 @@ def handler(event, responseFormat="base64"):
     logger.info(f"🌍 Language: {language}, Story type: {story_type}")
     logger.info(f"👶 Kids voice: {is_kids_voice}")
     
-    start_time = time.time()
-    
     try:
-        # Handle voice profile - either from base64 or from saved file
-        profile_path = None
+        # Call the TTS model's generate_tts_story method - it handles everything!
+        logger.info("🔄 Calling TTS model's generate_tts_story method...")
         
-        if profile_base64:
-            # Use provided base64 profile
-            logger.info("🔄 Using provided base64 profile")
-            import tempfile
-            profile_data = base64.b64decode(profile_base64)
-            temp_profile_file = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
-            temp_profile_file.write(profile_data)
-            temp_profile_file.close()
-            profile_path = Path(temp_profile_file.name)
-            logger.info(f"✅ Created temporary profile from base64: {profile_path}")
-        else:
-            # Use saved voice profile
-            profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
-            logger.info(f"🔍 Looking for saved voice profile: {profile_path}")
-            
-            if not profile_path.exists():
-                logger.error(f"❌ Voice profile not found: {profile_path}")
-                return {"status": "error", "message": f"Voice profile not found for {voice_id}"}
-            
-            logger.info(f"✅ Voice profile found: {profile_path}")
+        result = call_tts_model_generate_tts_story(
+            text=text,
+            voice_id=voice_id,
+            profile_base64=profile_base64,
+            language=language,
+            story_type=story_type,
+            is_kids_voice=is_kids_voice,
+            api_metadata=api_metadata
+        )
         
-        # Call the forked repository's generate_tts_story method
-        logger.info("🔄 Calling forked repository's generate_tts_story method...")
-        
-        if hasattr(model, 'generate_tts_story'):
-            logger.info("✅ Using forked repository's generate_tts_story method")
-            
-            # Call the forked repository method
-            result = model.generate_tts_story(
-                text=text,
-                voice_id=voice_id,
-                voice_profile_path=str(profile_path),
-                language=language,
-                story_type=story_type,
-                is_kids_voice=is_kids_voice,
-                metadata=api_metadata
-            )
-            
-            generation_time = time.time() - start_time
-            logger.info(f"✅ TTS story generated using forked repository in {generation_time:.2f}s")
-            
-            # Clean up temporary profile if created from base64
-            if profile_base64 and profile_path and profile_path.exists():
-                try:
-                    os.unlink(profile_path)
-                    logger.info("🧹 Cleaned up temporary profile file")
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to clean up temporary profile: {e}")
-            
-            return result
-            
-        else:
-            logger.warning("⚠️ Forked repository doesn't have generate_tts_story, using fallback")
-            
-            # Fallback to generate_long_text method
-            if hasattr(model, 'generate_long_text'):
-                logger.info("🔄 Using generate_long_text fallback")
-                
-                # Create output filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                local_dir = TTS_GENERATED_DIR / language / story_type
-                local_dir.mkdir(parents=True, exist_ok=True)
-                tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.mp3"
-                
-                # Generate using long text method
-                audio_tensor, sample_rate, metadata = model.generate_long_text(
-                    text=text,
-                    voice_profile_path=str(profile_path),
-                    output_path=str(tts_filename),
-                    max_chars=500,
-                    pause_ms=150,
-                    temperature=0.8,
-                    exaggeration=0.5,
-                    cfg_weight=0.5
-                )
-                
-                # Upload to Firebase
-                audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.mp3"
-                
-                with open(tts_filename, 'rb') as f:
-                    tts_mp3_bytes = f.read()
-                
-                firebase_metadata = {
-                    'voice_id': voice_id,
-                    'file_type': 'tts_story',
-                    'language': language,
-                    'story_type': story_type,
-                    'is_kids_voice': str(is_kids_voice),
-                    'format': '96k_mp3',
-                    'timestamp': timestamp,
-                    'created_date': datetime.now().isoformat(),
-                    'model': 'chatterbox_tts',
-                    'user_id': api_metadata.get('user_id'),
-                    'project_id': api_metadata.get('project_id'),
-                    'Access-Control-Allow-Origin': '*',
-                    'Cache-Control': 'public, max-age=3600'
-                }
-                
-                tts_uploaded = upload_to_firebase(
-                    tts_mp3_bytes,
-                    audio_path_firebase,
-                    "audio/mpeg",
-                    firebase_metadata
-                )
-                
-                generation_time = time.time() - start_time
-                
-                # Clean up temporary profile if created from base64
-                if profile_base64 and profile_path and profile_path.exists():
-                    try:
-                        os.unlink(profile_path)
-                        logger.info("🧹 Cleaned up temporary profile file")
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to clean up temporary profile: {e}")
-                
-                return {
-                    "status": "success",
-                    "voice_id": voice_id,
-                    "audio_path": audio_path_firebase,
-                    "audio_url": tts_uploaded,
-                    "generation_time": generation_time,
-                    "model": "chatterbox_tts",
-                    "metadata": firebase_metadata
-                }
-            else:
-                logger.error("❌ No TTS generation method available")
-                return {"status": "error", "message": "No TTS generation method available"}
-            
+        # Return the result from the TTS model
+        logger.info(f"📤 TTS generation completed successfully")
+        return result
+
     except Exception as e:
-        generation_time = time.time() - start_time
-        logger.error(f"❌ TTS generation failed after {generation_time:.2f}s")
-        logger.error(f"❌ Error: {e}")
-        import traceback
-        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
-        
-        # Clean up temporary profile if created from base64
-        if profile_base64 and 'profile_path' in locals() and profile_path and profile_path.exists():
-            try:
-                os.unlink(profile_path)
-                logger.info("🧹 Cleaned up temporary profile file after error")
-            except Exception as cleanup_error:
-                logger.warning(f"⚠️ Failed to clean up temporary profile after error: {cleanup_error}")
-        
-        return {"status": "error", "message": f"TTS generation failed: {e}"}
+        logger.error(f"An unexpected error occurred: {e}")
+        return {"status": "error", "message": str(e)}
 
 def handle_file_download(input):
     """Handle file download requests"""
@@ -962,4 +565,4 @@ def list_available_files():
 if __name__ == '__main__':
     logger.info("🚀 TTS Handler starting...")
     logger.info("✅ TTS Handler ready")
-    runpod.serverless.start({'handler': handler }) 
+    runpod.serverless.start({'handler': handler })
