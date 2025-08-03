@@ -331,12 +331,12 @@ def generate_template_message(name):
     return f"Hello, this is the voice clone of {name}. This voice is used to narrate whimsical stories and fairytales."
 
 def save_voice_profile(temp_voice_file, voice_id):
-    """Save voice profile directly to target location"""
+    """Save voice profile using forked repository's create_voice_clone method"""
     global model, forked_handler
     
     # Get final profile path
     profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
-    logger.info(f"💾 Saving voice profile directly to: {profile_path}")
+    logger.info(f"💾 Saving voice profile using forked repository: {profile_path}")
     
     # Check if profile already exists
     if profile_path.exists():
@@ -344,46 +344,37 @@ def save_voice_profile(temp_voice_file, voice_id):
         return profile_path
     
     try:
-        # Use forked repository handler if available
-        if forked_handler is not None and hasattr(forked_handler, 'set_target_voice'):
-            logger.info(f"📁 Using forked repository ChatterboxVC.set_target_voice method")
-            # ChatterboxVC doesn't have a save_voice_profile method, so we'll use the model method
+        # Use forked repository's create_voice_clone method
+        if forked_handler is not None:
+            logger.info(f"📁 Using forked repository ChatterboxVC.create_voice_clone method")
+            result = forked_handler.create_voice_clone(
+                audio_file_path=str(temp_voice_file),
+                voice_id=voice_id,
+                output_dir=str(VOICE_PROFILES_DIR)
+            )
+            
+            if result["status"] == "success":
+                logger.info(f"✅ Voice profile created using forked repository: {result.get('profile_path', profile_path)}")
+                return profile_path
+            else:
+                logger.error(f"❌ Failed to create voice profile: {result.get('message', 'Unknown error')}")
+                raise RuntimeError(f"Voice profile creation failed: {result.get('message', 'Unknown error')}")
+        else:
+            # Fallback to model method
             if hasattr(model, 'save_voice_profile'):
                 model.save_voice_profile(str(temp_voice_file), str(profile_path))
                 logger.info(f"✅ Voice profile saved using model method to: {profile_path}")
+                return profile_path
             else:
-                logger.warning(f"⚠️ Model doesn't have save_voice_profile method")
-        elif hasattr(model, 'save_voice_profile'):
-            logger.info(f"📁 Using enhanced save_voice_profile method")
-            
-            # Pass the audio file path directly (not the loaded tensor)
-            logger.info(f"🎵 Using audio file: {temp_voice_file}")
-            
-            # Save profile using file path
-            model.save_voice_profile(str(temp_voice_file), str(profile_path))
-            logger.info(f"✅ Voice profile saved directly to: {profile_path}")
-        else:
-            # Fallback: create a placeholder 
-            logger.warning(f"Enhanced profile saving not available, creating placeholder for {voice_id}")
-            with open(profile_path, 'w') as f:
-                f.write(f"voice_id: {voice_id}")
-            logger.info(f"📝 Created placeholder: {profile_path}")
-            
-        # Verify the file was created
-        if profile_path.exists():
-            file_size = profile_path.stat().st_size
-            logger.info(f"✅ Verified profile file: {profile_path} ({file_size} bytes)")
-        else:
-            logger.error(f"❌ Profile file not created: {profile_path}")
+                logger.error(f"❌ No voice profile creation method available")
+                raise RuntimeError("No voice profile creation method available")
                 
-        return profile_path
-        
     except Exception as e:
         logger.error(f"Failed to save voice profile: {e}")
         raise
 
 def load_voice_profile(voice_id):
-    """Load existing voice profile"""
+    """Load existing voice profile using forked repository"""
     global model, forked_handler
     
     # Get profile path
@@ -394,25 +385,21 @@ def load_voice_profile(voice_id):
         raise FileNotFoundError(f"No voice profile found for {voice_id}")
     
     try:
-        # Use forked repository handler if available
-        if forked_handler is not None and hasattr(forked_handler, 'set_target_voice'):
-            logger.info(f"📁 Using forked repository ChatterboxVC - will set target voice from profile")
-            # ChatterboxVC doesn't have a load_voice_profile method, so we'll use the model method
+        # Use forked repository's set_voice_profile method
+        if forked_handler is not None:
+            logger.info(f"📁 Using forked repository ChatterboxVC.set_voice_profile method")
+            forked_handler.set_voice_profile(str(profile_path))
+            logger.info(f"✅ Voice profile loaded using forked repository from {profile_path}")
+            return True  # Profile is now set in the forked handler
+        else:
+            # Fallback to model method
             if hasattr(model, 'load_voice_profile'):
                 profile = model.load_voice_profile(str(profile_path))
                 logger.info(f"✅ Loaded voice profile using model method from {profile_path}")
                 return profile
             else:
-                logger.warning(f"⚠️ Model doesn't have load_voice_profile method")
-        elif hasattr(model, 'load_voice_profile'):
-            # Use enhanced method from forked repository
-            profile = model.load_voice_profile(str(profile_path))
-            logger.info(f"✅ Loaded voice profile from {profile_path}")
-            return profile
-        else:
-            # Fallback: return None to indicate we should use the original audio file method
-            logger.warning(f"Enhanced profile loading not available, will use original audio file method for {voice_id}")
-            return None
+                logger.warning(f"Enhanced profile loading not available, will use original audio file method for {voice_id}")
+                return None
         
     except Exception as e:
         logger.error(f"Failed to load voice profile: {e}")
@@ -533,52 +520,58 @@ def handle_voice_clone_request(input, responseFormat):
         # Track which generation method was used
         generation_method = "unknown"
         
-        # Step 3: Generate voice sample (96 kbps MP3)
+        # Step 3: Generate voice sample using forked repository
         audio_tensor = None
-        if profile is not None:
-            # Use profile-based generation (forked repository method)
-            logger.info("🔄 Using profile-based generation")
-            generation_method = "profile_based"
+        if forked_handler is not None:
+            # Use forked repository's generate_voice_sample method
+            logger.info("🔄 Using forked repository's generate_voice_sample method")
+            generation_method = "forked_repository"
             
-            # Use the correct high-level method: ChatterboxTTS.generate() with voice_profile_path
-            logger.info("🔍 Using standard ChatterboxTTS.generate() with voice_profile_path")
             try:
-                # Use the saved voice profile file directly
-                profile_path_str = str(profile_path)
-                logger.info(f"🎵 Using voice profile: {profile_path_str}")
+                # Use the forked repository's built-in voice sample generation
+                result = forked_handler.generate_voice_sample(
+                    voice_profile_path=str(profile_path),
+                    text=template_message
+                )
                 
+                if isinstance(result, tuple) and len(result) == 2:
+                    audio_tensor, mp3_bytes = result
+                    logger.info("✅ Used forked repository's generate_voice_sample method")
+                else:
+                    # Fallback to model method
+                    audio_tensor = model.generate(
+                        text=template_message,
+                        voice_profile_path=str(profile_path),
+                        temperature=0.8,
+                        exaggeration=0.5,
+                        cfg_weight=0.5
+                    )
+                    generation_method = "fallback_model_generate"
+                    logger.info("✅ Used fallback model.generate method")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Forked repository method failed: {e}")
+                # Fallback to model method
                 audio_tensor = model.generate(
                     text=template_message,
-                    voice_profile_path=profile_path_str,  # ✅ Correct parameter name
+                    voice_profile_path=str(profile_path),
                     temperature=0.8,
                     exaggeration=0.5,
                     cfg_weight=0.5
                 )
-                generation_method = "standard_generate_with_voice_profile"
-                logger.info("✅ Used standard ChatterboxTTS.generate() with voice_profile_path")
-                
-            except Exception as e:
-                logger.warning(f"⚠️ Standard generate with voice_profile_path failed: {e}")
-                logger.warning(f"⚠️ Exception type: {type(e).__name__}")
-                
-                # Fallback: Use original audio file method
-                logger.warning("⚠️ Falling back to audio_prompt_path method")
-                audio_tensor = model.generate(
-                    text=template_message,
-                    audio_prompt_path=str(temp_voice_file),
-                    temperature=0.8
-                )
-                generation_method = "fallback_audio_prompt"
-                logger.info("✅ Used fallback audio_prompt_path method")
+                generation_method = "fallback_model_generate"
+                logger.info("✅ Used fallback model.generate method")
         else:
-            # Use original audio file method (fallback)
-            logger.info("🔄 Using audio file method")
-            logger.info(f"🔧 Model is: {model}")
-            logger.info(f"🔧 Model type: {type(model)}")
-            if model is None:
-                raise RuntimeError("Model is None - initialization failed")
-            audio_tensor = model.generate(template_message, audio_prompt_path=str(temp_voice_file))
-            generation_method = "audio_file"
+            # Use model method directly
+            logger.info("🔄 Using model method directly")
+            audio_tensor = model.generate(
+                text=template_message,
+                voice_profile_path=str(profile_path),
+                temperature=0.8,
+                exaggeration=0.5,
+                cfg_weight=0.5
+            )
+            generation_method = "model_generate"
 
         # Convert audio tensor to MP3 bytes (96 kbps)
         sample_mp3_bytes = tensor_to_mp3_bytes(audio_tensor, model.sr, "96k")
