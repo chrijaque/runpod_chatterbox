@@ -71,19 +71,24 @@ api-app/
    pip install -r requirements.txt
    ```
 
-2. **Configure environment**:
+2. **Configure environment** (optional - for Firebase functionality locally):
    ```bash
-   export FIREBASE_STORAGE_BUCKET="your-project-id.appspot.com"
+   # For local Firebase functionality (optional)
+   export RUNPOD_SECRET_Firebase='{"type":"service_account",...}'
+   export FIREBASE_STORAGE_BUCKET="your-project-id.firebasestorage.app"
+   
+   # For RunPod API access
    export RUNPOD_API_KEY="your-runpod-api-key"
    export VC_CB_ENDPOINT_ID="your-chatterbox-voice-clone-endpoint"
-export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
-
+   export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
    ```
 
 3. **Start the server**:
    ```bash
-   python start_fastapi.py
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
+
+**Note**: The API server works without Firebase credentials locally. It acts as a proxy to RunPod, which uses its own Firebase secrets. Firebase credentials are only needed if you want to test Firebase functionality locally.
 
 ### Docker Deployment
 

@@ -15,10 +15,21 @@ runpod_client = RunPodClient(
     voice_endpoint_id=settings.VC_CB_ENDPOINT_ID,
     tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
-firebase_service = FirebaseService(
-    credentials_json=settings.FIREBASE_CREDENTIALS,
-    bucket_name=settings.get_firebase_bucket_name()
-)
+
+# Initialize Firebase service only if credentials are available
+firebase_service = None
+if settings.FIREBASE_CREDENTIALS and settings.FIREBASE_STORAGE_BUCKET:
+    try:
+        firebase_service = FirebaseService(
+            credentials_json=settings.FIREBASE_CREDENTIALS,
+            bucket_name=settings.get_firebase_bucket_name()
+        )
+        logger.info("✅ Firebase service initialized successfully")
+    except Exception as e:
+        logger.warning(f"⚠️ Firebase service initialization failed: {e}")
+        firebase_service = None
+else:
+    logger.warning("⚠️ Firebase credentials not available - Firebase service disabled")
 
 @router.post("/clone", response_model=VoiceCloneResponse)
 async def clone_voice(request: VoiceCloneRequest):
@@ -102,6 +113,17 @@ async def list_voices():
     try:
         logger.info("📚 Listing voices from Firebase...")
         
+        # Check if Firebase service is available
+        if firebase_service is None:
+            logger.warning("⚠️ Firebase service not available - returning empty voice list")
+            return {
+                "status": "success",
+                "voices": [],
+                "language": "en",
+                "is_kids_voice": False,
+                "total": 0
+            }
+        
         # Get voices from Firebase
         voices = firebase_service.list_voices_by_language("en", False)
         
@@ -155,6 +177,11 @@ async def get_voice_profile(voice_id: str, language: str = "en", is_kids_voice: 
         logger.info(f"🔍 Getting voice profile for: {voice_id}")
         logger.info(f"🔍 Parameters: language={language}, is_kids_voice={is_kids_voice}")
         
+        # Check if Firebase service is available
+        if firebase_service is None:
+            logger.warning("⚠️ Firebase service not available - cannot get voice profile")
+            raise HTTPException(status_code=503, detail="Firebase service not available")
+        
         # Get voice profile from Firebase
         profile_base64 = firebase_service.get_voice_profile_base64(voice_id, language, is_kids_voice)
         
@@ -180,6 +207,17 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
     """
     try:
         logger.info(f"📚 Listing voices for language: {language}, is_kids_voice: {is_kids_voice}")
+        
+        # Check if Firebase service is available
+        if firebase_service is None:
+            logger.warning("⚠️ Firebase service not available - returning empty voice list")
+            return {
+                "status": "success",
+                "voices": [],
+                "language": language,
+                "is_kids_voice": is_kids_voice,
+                "total": 0
+            }
         
         # Get voices from Firebase
         voices = firebase_service.list_voices_by_language(language, is_kids_voice)
@@ -231,6 +269,11 @@ async def test_firebase_files():
     """
     try:
         logger.info("🔍 Testing Firebase file listing...")
+        
+        # Check if Firebase service is available
+        if firebase_service is None:
+            logger.warning("⚠️ Firebase service not available - cannot test files")
+            raise HTTPException(status_code=503, detail="Firebase service not available")
         
         # Test different prefixes
         prefixes = [
