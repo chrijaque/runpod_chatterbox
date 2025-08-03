@@ -330,13 +330,93 @@ def generate_template_message(name):
     """Generate the template message for the voice clone"""
     return f"Hello, this is the voice clone of {name}. This voice is used to narrate whimsical stories and fairytales."
 
+def call_forked_repository_create_voice_clone(audio_file_path, voice_id, voice_name, language="en", is_kids_voice=False, api_metadata=None):
+    """
+    Simple API handler that calls the forked repository's create_voice_clone method.
+    
+    The forked repository at https://github.com/chrijaque/chatterbox_embed.git
+    already has all the model logic including create_voice_clone.
+    
+    Returns:
+        dict: Result from forked repository's create_voice_clone method
+    """
+    global forked_handler
+    
+    logger.info(f"🎯 ===== CALLING FORKED REPOSITORY =====")
+    logger.info(f"🔍 Parameters:")
+    logger.info(f"  voice_id: {voice_id}")
+    logger.info(f"  voice_name: {voice_name}")
+    logger.info(f"  language: {language}")
+    logger.info(f"  is_kids_voice: {is_kids_voice}")
+    
+    start_time = time.time()
+    
+    try:
+        # Check if forked handler is available
+        if forked_handler is None:
+            logger.error("❌ Forked handler not available")
+            return {
+                "status": "error",
+                "message": "Forked repository handler not available",
+                "generation_time": time.time() - start_time
+            }
+        
+        # Check if create_voice_clone method exists
+        if not hasattr(forked_handler, 'create_voice_clone'):
+            logger.error("❌ Forked repository doesn't have create_voice_clone method")
+            return {
+                "status": "error",
+                "message": "Forked repository doesn't have create_voice_clone method",
+                "generation_time": time.time() - start_time
+            }
+        
+        # Call the forked repository's create_voice_clone method
+        logger.info("🔄 Calling forked repository's create_voice_clone method...")
+        
+        result = forked_handler.create_voice_clone(
+            audio_file_path=str(audio_file_path),
+            voice_id=voice_id,
+            output_dir=str(VOICE_PROFILES_DIR)
+        )
+        
+        generation_time = time.time() - start_time
+        logger.info(f"✅ Forked repository create_voice_clone completed in {generation_time:.2f}s")
+        
+        # Add metadata to result
+        if result["status"] == "success":
+            result["metadata"] = {
+                'voice_id': voice_id,
+                'voice_name': voice_name,
+                'language': language,
+                'is_kids_voice': str(is_kids_voice),
+                'user_id': api_metadata.get('user_id') if api_metadata else None,
+                'project_id': api_metadata.get('project_id') if api_metadata else None,
+                'voice_type': api_metadata.get('voice_type') if api_metadata else None,
+                'quality': api_metadata.get('quality') if api_metadata else None,
+                'created_date': datetime.now().isoformat(),
+                'model': 'chatterbox_tts',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'public, max-age=3600'
+            }
+        
+        return result
+        
+    except Exception as e:
+        generation_time = time.time() - start_time
+        logger.error(f"❌ Forked repository call failed after {generation_time:.2f}s: {e}")
+        return {
+            "status": "error",
+            "message": str(e),
+            "generation_time": generation_time
+        }
+
 def save_voice_profile(temp_voice_file, voice_id):
-    """Save voice profile using forked repository's create_voice_clone method"""
-    global model, forked_handler
+    """Legacy method - now uses create_voice_clone_pipeline"""
+    logger.warning("⚠️ save_voice_profile is deprecated, use create_voice_clone_pipeline instead")
     
     # Get final profile path
     profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
-    logger.info(f"💾 Saving voice profile using forked repository: {profile_path}")
+    logger.info(f"💾 Saving voice profile using legacy method: {profile_path}")
     
     # Check if profile already exists
     if profile_path.exists():
@@ -344,30 +424,36 @@ def save_voice_profile(temp_voice_file, voice_id):
         return profile_path
     
     try:
-        # Use forked repository's create_voice_clone method
-        if forked_handler is not None:
+        # Use forked repository's create_voice_clone method if available
+        if forked_handler is not None and hasattr(forked_handler, 'create_voice_clone'):
             logger.info(f"📁 Using forked repository ChatterboxVC.create_voice_clone method")
-            result = forked_handler.create_voice_clone(
-                audio_file_path=str(temp_voice_file),
-                voice_id=voice_id,
-                output_dir=str(VOICE_PROFILES_DIR)
-            )
-            
-            if result["status"] == "success":
-                logger.info(f"✅ Voice profile created using forked repository: {result.get('profile_path', profile_path)}")
-                return profile_path
-            else:
-                logger.error(f"❌ Failed to create voice profile: {result.get('message', 'Unknown error')}")
-                raise RuntimeError(f"Voice profile creation failed: {result.get('message', 'Unknown error')}")
+            try:
+                result = forked_handler.create_voice_clone(
+                    audio_file_path=str(temp_voice_file),
+                    voice_id=voice_id,
+                    output_dir=str(VOICE_PROFILES_DIR)
+                )
+                
+                if result["status"] == "success":
+                    logger.info(f"✅ Voice profile created using forked repository: {result.get('profile_path', profile_path)}")
+                    return profile_path
+                else:
+                    logger.error(f"❌ Failed to create voice profile: {result.get('message', 'Unknown error')}")
+                    raise RuntimeError(f"Voice profile creation failed: {result.get('message', 'Unknown error')}")
+            except Exception as e:
+                logger.warning(f"⚠️ Forked repository method failed: {e}, falling back to model method")
+                # Fall through to model method
         else:
-            # Fallback to model method
-            if hasattr(model, 'save_voice_profile'):
-                model.save_voice_profile(str(temp_voice_file), str(profile_path))
-                logger.info(f"✅ Voice profile saved using model method to: {profile_path}")
-                return profile_path
-            else:
-                logger.error(f"❌ No voice profile creation method available")
-                raise RuntimeError("No voice profile creation method available")
+            logger.info(f"📁 Forked repository create_voice_clone method not available")
+        
+        # Fallback to model method
+        if hasattr(model, 'save_voice_profile'):
+            model.save_voice_profile(str(temp_voice_file), str(profile_path))
+            logger.info(f"✅ Voice profile saved using model method to: {profile_path}")
+            return profile_path
+        else:
+            logger.error(f"❌ No voice profile creation method available")
+            raise RuntimeError("No voice profile creation method available")
                 
     except Exception as e:
         logger.error(f"Failed to save voice profile: {e}")
@@ -385,21 +471,27 @@ def load_voice_profile(voice_id):
         raise FileNotFoundError(f"No voice profile found for {voice_id}")
     
     try:
-        # Use forked repository's set_voice_profile method
-        if forked_handler is not None:
+        # Use forked repository's set_voice_profile method if available
+        if forked_handler is not None and hasattr(forked_handler, 'set_voice_profile'):
             logger.info(f"📁 Using forked repository ChatterboxVC.set_voice_profile method")
-            forked_handler.set_voice_profile(str(profile_path))
-            logger.info(f"✅ Voice profile loaded using forked repository from {profile_path}")
-            return True  # Profile is now set in the forked handler
+            try:
+                forked_handler.set_voice_profile(str(profile_path))
+                logger.info(f"✅ Voice profile loaded using forked repository from {profile_path}")
+                return True  # Profile is now set in the forked handler
+            except Exception as e:
+                logger.warning(f"⚠️ Forked repository set_voice_profile failed: {e}, falling back to model method")
+                # Fall through to model method
         else:
-            # Fallback to model method
-            if hasattr(model, 'load_voice_profile'):
-                profile = model.load_voice_profile(str(profile_path))
-                logger.info(f"✅ Loaded voice profile using model method from {profile_path}")
-                return profile
-            else:
-                logger.warning(f"Enhanced profile loading not available, will use original audio file method for {voice_id}")
-                return None
+            logger.info(f"📁 Forked repository set_voice_profile method not available")
+        
+        # Fallback to model method
+        if hasattr(model, 'load_voice_profile'):
+            profile = model.load_voice_profile(str(profile_path))
+            logger.info(f"✅ Loaded voice profile using model method from {profile_path}")
+            return profile
+        else:
+            logger.warning(f"Enhanced profile loading not available, will use original audio file method for {voice_id}")
+            return None
         
     except Exception as e:
         logger.error(f"Failed to load voice profile: {e}")
@@ -460,160 +552,110 @@ def handle_voice_clone_request(input, responseFormat):
             f.write(audio_bytes)
         logger.info(f"Saved temporary voice file to {temp_voice_file}")
 
-        # Step 1: Create voice profile (keep original quality)
-        profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
-        if profile_path.exists():
-            logger.info(f"🎵 Loading existing profile: {voice_id}")
-            profile = load_voice_profile(voice_id)
-        else:
-            logger.info(f"🎵 Creating new profile: {voice_id}")
-            save_voice_profile(temp_voice_file, voice_id)
-            profile = load_voice_profile(voice_id)
+        # Call the forked repository's create_voice_clone method
+        logger.info("🔄 Calling forked repository's create_voice_clone method...")
         
-        # Step 2: Convert and save recorded audio (160 kbps MP3)
-        recorded_audio_path = None
-        try:
-            # Convert original recording to 160 kbps MP3
-            temp_mp3_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}_recorded.mp3"
-            convert_audio_file_to_mp3(str(temp_voice_file), str(temp_mp3_file), "160k")
-            
-            # Upload recorded audio to Firebase
-            with open(temp_mp3_file, 'rb') as f:
-                recorded_mp3_bytes = f.read()
-            
-            if is_kids_voice:
-                recorded_firebase_path = f"audio/voices/{language}/kids/recorded/{voice_id}_{timestamp}.mp3"
-            else:
-                recorded_firebase_path = f"audio/voices/{language}/recorded/{voice_id}_{timestamp}.mp3"
-            
-            # Store metadata with the recorded audio file
-            recorded_metadata = {
-                'voice_id': voice_id,
-                'voice_name': name,
-                'file_type': 'recorded_audio',
-                'language': language,
-                'is_kids_voice': str(is_kids_voice),
-                'format': '160k_mp3',
-                'timestamp': timestamp,
-                'created_date': datetime.now().isoformat(),
-                'model': 'chatterbox_tts',
-                'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'public, max-age=3600'
-            }
-            
-            recorded_uploaded = upload_to_firebase(
-                recorded_mp3_bytes,
-                recorded_firebase_path,
-                "audio/mpeg",
-                recorded_metadata
-            )
-            if recorded_uploaded:
-                recorded_audio_path = recorded_firebase_path
-                logger.info(f"🎵 Recorded audio uploaded: {recorded_firebase_path}")
-            
-            # Clean up temp MP3 file
-            os.unlink(temp_mp3_file)
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to convert/upload recorded audio: {e}")
+        # Prepare API metadata
+        api_metadata = {
+            'user_id': input.get('user_id'),
+            'project_id': input.get('project_id'),
+            'voice_type': input.get('voice_type'),
+            'quality': input.get('quality')
+        }
         
-        # Track which generation method was used
-        generation_method = "unknown"
+        # Call the forked repository
+        pipeline_result = call_forked_repository_create_voice_clone(
+            audio_file_path=temp_voice_file,
+            voice_id=voice_id,
+            voice_name=name,
+            language=language,
+            is_kids_voice=is_kids_voice,
+            api_metadata=api_metadata
+        )
         
-        # Step 3: Generate voice sample using forked repository
-        audio_tensor = None
-        if forked_handler is not None:
-            # Use forked repository's generate_voice_sample method
-            logger.info("🔄 Using forked repository's generate_voice_sample method")
-            generation_method = "forked_repository"
-            
+        if pipeline_result["status"] != "success":
+            logger.error(f"❌ Forked repository call failed: {pipeline_result.get('message', 'Unknown error')}")
+            return pipeline_result
+        
+        # Extract results from forked repository
+        profile_path = Path(pipeline_result["profile_path"])
+        sample_mp3_bytes = pipeline_result["sample_audio_bytes"]
+        recorded_mp3_bytes = pipeline_result["recorded_audio_bytes"]
+        generation_time = pipeline_result["generation_time"]
+        firebase_metadata = pipeline_result["metadata"]
+        
+        # Upload assets to Firebase
+        logger.info("🔄 Uploading assets to Firebase...")
+        
+        # Upload voice sample
+        sample_audio_path = None
+        if sample_mp3_bytes:
             try:
-                # Use the forked repository's built-in voice sample generation
-                result = forked_handler.generate_voice_sample(
-                    voice_profile_path=str(profile_path),
-                    text=template_message
-                )
-                
-                if isinstance(result, tuple) and len(result) == 2:
-                    audio_tensor, mp3_bytes = result
-                    logger.info("✅ Used forked repository's generate_voice_sample method")
+                if is_kids_voice:
+                    sample_firebase_path = f"audio/voices/{language}/kids/samples/{voice_id}_sample_{timestamp}.mp3"
                 else:
-                    # Fallback to model method
-                    audio_tensor = model.generate(
-                        text=template_message,
-                        voice_profile_path=str(profile_path),
-                        temperature=0.8,
-                        exaggeration=0.5,
-                        cfg_weight=0.5
-                    )
-                    generation_method = "fallback_model_generate"
-                    logger.info("✅ Used fallback model.generate method")
+                    sample_firebase_path = f"audio/voices/{language}/samples/{voice_id}_sample_{timestamp}.mp3"
+                
+                sample_uploaded = upload_to_firebase(
+                    sample_mp3_bytes,
+                    sample_firebase_path,
+                    "audio/mpeg",
+                    firebase_metadata
+                )
+                if sample_uploaded:
+                    sample_audio_path = sample_firebase_path
+                    logger.info(f"🎵 Voice sample uploaded: {sample_firebase_path}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to upload voice sample: {e}")
+        
+        # Upload recorded audio
+        recorded_audio_path = None
+        if recorded_mp3_bytes:
+            try:
+                if is_kids_voice:
+                    recorded_firebase_path = f"audio/voices/{language}/kids/recorded/{voice_id}_{timestamp}.mp3"
+                else:
+                    recorded_firebase_path = f"audio/voices/{language}/recorded/{voice_id}_{timestamp}.mp3"
+                
+                recorded_uploaded = upload_to_firebase(
+                    recorded_mp3_bytes,
+                    recorded_firebase_path,
+                    "audio/mpeg",
+                    firebase_metadata
+                )
+                if recorded_uploaded:
+                    recorded_audio_path = recorded_firebase_path
+                    logger.info(f"🎵 Recorded audio uploaded: {recorded_firebase_path}")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to upload recorded audio: {e}")
+        
+        # Upload voice profile
+        profile_path_firebase = None
+        if profile_path.exists():
+            try:
+                with open(profile_path, 'rb') as f:
+                    profile_data = f.read()
+                
+                if is_kids_voice:
+                    profile_firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}.npy"
+                else:
+                    profile_firebase_path = f"audio/voices/{language}/profiles/{voice_id}.npy"
+                
+                profile_uploaded = upload_to_firebase(
+                    profile_data,
+                    profile_firebase_path,
+                    "application/octet-stream",
+                    firebase_metadata
+                )
+                if profile_uploaded:
+                    profile_path_firebase = profile_firebase_path
+                    logger.info(f"📦 Profile uploaded: {profile_firebase_path}")
                     
             except Exception as e:
-                logger.warning(f"⚠️ Forked repository method failed: {e}")
-                # Fallback to model method
-                audio_tensor = model.generate(
-                    text=template_message,
-                    voice_profile_path=str(profile_path),
-                    temperature=0.8,
-                    exaggeration=0.5,
-                    cfg_weight=0.5
-                )
-                generation_method = "fallback_model_generate"
-                logger.info("✅ Used fallback model.generate method")
-        else:
-            # Use model method directly
-            logger.info("🔄 Using model method directly")
-            audio_tensor = model.generate(
-                text=template_message,
-                voice_profile_path=str(profile_path),
-                temperature=0.8,
-                exaggeration=0.5,
-                cfg_weight=0.5
-            )
-            generation_method = "model_generate"
-
-        # Convert audio tensor to MP3 bytes (96 kbps)
-        sample_mp3_bytes = tensor_to_mp3_bytes(audio_tensor, model.sr, "96k")
-        logger.info(f"🎵 Generated voice sample in MP3 format: {len(sample_mp3_bytes)} bytes")
+                logger.error(f"❌ Failed to upload profile: {e}")
         
-        # Upload voice sample to Firebase
-        sample_audio_path = None
-        try:
-            if is_kids_voice:
-                sample_firebase_path = f"audio/voices/{language}/kids/samples/{voice_id}_sample_{timestamp}.mp3"
-            else:
-                sample_firebase_path = f"audio/voices/{language}/samples/{voice_id}_sample_{timestamp}.mp3"
-            
-            # Store metadata with the voice sample file
-            sample_metadata = {
-                'voice_id': voice_id,
-                'voice_name': name,
-                'file_type': 'voice_sample',
-                'language': language,
-                'is_kids_voice': str(is_kids_voice),
-                'format': '96k_mp3',
-                'timestamp': timestamp,
-                'created_date': datetime.now().isoformat(),
-                'generation_method': generation_method,
-                'model': 'chatterbox_tts',
-                'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'public, max-age=3600'
-            }
-            
-            sample_uploaded = upload_to_firebase(
-                sample_mp3_bytes,
-                sample_firebase_path,
-                "audio/mpeg",
-                sample_metadata
-            )
-            if sample_uploaded:
-                sample_audio_path = sample_firebase_path
-                logger.info(f"🎵 Voice sample uploaded: {sample_firebase_path}")
-            
-        except Exception as e:
-            logger.error(f"❌ Failed to upload voice sample: {e}")
-
         # Clean up temporary voice file
         try:
             os.unlink(temp_voice_file)
@@ -629,47 +671,7 @@ def handle_voice_clone_request(input, responseFormat):
                 pass
         return {"status": "error", "message": str(e)}
 
-    # Upload voice profile to Firebase
-    profile_path_firebase = None
-    if profile_path.exists():
-        try:
-            with open(profile_path, 'rb') as f:
-                profile_data = f.read()
-            
-            if is_kids_voice:
-                profile_firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}.npy"
-            else:
-                profile_firebase_path = f"audio/voices/{language}/profiles/{voice_id}.npy"
-            
-            # Store metadata with the voice profile file
-            profile_metadata = {
-                'voice_id': voice_id,
-                'voice_name': name,
-                'file_type': 'voice_profile',
-                'language': language,
-                'is_kids_voice': str(is_kids_voice),
-                'format': 'npy',
-                'created_date': datetime.now().isoformat(),
-                'model': 'chatterbox_tts',
-                'Access-Control-Allow-Origin': '*',
-                'Cache-Control': 'public, max-age=3600'
-            }
-            
-            profile_uploaded = upload_to_firebase(
-                profile_data,
-                profile_firebase_path,
-                "application/octet-stream",
-                profile_metadata
-            )
-            if profile_uploaded:
-                profile_path_firebase = profile_firebase_path
-                logger.info(f"📦 Profile uploaded: {profile_firebase_path}")
-        except Exception as e:
-            logger.error(f"Failed to upload profile file: {e}")
-    else:
-        logger.error(f"❌ Profile file does not exist: {profile_path}")
-
-    # Log final summary (minimal)
+    # Log final summary
     logger.info(f"🎯 Generation method: {generation_method}")
     logger.info(f"📦 Profile uploaded: {'YES' if profile_path_firebase else 'NO'}")
     logger.info(f"🎵 Recorded audio uploaded: {'YES' if recorded_audio_path else 'NO'}")
@@ -685,7 +687,7 @@ def handle_voice_clone_request(input, responseFormat):
         "profile_url": profile_path_firebase,  # Use path as URL for compatibility
         "sample_url": sample_audio_path,  # Use path as URL for compatibility
         "recorded_url": recorded_audio_path,  # Use path as URL for compatibility
-        "generation_time": time.time() - start_time if 'start_time' in locals() else 0,
+        "generation_time": generation_time,
         "model": "chatterbox_tts",
         # Add metadata fields
         "sample_audio_path": sample_audio_path,
@@ -695,7 +697,6 @@ def handle_voice_clone_request(input, responseFormat):
         # Keep original metadata for debugging
         "metadata": {
             "sample_rate": model.sr,
-            "audio_shape": list(audio_tensor.shape) if 'audio_tensor' in locals() and audio_tensor is not None else None,
             "voice_id": voice_id,
             "voice_name": name,
             "profile_path_local": str(profile_path),

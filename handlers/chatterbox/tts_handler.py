@@ -463,11 +463,11 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
     try:
         logger.info("🔄 Starting voice sample processing...")
         
-        # Use the model's built-in long text generation method
+        # Use the forked repository's generate_long_text method
         logger.info(f"🎵 Using voice profile: {temp_profile_path}")
         
         if hasattr(model, 'generate_long_text'):
-            logger.info("✅ Using model's built-in generate_long_text method")
+            logger.info("✅ Using forked repository's generate_long_text method")
             audio_tensor, sample_rate, metadata = model.generate_long_text(
                 text=text,
                 voice_profile_path=str(temp_profile_path),
@@ -478,10 +478,10 @@ def generate_voice_sample(voice_id, text, profile_base64, language, is_kids_voic
                 exaggeration=0.5,    # Voice exaggeration
                 cfg_weight=0.5       # CFG weight
             )
-            logger.info(f"✅ Generated using built-in long text method")
+            logger.info(f"✅ Generated using forked repository's long text method")
             logger.info(f"🔍 Metadata: {metadata}")
         else:
-            logger.warning("⚠️ Model doesn't have generate_long_text, using fallback")
+            logger.warning("⚠️ Forked repository doesn't have generate_long_text, using fallback")
             # Fallback to simple generation
             audio_tensor = model.generate(
                 text=text,
@@ -741,7 +741,7 @@ def generate_tts_story(voice_id, text, profile_base64, language, story_type, is_
         return {"status": "error", "message": f"Failed to read/upload TTS story: {e}"}
 
 def handler(event, responseFormat="base64"):
-    """Handle TTS generation requests using saved voice embeddings"""
+    """Handle TTS generation requests using ChatterboxTTS.generate_tts_story()"""
     global model, forked_handler
     
     # Initialize Firebase at the start
@@ -756,15 +756,17 @@ def handler(event, responseFormat="base64"):
     
     logger.info("✅ Using pre-loaded ChatterboxTTS model")
     
-    # Handle TTS generation request
-    voice_id = event["input"].get("voice_id")
+    # Handle TTS generation request according to API contract
     text = event["input"].get("text")
+    voice_id = event["input"].get("voice_id")
+    profile_base64 = event["input"].get("profile_base64")
     language = event["input"].get("language", "en")
-    story_type = event["input"].get("story_type", "general")
+    story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
+    api_metadata = event["input"].get("metadata", {})
     
-    if not voice_id or not text:
-        return {"status": "error", "message": "Both voice_id and text are required"}
+    if not text or not voice_id:
+        return {"status": "error", "message": "Both text and voice_id are required"}
 
     logger.info(f"🎵 TTS request. Voice ID: {voice_id}")
     logger.info(f"📝 Text length: {len(text)} characters")
@@ -774,34 +776,136 @@ def handler(event, responseFormat="base64"):
     start_time = time.time()
     
     try:
-        # Load the voice profile
-        profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
-        logger.info(f"🔍 Looking for voice profile: {profile_path}")
+        # Handle voice profile - either from base64 or from saved file
+        profile_path = None
         
-        if not profile_path.exists():
-            logger.error(f"❌ Voice profile not found: {profile_path}")
-            return {"status": "error", "message": f"Voice profile not found for {voice_id}"}
-        
-        logger.info(f"✅ Voice profile found: {profile_path}")
-        
-        # Generate TTS story using built-in long text generation
-        result = generate_tts_story(
-            voice_id=voice_id,
-            text=text,
-            profile_base64=None,  # Not needed since we have the file
-            language=language,
-            story_type=story_type,
-            is_kids_voice=is_kids_voice,
-            temp_profile_path=profile_path,
-            start_time=start_time
-        )
-        
-        if result["status"] == "success":
-            logger.info(f"✅ TTS generation completed successfully")
-            return result
+        if profile_base64:
+            # Use provided base64 profile
+            logger.info("🔄 Using provided base64 profile")
+            import tempfile
+            profile_data = base64.b64decode(profile_base64)
+            temp_profile_file = tempfile.NamedTemporaryFile(suffix=".npy", delete=False)
+            temp_profile_file.write(profile_data)
+            temp_profile_file.close()
+            profile_path = Path(temp_profile_file.name)
+            logger.info(f"✅ Created temporary profile from base64: {profile_path}")
         else:
-            logger.error(f"❌ TTS generation failed: {result.get('message', 'Unknown error')}")
+            # Use saved voice profile
+            profile_path = VOICE_PROFILES_DIR / f"{voice_id}.npy"
+            logger.info(f"🔍 Looking for saved voice profile: {profile_path}")
+            
+            if not profile_path.exists():
+                logger.error(f"❌ Voice profile not found: {profile_path}")
+                return {"status": "error", "message": f"Voice profile not found for {voice_id}"}
+            
+            logger.info(f"✅ Voice profile found: {profile_path}")
+        
+        # Call the forked repository's generate_tts_story method
+        logger.info("🔄 Calling forked repository's generate_tts_story method...")
+        
+        if hasattr(model, 'generate_tts_story'):
+            logger.info("✅ Using forked repository's generate_tts_story method")
+            
+            # Call the forked repository method
+            result = model.generate_tts_story(
+                text=text,
+                voice_id=voice_id,
+                voice_profile_path=str(profile_path),
+                language=language,
+                story_type=story_type,
+                is_kids_voice=is_kids_voice,
+                metadata=api_metadata
+            )
+            
+            generation_time = time.time() - start_time
+            logger.info(f"✅ TTS story generated using forked repository in {generation_time:.2f}s")
+            
+            # Clean up temporary profile if created from base64
+            if profile_base64 and profile_path and profile_path.exists():
+                try:
+                    os.unlink(profile_path)
+                    logger.info("🧹 Cleaned up temporary profile file")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to clean up temporary profile: {e}")
+            
             return result
+            
+        else:
+            logger.warning("⚠️ Forked repository doesn't have generate_tts_story, using fallback")
+            
+            # Fallback to generate_long_text method
+            if hasattr(model, 'generate_long_text'):
+                logger.info("🔄 Using generate_long_text fallback")
+                
+                # Create output filename
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                local_dir = TTS_GENERATED_DIR / language / story_type
+                local_dir.mkdir(parents=True, exist_ok=True)
+                tts_filename = local_dir / f"TTS_{voice_id}_{timestamp}.mp3"
+                
+                # Generate using long text method
+                audio_tensor, sample_rate, metadata = model.generate_long_text(
+                    text=text,
+                    voice_profile_path=str(profile_path),
+                    output_path=str(tts_filename),
+                    max_chars=500,
+                    pause_ms=150,
+                    temperature=0.8,
+                    exaggeration=0.5,
+                    cfg_weight=0.5
+                )
+                
+                # Upload to Firebase
+                audio_path_firebase = f"audio/stories/{language}/{story_type}/TTS_{voice_id}_{timestamp}.mp3"
+                
+                with open(tts_filename, 'rb') as f:
+                    tts_mp3_bytes = f.read()
+                
+                firebase_metadata = {
+                    'voice_id': voice_id,
+                    'file_type': 'tts_story',
+                    'language': language,
+                    'story_type': story_type,
+                    'is_kids_voice': str(is_kids_voice),
+                    'format': '96k_mp3',
+                    'timestamp': timestamp,
+                    'created_date': datetime.now().isoformat(),
+                    'model': 'chatterbox_tts',
+                    'user_id': api_metadata.get('user_id'),
+                    'project_id': api_metadata.get('project_id'),
+                    'Access-Control-Allow-Origin': '*',
+                    'Cache-Control': 'public, max-age=3600'
+                }
+                
+                tts_uploaded = upload_to_firebase(
+                    tts_mp3_bytes,
+                    audio_path_firebase,
+                    "audio/mpeg",
+                    firebase_metadata
+                )
+                
+                generation_time = time.time() - start_time
+                
+                # Clean up temporary profile if created from base64
+                if profile_base64 and profile_path and profile_path.exists():
+                    try:
+                        os.unlink(profile_path)
+                        logger.info("🧹 Cleaned up temporary profile file")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to clean up temporary profile: {e}")
+                
+                return {
+                    "status": "success",
+                    "voice_id": voice_id,
+                    "audio_path": audio_path_firebase,
+                    "audio_url": tts_uploaded,
+                    "generation_time": generation_time,
+                    "model": "chatterbox_tts",
+                    "metadata": firebase_metadata
+                }
+            else:
+                logger.error("❌ No TTS generation method available")
+                return {"status": "error", "message": "No TTS generation method available"}
             
     except Exception as e:
         generation_time = time.time() - start_time
@@ -809,6 +913,15 @@ def handler(event, responseFormat="base64"):
         logger.error(f"❌ Error: {e}")
         import traceback
         logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        # Clean up temporary profile if created from base64
+        if profile_base64 and 'profile_path' in locals() and profile_path and profile_path.exists():
+            try:
+                os.unlink(profile_path)
+                logger.info("🧹 Cleaned up temporary profile file after error")
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Failed to clean up temporary profile after error: {cleanup_error}")
+        
         return {"status": "error", "message": f"TTS generation failed: {e}"}
 
 def handle_file_download(input):
