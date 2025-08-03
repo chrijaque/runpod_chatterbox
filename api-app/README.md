@@ -71,13 +71,12 @@ api-app/
    pip install -r requirements.txt
    ```
 
-2. **Configure environment** (optional - for Firebase functionality locally):
+2. **Configure environment**:
    ```bash
-   # For local Firebase functionality (optional)
-   export RUNPOD_SECRET_Firebase='{"type":"service_account",...}'
+   # For voice library display (optional - uses firebase_local_only.json automatically)
    export FIREBASE_STORAGE_BUCKET="your-project-id.firebasestorage.app"
    
-   # For RunPod API access
+   # For RunPod API access (required for voice cloning/TTS)
    export RUNPOD_API_KEY="your-runpod-api-key"
    export VC_CB_ENDPOINT_ID="your-chatterbox-voice-clone-endpoint"
    export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
@@ -88,7 +87,16 @@ api-app/
    python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
-**Note**: The API server works without Firebase credentials locally. It acts as a proxy to RunPod, which uses its own Firebase secrets. Firebase credentials are only needed if you want to test Firebase functionality locally.
+4. **Optional: Setup Firebase for voice library** (to see existing voices):
+   ```bash
+   chmod +x setup_local_dev.sh
+   ./setup_local_dev.sh
+   # Follow the instructions to add Firebase credentials to .env
+   ```
+
+**Note**: 
+- **Voice cloning/TTS**: Uses RunPod's own `RUNPOD_SECRET_Firebase` secrets (no local setup needed)
+- **Voice library display**: Uses `firebase_local_only.json` file automatically to show existing voices
 
 ### Docker Deployment
 

@@ -68,8 +68,7 @@ htmlcov/
 .cache
 
 # Firebase credentials
-firebase_creds.json
-firebase_cors_config.json
+firebase_local_only.json
 
 # gits
 .gitignore

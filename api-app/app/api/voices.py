@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 import logging
+import os
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
 from ..models.schemas import VoiceCloneRequest, VoiceCloneResponse, VoiceInfo
@@ -16,20 +17,35 @@ runpod_client = RunPodClient(
     tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
 
-# Initialize Firebase service only if credentials are available
+# Initialize Firebase service for library display
 firebase_service = None
-if settings.FIREBASE_CREDENTIALS and settings.FIREBASE_STORAGE_BUCKET:
+
+# Try to use local Firebase credentials file first
+if settings.FIREBASE_LOCAL_CREDS_FILE and os.path.exists(settings.FIREBASE_LOCAL_CREDS_FILE):
+    try:
+        with open(settings.FIREBASE_LOCAL_CREDS_FILE, 'r') as f:
+            credentials_json = f.read()
+        firebase_service = FirebaseService(
+            credentials_json=credentials_json,
+            bucket_name=settings.get_firebase_bucket_name()
+        )
+        logger.info("✅ Firebase service initialized with local credentials file")
+    except Exception as e:
+        logger.warning(f"⚠️ Firebase service initialization failed with local file: {e}")
+        firebase_service = None
+# Fallback to environment variable
+elif settings.FIREBASE_CREDENTIALS and settings.FIREBASE_STORAGE_BUCKET:
     try:
         firebase_service = FirebaseService(
             credentials_json=settings.FIREBASE_CREDENTIALS,
             bucket_name=settings.get_firebase_bucket_name()
         )
-        logger.info("✅ Firebase service initialized successfully")
+        logger.info("✅ Firebase service initialized with environment credentials")
     except Exception as e:
         logger.warning(f"⚠️ Firebase service initialization failed: {e}")
         firebase_service = None
 else:
-    logger.warning("⚠️ Firebase credentials not available - Firebase service disabled")
+    logger.warning("⚠️ Firebase credentials not available - voice library will be empty")
 
 @router.post("/clone", response_model=VoiceCloneResponse)
 async def clone_voice(request: VoiceCloneRequest):

@@ -10,8 +10,11 @@ load_dotenv(env_path)
 
 class Settings:
     # Firebase Configuration
-    FIREBASE_CREDENTIALS: Optional[str] = os.getenv("RUNPOD_SECRET_Firebase")
+    FIREBASE_CREDENTIALS: Optional[str] = os.getenv("FIREBASE_SERVICE_ACCOUNT")
     FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET")
+    
+    # Local Firebase credentials file for library display
+    FIREBASE_LOCAL_CREDS_FILE: str = os.getenv("FIREBASE_LOCAL_CREDS_FILE", "../firebase_local_only.json")
     
     # API Configuration
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
