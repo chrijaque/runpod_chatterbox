@@ -42,6 +42,11 @@ COPY requirements/chatterbox.txt /requirements.txt
 # Debug: Show what's in requirements.txt
 RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 
+# Add build argument to force cache invalidation
+ARG CACHE_BUST=1
+ARG BUILD_TIME
+ARG RUNPOD_CACHE_BUST
+
 # Clone the forked repository and install in editable mode
 RUN echo "🔧 Cloning forked repository..." && \
     echo "🔍 Testing repository access..." && \

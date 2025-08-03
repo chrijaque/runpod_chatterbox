@@ -12,6 +12,7 @@ CACHE_BUST = "latest-{{ timestamp }}"
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
 context = "."
+build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}"]
 
 [deploy]
 gpu_type = "RTX 4090"
