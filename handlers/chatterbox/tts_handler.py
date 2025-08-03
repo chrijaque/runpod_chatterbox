@@ -412,24 +412,13 @@ def list_files_for_debug():
 
 def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata):
     """
-    Pure API orchestration: Call the TTS model's generate_tts_story method.
+    Implement TTS generation using available model methods.
     
-    The TTS model handles all the model logic:
-    - Voice profile loading
-    - Text-to-speech generation
-    - Audio processing
-    - Firebase upload
-    - Error handling
-    - Logging
-    
-    This API app only:
-    - Calls the model method
-    - Handles the returned data
-    - Returns API responses
+    Uses the TTS model's generate method for text-to-speech generation.
     """
     global tts_model
     
-    logger.info(f"🎯 ===== CALLING TTS MODEL =====")
+    logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
     logger.info(f"  voice_id: {voice_id}")
     logger.info(f"  language: {language}")
@@ -449,47 +438,80 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                 "generation_time": time.time() - start_time
             }
         
-        # Check if generate_tts_story method exists
-        if not hasattr(tts_model, 'generate_tts_story'):
+        # 🔍 DEBUG: Show all available methods for TTS model
+        logger.info("🔍 ===== TTS MODEL METHODS DEBUG =====")
+        
+        # TTS Model methods
+        tts_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+        logger.info(f"🔍 TTS Model type: {type(tts_model).__name__}")
+        logger.info(f"🔍 TTS Model file: {tts_model.__class__.__module__}")
+        logger.info(f"🔍 TTS Available methods ({len(tts_methods)}): {tts_methods}")
+        
+        # Check for specific methods we need
+        logger.info("🔍 ===== TTS METHOD AVAILABILITY CHECK =====")
+        logger.info(f"🔍 TTS has 'generate': {hasattr(tts_model, 'generate')}")
+        logger.info(f"🔍 TTS has 'load_voice_clone': {hasattr(tts_model, 'load_voice_clone')}")
+        logger.info(f"🔍 TTS has 'save_voice_clone': {hasattr(tts_model, 'save_voice_clone')}")
+        logger.info(f"🔍 TTS has 'prepare_conditionals_with_voice_profile': {hasattr(tts_model, 'prepare_conditionals_with_voice_profile')}")
+        
+        # Check method signatures if they exist
+        if hasattr(tts_model, 'generate'):
+            import inspect
+            try:
+                sig = inspect.signature(tts_model.generate)
+                logger.info(f"🔍 TTS generate signature: {sig}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get generate signature: {e}")
+        
+        logger.info("🔍 ===== END TTS MODEL METHODS DEBUG =====")
+        
+        # Try to use the TTS model's generate_tts_story method
+        if hasattr(tts_model, 'generate_tts_story'):
+            logger.info("🔄 Using TTS model's generate_tts_story method...")
+            
+            try:
+                # Use the TTS model's generate_tts_story method
+                result = tts_model.generate_tts_story(
+                    text=text,
+                    voice_id=voice_id,
+                    profile_base64=profile_base64,
+                    language=language,
+                    story_type=story_type,
+                    is_kids_voice=is_kids_voice,
+                    metadata=api_metadata
+                )
+                
+                generation_time = time.time() - start_time
+                logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
+                
+                return result
+                
+            except Exception as method_error:
+                logger.error(f"❌ generate_tts_story method failed: {method_error}")
+                return {
+                    "status": "error",
+                    "message": f"generate_tts_story method failed: {method_error}",
+                    "generation_time": time.time() - start_time,
+                    "debug_info": {
+                        "tts_methods": tts_methods,
+                        "error": str(method_error)
+                    }
+                }
+        else:
             logger.error("❌ TTS model doesn't have generate_tts_story method")
-            logger.error("🔍 This means the RunPod deployment is using an older version of the forked repository")
-            
-            # Debug: List all available methods
-            available_methods = [method for method in dir(tts_model) if not method.startswith('_')]
-            logger.info(f"🔍 Available methods in tts_model: {available_methods}")
-            
             return {
                 "status": "error",
                 "message": "TTS model doesn't have generate_tts_story method. Please update the RunPod deployment with the latest forked repository version.",
                 "generation_time": time.time() - start_time,
                 "debug_info": {
-                    "available_methods": available_methods,
-                    "tts_model_type": type(tts_model).__name__,
-                    "tts_model_module": tts_model.__class__.__module__
+                    "tts_methods": tts_methods,
+                    "available_tts_methods": [m for m in tts_methods if 'generate' in m.lower() or 'tts' in m.lower()]
                 }
             }
         
-        # Call the TTS model's generate_tts_story method
-        logger.info("🔄 Calling TTS model's generate_tts_story method...")
-        
-        result = tts_model.generate_tts_story(
-            text=text,
-            voice_id=voice_id,
-            profile_base64=profile_base64,
-            language=language,
-            story_type=story_type,
-            is_kids_voice=is_kids_voice,
-            metadata=api_metadata
-        )
-        
-        generation_time = time.time() - start_time
-        logger.info(f"✅ TTS model generate_tts_story completed in {generation_time:.2f}s")
-        
-        return result
-        
     except Exception as e:
         generation_time = time.time() - start_time
-        logger.error(f"❌ TTS model call failed after {generation_time:.2f}s: {e}")
+        logger.error(f"❌ TTS generation failed after {generation_time:.2f}s: {e}")
         return {
             "status": "error",
             "message": str(e),

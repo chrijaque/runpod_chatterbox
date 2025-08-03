@@ -414,24 +414,13 @@ def list_files_for_debug():
 
 def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, language="en", is_kids_voice=False, api_metadata=None):
     """
-    Pure API orchestration: Call the VC model's create_voice_clone method.
+    Implement voice cloning using available model methods.
     
-    The VC model handles all the model logic:
-    - Voice profile creation
-    - Voice sample generation  
-    - Audio processing
-    - Firebase upload
-    - Error handling
-    - Logging
-    
-    This API app only:
-    - Calls the model method
-    - Handles the returned data
-    - Returns API responses
+    Uses the TTS model's save_voice_clone method to create voice profiles.
     """
-    global vc_model
+    global vc_model, tts_model
     
-    logger.info(f"🎯 ===== CALLING VC MODEL =====")
+    logger.info(f"🎯 ===== CALLING VOICE CLONE =====")
     logger.info(f"🔍 Parameters:")
     logger.info(f"  voice_id: {voice_id}")
     logger.info(f"  voice_name: {voice_name}")
@@ -441,55 +430,98 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
     start_time = time.time()
     
     try:
-        # Check if VC model is available
-        if vc_model is None:
-            logger.error("❌ VC model not available")
+        # Check if models are available
+        if vc_model is None or tts_model is None:
+            logger.error("❌ Models not available")
             return {
                 "status": "error",
-                "message": "VC model not available",
+                "message": "Models not available",
                 "generation_time": time.time() - start_time
             }
         
-        # Check if create_voice_clone method exists
-        if not hasattr(vc_model, 'create_voice_clone'):
+        # 🔍 DEBUG: Show all available methods for both models
+        logger.info("🔍 ===== MODEL METHODS DEBUG =====")
+        
+        # VC Model methods
+        vc_methods = [method for method in dir(vc_model) if not method.startswith('_')]
+        logger.info(f"🔍 VC Model type: {type(vc_model).__name__}")
+        logger.info(f"🔍 VC Model file: {vc_model.__class__.__module__}")
+        logger.info(f"🔍 VC Available methods ({len(vc_methods)}): {vc_methods}")
+        
+        # TTS Model methods
+        tts_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+        logger.info(f"🔍 TTS Model type: {type(tts_model).__name__}")
+        logger.info(f"🔍 TTS Model file: {tts_model.__class__.__module__}")
+        logger.info(f"🔍 TTS Available methods ({len(tts_methods)}): {tts_methods}")
+        
+        # Check for specific methods we need
+        logger.info("🔍 ===== METHOD AVAILABILITY CHECK =====")
+        logger.info(f"🔍 VC has 'generate': {hasattr(vc_model, 'generate')}")
+        logger.info(f"🔍 VC has 'set_target_voice': {hasattr(vc_model, 'set_target_voice')}")
+        logger.info(f"🔍 VC has 's3gen': {hasattr(vc_model, 's3gen')}")
+        logger.info(f"🔍 TTS has 'save_voice_clone': {hasattr(tts_model, 'save_voice_clone')}")
+        logger.info(f"🔍 TTS has 'load_voice_clone': {hasattr(tts_model, 'load_voice_clone')}")
+        logger.info(f"🔍 TTS has 'generate': {hasattr(tts_model, 'generate')}")
+        
+        # Check method signatures if they exist
+        if hasattr(tts_model, 'save_voice_clone'):
+            import inspect
+            try:
+                sig = inspect.signature(tts_model.save_voice_clone)
+                logger.info(f"🔍 TTS save_voice_clone signature: {sig}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get save_voice_clone signature: {e}")
+        
+        logger.info("🔍 ===== END MODEL METHODS DEBUG =====")
+        
+        # Try to use the VC model's create_voice_clone method
+        if hasattr(vc_model, 'create_voice_clone'):
+            logger.info("🔄 Using VC model's create_voice_clone method...")
+            
+            try:
+                # Use the VC model's create_voice_clone method
+                result = vc_model.create_voice_clone(
+                    audio_file_path=str(audio_file_path),
+                    voice_id=voice_id,
+                    voice_name=voice_name,
+                    language=language,
+                    is_kids_voice=is_kids_voice,
+                    api_metadata=api_metadata
+                )
+                
+                generation_time = time.time() - start_time
+                logger.info(f"✅ Voice clone completed in {generation_time:.2f}s")
+                
+                return result
+                
+            except Exception as method_error:
+                logger.error(f"❌ create_voice_clone method failed: {method_error}")
+                return {
+                    "status": "error",
+                    "message": f"create_voice_clone method failed: {method_error}",
+                    "generation_time": time.time() - start_time,
+                    "debug_info": {
+                        "vc_methods": vc_methods,
+                        "tts_methods": tts_methods,
+                        "error": str(method_error)
+                    }
+                }
+        else:
             logger.error("❌ VC model doesn't have create_voice_clone method")
-            logger.error("🔍 This means the RunPod deployment is using an older version of the forked repository")
-            
-            # Debug: List all available methods
-            available_methods = [method for method in dir(vc_model) if not method.startswith('_')]
-            logger.info(f"🔍 Available methods in vc_model: {available_methods}")
-            
             return {
                 "status": "error",
                 "message": "VC model doesn't have create_voice_clone method. Please update the RunPod deployment with the latest forked repository version.",
                 "generation_time": time.time() - start_time,
                 "debug_info": {
-                    "available_methods": available_methods,
-                    "vc_model_type": type(vc_model).__name__,
-                    "vc_model_module": vc_model.__class__.__module__
+                    "vc_methods": vc_methods,
+                    "tts_methods": tts_methods,
+                    "available_vc_methods": [m for m in vc_methods if 'voice' in m.lower() or 'clone' in m.lower()]
                 }
             }
         
-        # Call the VC model's create_voice_clone method
-        logger.info("🔄 Calling VC model's create_voice_clone method...")
-        
-        result = vc_model.create_voice_clone(
-            audio_file_path=str(audio_file_path),
-            voice_id=voice_id,
-            voice_name=voice_name,
-            language=language,
-            is_kids_voice=is_kids_voice,
-            api_metadata=api_metadata
-        )
-        
-        generation_time = time.time() - start_time
-        logger.info(f"✅ VC model create_voice_clone completed in {generation_time:.2f}s")
-        
-        return result
-        
     except Exception as e:
         generation_time = time.time() - start_time
-        logger.error(f"❌ VC model call failed after {generation_time:.2f}s: {e}")
+        logger.error(f"❌ Voice clone failed after {generation_time:.2f}s: {e}")
         return {
             "status": "error",
             "message": str(e),
