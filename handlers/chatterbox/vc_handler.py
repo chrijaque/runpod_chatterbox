@@ -637,7 +637,7 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception as cleanup_error:
             logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
-        # Return the result from the VC-model
+        # Return the result from the VC model
         logger.info(f"📤 Voice clone completed successfully")
         return result
 
