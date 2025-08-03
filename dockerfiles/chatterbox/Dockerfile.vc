@@ -53,8 +53,11 @@ RUN echo "🔧 Cloning forked repository..." && \
     cd /workspace/chatterbox_embed && \
     echo "🔧 Fetching latest changes..." && \
     git fetch origin && \
-    echo "🔧 Resetting to latest main branch..." && \
-    git reset --hard origin/main && \
+    echo "🔧 Detecting default branch..." && \
+    DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5) && \
+    echo "🔧 Default branch is: $DEFAULT_BRANCH" && \
+    echo "🔧 Resetting to latest $DEFAULT_BRANCH branch..." && \
+    git reset --hard origin/$DEFAULT_BRANCH && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
