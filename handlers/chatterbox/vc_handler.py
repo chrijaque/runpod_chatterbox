@@ -231,10 +231,43 @@ try:
         # Initialize VC model with s3gen from TTS model
         vc_model = ChatterboxVC(s3gen=tts_model.s3gen, device='cuda')
         
-        # CRITICAL: Attach the text encoder to s3gen
-        vc_model.s3gen.text_encoder = tts_model.t3
+        # CRITICAL: Create a wrapper for the text encoder to handle T3.forward() signature
+        class TextEncoderWrapper:
+            def __init__(self, t3_model):
+                self.t3_model = t3_model
+                
+            def __call__(self, text):
+                # Try different ways to call the T3 model based on its signature
+                try:
+                    # Method 1: Try calling with text as positional argument
+                    return self.t3_model(text)
+                except TypeError as e:
+                    if "takes 1 positional argument but 2 were given" in str(e):
+                        # Method 2: Try calling with text as keyword argument
+                        try:
+                            return self.t3_model.forward(text=text)
+                        except:
+                            # Method 3: Try calling with text as first argument after self
+                            try:
+                                return self.t3_model.forward(text)
+                            except:
+                                # Method 4: Try calling with text as input parameter
+                                try:
+                                    return self.t3_model.forward(input=text)
+                                except:
+                                    # Method 5: Try calling with text as input_ids
+                                    try:
+                                        return self.t3_model.forward(input_ids=text)
+                                    except Exception as final_e:
+                                        logger.error(f"❌ All T3 forward methods failed: {final_e}")
+                                        raise e
+                    else:
+                        raise e
+        
+        # Attach the wrapped text encoder to s3gen
+        vc_model.s3gen.text_encoder = TextEncoderWrapper(tts_model.t3)
         logger.info("✅ ChatterboxVC model initialized successfully")
-        logger.info("✅ Text encoder attached to s3gen")
+        logger.info("✅ Text encoder wrapper attached to s3gen")
         
         # Debug: Check T3 model's forward method signature
         try:
@@ -270,7 +303,7 @@ try:
         if tts_missing_methods:
             logger.warning(f"⚠️ Missing TTS methods: {tts_missing_methods}")
         else:
-                    logger.info("✅ All TTS methods are available")
+            logger.info("✅ All TTS methods are available")
         
         # Log model details for debugging
         import inspect
@@ -292,14 +325,14 @@ try:
         # Final Git status check
         try:
             import subprocess
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+                        result = subprocess.run(
+                            ["git", "rev-parse", "HEAD"],
                 cwd="/workspace/chatterbox_embed",
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
                 final_commit = result.stdout.strip()
                 logger.info(f"🎯 Final commit hash: {final_commit}")
             else:
