@@ -238,7 +238,11 @@ try:
         
         # Initialize VC model with s3gen from TTS model
         vc_model = ChatterboxVC(s3gen=tts_model.s3gen, device='cuda')
+        
+        # CRITICAL: Attach the text encoder to s3gen
+        vc_model.s3gen.text_encoder = tts_model.t3
         logger.info("✅ ChatterboxVC model initialized successfully")
+        logger.info("✅ Text encoder attached to s3gen")
         
         # Validate models have expected methods
         logger.info("🔍 Validating model methods...")
