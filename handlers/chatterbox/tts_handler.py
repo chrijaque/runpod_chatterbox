@@ -244,6 +244,15 @@ try:
         logger.info("✅ ChatterboxVC model initialized successfully")
         logger.info("✅ Text encoder attached to s3gen")
         
+        # Debug: Check T3 model's forward method signature
+        try:
+            import inspect
+            t3_forward_sig = inspect.signature(tts_model.t3.forward)
+            logger.info(f"🔍 T3 forward method signature: {t3_forward_sig}")
+            logger.info(f"🔍 T3 forward method parameters: {list(t3_forward_sig.parameters.keys())}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not get T3 forward signature: {e}")
+        
         # Validate models have expected methods
         logger.info("🔍 Validating model methods...")
         
