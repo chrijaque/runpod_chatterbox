@@ -325,14 +325,14 @@ try:
         # Final Git status check
         try:
             import subprocess
-                        result = subprocess.run(
-                            ["git", "rev-parse", "HEAD"],
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
                 cwd="/workspace/chatterbox_embed",
-                            capture_output=True,
-                            text=True,
-                            timeout=10
-                        )
-                        if result.returncode == 0:
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
                 final_commit = result.stdout.strip()
                 logger.info(f"🎯 Final commit hash: {final_commit}")
             else:
