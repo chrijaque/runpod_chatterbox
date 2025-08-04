@@ -259,6 +259,70 @@ try:
                     except Exception as e:
                         logger.warning(f"⚠️ Error checking git status: {e}")
                     
+                    # Update to latest commit at runtime
+                    try:
+                        logger.info("🔄 Updating to latest commit...")
+                        result = subprocess.run(
+                            ["git", "fetch", "origin"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        if result.returncode == 0:
+                            logger.info("✅ Successfully fetched latest changes")
+                            
+                            # Get the default branch
+                            result = subprocess.run(
+                                ["git", "remote", "show", "origin"],
+                                cwd=chatterbox_embed_path,
+                                capture_output=True,
+                                text=True,
+                                timeout=10
+                            )
+                            if result.returncode == 0:
+                                for line in result.stdout.split('\n'):
+                                    if 'HEAD branch' in line:
+                                        default_branch = line.split()[-1]
+                                        logger.info(f"🔍 Default branch: {default_branch}")
+                                        
+                                        # Reset to latest commit
+                                        result = subprocess.run(
+                                            ["git", "reset", "--hard", f"origin/{default_branch}"],
+                                            cwd=chatterbox_embed_path,
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=30
+                                        )
+                                        if result.returncode == 0:
+                                            logger.info(f"✅ Successfully reset to latest {default_branch}")
+                                            
+                                            # Get new commit hash
+                                            result = subprocess.run(
+                                                ["git", "rev-parse", "HEAD"],
+                                                cwd=chatterbox_embed_path,
+                                                capture_output=True,
+                                                text=True,
+                                                timeout=10
+                                            )
+                                            if result.returncode == 0:
+                                                new_commit_hash = result.stdout.strip()
+                                                logger.info(f"🆕 New commit hash: {new_commit_hash}")
+                                                
+                                                if new_commit_hash != commit_hash:
+                                                    logger.info("🔄 Repository updated to latest commit!")
+                                                else:
+                                                    logger.info("✅ Already at latest commit")
+                                        else:
+                                            logger.warning(f"⚠️ Failed to reset to latest: {result.stderr}")
+                                    break
+                            else:
+                                logger.warning(f"⚠️ Could not determine default branch: {result.stderr}")
+                        else:
+                            logger.warning(f"⚠️ Failed to fetch latest changes: {result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error updating repository: {e}")
+                    
                     # Summary
                     logger.info("📊 ===== FORKED REPO SUMMARY =====")
                     logger.info(f"🔍 Commit Hash: {commit_hash}")
