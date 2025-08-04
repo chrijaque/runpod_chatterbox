@@ -588,9 +588,7 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
                     audio_file_path=str(audio_file_path),
                     voice_id=voice_id,
                     voice_name=voice_name,
-                    language=language,
-                    is_kids_voice=is_kids_voice,
-                    api_metadata=api_metadata
+                    metadata=api_metadata
                 )
                 
                 generation_time = time.time() - start_time
@@ -685,12 +683,14 @@ def handle_voice_clone_request(input, responseFormat):
         # Call the VC model's create_voice_clone method
         logger.info("🔄 Calling VC model's create_voice_clone method...")
         
-        # Prepare API metadata
+        # Prepare API metadata including language and kids voice flag
         api_metadata = {
             'user_id': input.get('user_id'),
             'project_id': input.get('project_id'),
             'voice_type': input.get('voice_type'),
-            'quality': input.get('quality')
+            'quality': input.get('quality'),
+            'language': language,
+            'is_kids_voice': is_kids_voice
         }
         
         # Call the VC model - it handles everything!
@@ -698,8 +698,6 @@ def handle_voice_clone_request(input, responseFormat):
             audio_file_path=temp_voice_file,
             voice_id=voice_id,
             voice_name=name,
-            language=language,
-            is_kids_voice=is_kids_voice,
             api_metadata=api_metadata
         )
         
