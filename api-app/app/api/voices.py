@@ -102,21 +102,30 @@ async def clone_voice(request: VoiceCloneRequest):
         if result.get("status") == "success":
             logger.info("✅ Voice clone completed successfully")
             
-            # Extract paths from RunPod response
+            # Extract all fields from RunPod response
+            voice_id = result.get("voice_id")
             profile_path = result.get("profile_path")
             recorded_audio_path = result.get("recorded_audio_path")
             sample_audio_path = result.get("sample_audio_path")
+            generation_time = result.get("generation_time")
+            language = result.get("language")
             metadata = result.get("metadata", {})
             
+            logger.info(f"🎯 Voice ID: {voice_id}")
             logger.info(f"📦 Profile path: {profile_path}")
             logger.info(f"🎵 Recorded audio path: {recorded_audio_path}")
             logger.info(f"🎵 Sample audio path: {sample_audio_path}")
+            logger.info(f"⏱️ Generation time: {generation_time}")
+            logger.info(f"🌍 Language: {language}")
             
             return VoiceCloneResponse(
                 status="success",
+                voice_id=voice_id,
                 profile_path=profile_path,
                 recorded_audio_path=recorded_audio_path,
                 sample_audio_path=sample_audio_path,
+                generation_time=generation_time,
+                language=language,
                 metadata=metadata
             )
         elif result.get("status") == "error":

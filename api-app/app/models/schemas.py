@@ -11,9 +11,12 @@ class VoiceCloneRequest(BaseModel):
 
 class VoiceCloneResponse(BaseModel):
     status: str
+    voice_id: Optional[str] = None
     profile_path: Optional[str] = None
     recorded_audio_path: Optional[str] = None  # New: path to recorded audio
     sample_audio_path: Optional[str] = None    # Renamed from audio_path
+    generation_time: Optional[float] = None
+    language: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
 class TTSGenerateRequest(BaseModel):
