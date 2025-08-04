@@ -70,7 +70,7 @@ htmlcov/
 # Firebase credentials
 firebase_local_only.json
 
-# gits
+# git
 .gitignore
 
 # Cursor
