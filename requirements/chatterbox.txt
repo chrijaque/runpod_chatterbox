@@ -36,6 +36,11 @@ pydub==0.25.1
 noisereduce>=3.0.0
 soundfile>=0.12.1
 
+# Advanced TTS enhancements (optional but recommended)
+ffmpeg-python>=0.2.0     # Better pydub audio processing
+numba>=0.56.0            # Faster librosa operations  
+resampy>=0.3.0           # Better audio resampling quality
+
 # Text processing
 nltk>=3.8.1
 

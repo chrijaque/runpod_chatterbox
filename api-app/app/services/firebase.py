@@ -772,43 +772,68 @@ class FirebaseService:
                 # Extract filename from blob path
                 filename = blob.name.split('/')[-1]
                 
-                # Handle TTS story file naming patterns
-                if (filename.endswith('.wav') or filename.endswith('.mp3')) and filename.startswith('TTS_'):
-                    # Extract voice_id and timestamp from filename
-                    # Pattern: TTS_voice_christianmp3test2_20250728_075206.wav or .mp3
-                    parts = filename.replace('.wav', '').replace('.mp3', '').split('_')
+                # List all audio files without name pattern restrictions
+                if filename.endswith('.wav') or filename.endswith('.mp3') or filename.endswith('.m4a') or filename.endswith('.aac'):
+                    logger.info(f"📁 Found audio file: {filename}")
                     
-                    if len(parts) >= 5:  # TTS_ + voice + voice_id + date + time
-                        # Extract voice_id (voice + voice_id parts)
-                        voice_id = f"{parts[1]}_{parts[2]}"  # voice_mp3metadatatestv1
-                        date_part = parts[-2]
-                        time_part = parts[-1]
-                        timestamp_part = f"{date_part}_{time_part}"
-                        
-                        # Create a unique generation_id
-                        generation_id = f"{voice_id}_{timestamp_part}"
+                    # Use filename (without extension) as generation_id
+                    generation_id = filename.rsplit('.', 1)[0]  # Remove file extension
                     
-                    if generation_id not in stories:
-                        stories[generation_id] = {
-                            "generation_id": generation_id,
-                                "voice_id": voice_id,
-                                "voice_name": voice_id.replace('voice_', ''),
-                                "audio_file": blob.public_url,
-                                "created_date": None,
-                                "language": language,
-                                "story_type": story_type,
-                                "file_size": blob.size if hasattr(blob, 'size') else 0
-                            }
+                    # Try to extract voice_id from filename
+                    voice_id = generation_id
+                    voice_name = generation_id
                     
-                        # Try to extract creation time from timestamp
-                        try:
-                            if len(timestamp_part) >= 15:
+                    # If filename starts with common prefixes, extract voice info
+                    if filename.startswith('TTS_'):
+                        # Handle TTS_ prefixed files: TTS_voice_christianmp3test2_20250728_075206.wav
+                        parts = generation_id.split('_')
+                        if len(parts) >= 3:
+                            voice_id = '_'.join(parts[1:-2]) if len(parts) >= 5 else '_'.join(parts[1:])
+                            voice_name = voice_id.replace('voice_', '') if voice_id.startswith('voice_') else voice_id
+                    elif filename.startswith('voice_'):
+                        # Handle voice_ prefixed files: voice_startingv1.mp3
+                        voice_id = generation_id
+                        voice_name = generation_id.replace('voice_', '')
+                    else:
+                        # Handle any other naming pattern
+                        voice_id = generation_id
+                        voice_name = generation_id
+                    
+                    # Get creation time from blob metadata or use current time
+                    created_date = None
+                    if hasattr(blob, 'time_created') and blob.time_created:
+                        created_date = int(blob.time_created.timestamp())
+                    else:
+                        # Try to extract timestamp from filename if it exists
+                        import re
+                        timestamp_match = re.search(r'(\d{8}_\d{6})', filename)
+                        if timestamp_match:
+                            try:
                                 from datetime import datetime
-                                created_date = datetime.strptime(timestamp_part, '%Y%m%d_%H%M%S')
-                                stories[generation_id]["created_date"] = int(created_date.timestamp())
-                        except Exception as e:
-                            logger.debug(f"Could not parse timestamp from {filename}: {e}")
+                                timestamp_str = timestamp_match.group(1)
+                                created_date = int(datetime.strptime(timestamp_str, '%Y%m%d_%H%M%S').timestamp())
+                            except Exception as e:
+                                logger.debug(f"Could not parse timestamp from {filename}: {e}")
+                    
+                    if not created_date:
+                        created_date = int(blob.time_created.timestamp()) if hasattr(blob, 'time_created') and blob.time_created else None
+                    
+                    stories[generation_id] = {
+                        "generation_id": generation_id,
+                        "voice_id": voice_id,
+                        "voice_name": voice_name,
+                        "audio_file": blob.public_url,
+                        "created_date": created_date,
+                        "language": language,
+                        "story_type": story_type,
+                        "file_size": blob.size if hasattr(blob, 'size') else 0,
+                        "filename": filename,
+                        "timestamp": blob.time_created.isoformat() if hasattr(blob, 'time_created') and blob.time_created else None
+                    }
+                    
+                    logger.info(f"✅ Added story: {generation_id} (voice: {voice_name})")
             
+            logger.info(f"📚 Total stories found: {len(stories)}")
             return list(stories.values())
             
         except Exception as e:
