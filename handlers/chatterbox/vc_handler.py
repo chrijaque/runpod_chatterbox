@@ -385,7 +385,7 @@ def initialize_firebase():
         # Debug: Log Firebase credentials details
         if firebase_secret:
             logger.info(f"🔍 RUNPOD_SECRET_Firebase length: {len(firebase_secret)} characters")
-            logger.info(f"🔍 RUNPOD_SECRET_Firebase preview: {firebase_secret[:200]}...")
+            logger.info(f"🔍 RUNPOD_SECRET_Firebase: Loaded successfully")
             
             # Try to parse and validate the JSON
             try:
@@ -396,7 +396,7 @@ def initialize_firebase():
                 logger.info("✅ Firebase credentials JSON is valid")
             except json.JSONDecodeError as e:
                 logger.error(f"❌ Firebase credentials JSON is invalid: {e}")
-                logger.error(f"❌ Credentials preview: {firebase_secret[:500]}...")
+                logger.error(f"❌ Credentials validation failed")
         else:
             logger.warning("⚠️ RUNPOD_SECRET_Firebase is not set!")
             logger.warning("⚠️ Firebase functionality will not work")
