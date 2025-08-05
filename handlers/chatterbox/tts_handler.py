@@ -219,14 +219,14 @@ try:
                             logger.warning(f"⚠️ Could not determine default branch: {result.stderr}")
                     else:
                         logger.warning(f"⚠️ Failed to fetch latest changes: {result.stderr}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Error updating repository: {e}")
-            else:
-                logger.warning("⚠️ No .git directory found - not a git repository")
+            except Exception as e:
+                logger.warning(f"⚠️ Error updating repository: {e}")
         else:
-            logger.warning("⚠️ Could not find chatterbox_embed directory")
-    except Exception as e:
-        logger.error(f"❌ Error during repository update: {e}")
+            logger.warning("⚠️ No .git directory found - not a git repository")
+    else:
+        logger.warning("⚠️ Could not find chatterbox_embed directory")
+except Exception as e:
+    logger.error(f"❌ Error during repository update: {e}")
 
 # Initialize models AFTER repository update
 logger.info("🔧 Initializing models from forked repository...")
