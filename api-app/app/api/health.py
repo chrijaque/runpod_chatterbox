@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
-# Initialize Firebase service for health checks
-firebase_service = FirebaseService(
-    credentials_json=settings.FIREBASE_CREDENTIALS,
-    bucket_name=settings.get_firebase_bucket_name()
-)
+# Import the get_firebase_service function
+from .voices import get_firebase_service
+
+# Get Firebase service using the proper initialization
+firebase_service = get_firebase_service()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():

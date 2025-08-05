@@ -650,12 +650,12 @@ class FirebaseService:
                     # If no metadata or no voice_id in metadata, fallback to filename parsing
                     if not voice_id:
                         filename = path_parts[-1]
-                        if file_type == 'sample' and '_sample_' in filename:
-                            voice_id = filename.split('_sample_')[0]
+                        if file_type == 'sample' and '_sample' in filename:
+                            voice_id = filename.split('_sample')[0]
                         elif file_type == 'profile':
                             voice_id = filename.replace('.npy', '')
-                        elif file_type == 'recorded' and '_recording_' in filename:
-                            voice_id = filename.split('_recording_')[0]
+                        elif file_type == 'recorded' and '_recorded' in filename:
+                            voice_id = filename.split('_recorded')[0]
                         else:
                             # Fallback: use filename without extension as voice_id
                             voice_id = filename.rsplit('.', 1)[0]
@@ -720,8 +720,16 @@ class FirebaseService:
                 except Exception as e:
                     logger.debug(f"Could not parse timestamp from {blob.name}: {e}")
             
-            result = list(voices.values())
-            logger.info(f"✅ Found {len(result)} voices")
+            # Filter to only include voices that have sample files (for library display)
+            result = []
+            for voice in voices.values():
+                if voice["samples"]:  # Only include voices that have sample files
+                    result.append(voice)
+                    logger.info(f"✅ Voice {voice['voice_id']} has {len(voice['samples'])} sample(s)")
+                else:
+                    logger.info(f"⚠️ Skipping voice {voice['voice_id']} - no sample files found")
+            
+            logger.info(f"✅ Found {len(result)} voices with sample files")
             return result
             
         except Exception as e:

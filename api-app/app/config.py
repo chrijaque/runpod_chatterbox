@@ -10,11 +10,16 @@ load_dotenv(env_path)
 
 class Settings:
     # Firebase Configuration
-    FIREBASE_CREDENTIALS: Optional[str] = os.getenv("FIREBASE_SERVICE_ACCOUNT")
+    # Note: RUNPOD_SECRET_Firebase is used by RunPod handlers for uploading
+    # firebase_local_only.json is used by API app for reading library data
+    FIREBASE_CREDENTIALS: Optional[str] = os.getenv("RUNPOD_SECRET_Firebase")  # For RunPod uploads
     FIREBASE_STORAGE_BUCKET: str = os.getenv("FIREBASE_STORAGE_BUCKET")
     
-    # Local Firebase credentials file for library display
-    FIREBASE_LOCAL_CREDS_FILE: str = os.getenv("FIREBASE_LOCAL_CREDS_FILE", "../firebase_local_only.json")
+    # Local Firebase credentials file for library display (API app only)
+    # Use absolute path to project root
+    import pathlib
+    project_root = pathlib.Path(__file__).parent.parent.parent
+    FIREBASE_LOCAL_CREDS_FILE: str = os.getenv("FIREBASE_LOCAL_CREDS_FILE", str(project_root / "firebase_local_only.json"))
     
     # API Configuration
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
@@ -103,7 +108,7 @@ logger.info(f"📋 FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
 logger.info(f"📋 FIREBASE_CREDENTIALS: {'SET' if settings.FIREBASE_CREDENTIALS else 'NOT SET'}")
 if settings.FIREBASE_CREDENTIALS:
     logger.info(f"📋 FIREBASE_CREDENTIALS_LENGTH: {len(settings.FIREBASE_CREDENTIALS)} characters")
-    logger.info(f"📋 FIREBASE_CREDENTIALS_PREVIEW: {settings.FIREBASE_CREDENTIALS[:200]}...")
+    logger.info(f"📋 FIREBASE_CREDENTIALS: Loaded successfully")
 else:
     logger.warning("⚠️ RUNPOD_SECRET_Firebase environment variable is not set!")
     logger.warning("⚠️ Firebase functionality will not work without proper credentials")

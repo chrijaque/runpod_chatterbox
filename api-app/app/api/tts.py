@@ -15,10 +15,11 @@ runpod_client = RunPodClient(
     voice_endpoint_id=settings.VC_CB_ENDPOINT_ID,
     tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
-firebase_service = FirebaseService(
-    credentials_json=settings.FIREBASE_CREDENTIALS,
-    bucket_name=settings.get_firebase_bucket_name()
-)
+# Import the get_firebase_service function
+from .voices import get_firebase_service
+
+# Get Firebase service using the proper initialization
+firebase_service = get_firebase_service()
 
 @router.post("/generate", response_model=TTSGenerateResponse)
 async def generate_tts(request: TTSGenerateRequest):

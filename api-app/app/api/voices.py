@@ -27,11 +27,22 @@ def get_firebase_service():
     if firebase_service is not None:
         return firebase_service
     
+    logger.info(f"🔍 Firebase config debug:")
+    logger.info(f"   - FIREBASE_LOCAL_CREDS_FILE: {settings.FIREBASE_LOCAL_CREDS_FILE}")
+    logger.info(f"   - FIREBASE_LOCAL_CREDS_FILE exists: {os.path.exists(settings.FIREBASE_LOCAL_CREDS_FILE) if settings.FIREBASE_LOCAL_CREDS_FILE else False}")
+    logger.info(f"   - FIREBASE_LOCAL_CREDS_FILE absolute path: {os.path.abspath(settings.FIREBASE_LOCAL_CREDS_FILE) if settings.FIREBASE_LOCAL_CREDS_FILE else 'None'}")
+    logger.info(f"   - FIREBASE_CREDENTIALS: {'SET' if settings.FIREBASE_CREDENTIALS else 'NOT SET'}")
+    logger.info(f"   - FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
+    
     # Try to use local Firebase credentials file first
     if settings.FIREBASE_LOCAL_CREDS_FILE and os.path.exists(settings.FIREBASE_LOCAL_CREDS_FILE):
         try:
+            logger.info(f"🔍 Reading Firebase credentials from: {settings.FIREBASE_LOCAL_CREDS_FILE}")
             with open(settings.FIREBASE_LOCAL_CREDS_FILE, 'r') as f:
                 credentials_json = f.read()
+            logger.info(f"🔍 Credentials file size: {len(credentials_json)} characters")
+            logger.info(f"🔍 Credentials loaded successfully")
+            
             firebase_service = FirebaseService(
                 credentials_json=credentials_json,
                 bucket_name=settings.get_firebase_bucket_name()
@@ -268,12 +279,19 @@ async def list_voices_by_language(language: str, is_kids_voice: bool = False):
         # Get voices from Firebase
         voices = firebase_service.list_voices_by_language(language, is_kids_voice)
         
+        # Debug: Log the raw voices data
+        logger.info(f"🔍 Raw voices from Firebase: {len(voices)} voices")
+        for i, voice in enumerate(voices):
+            logger.info(f"🔍 Voice {i+1}: {voice.get('voice_id')} - samples: {len(voice.get('samples', []))}, profiles: {len(voice.get('profiles', []))}")
+        
         # Convert to VoiceInfo objects with frontend-expected field names
         voice_list = []
         for voice in voices:
             # Get the first sample and profile URLs from the Firebase data
             sample_url = voice.get("samples", [])[0] if voice.get("samples") else None
             profile_url = voice.get("profiles", [])[0] if voice.get("profiles") else None
+            
+            logger.info(f"🔍 Processing voice {voice.get('voice_id')}: sample_url={sample_url}, profile_url={profile_url}")
             
             voice_info = VoiceInfo(
                 voice_id=voice.get("voice_id", ""),
