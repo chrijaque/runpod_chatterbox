@@ -228,46 +228,9 @@ try:
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxTTS model initialized successfully")
         
-        # Initialize VC model with s3gen from TTS model
-        vc_model = ChatterboxVC(s3gen=tts_model.s3gen, device='cuda')
-        
-        # CRITICAL: Create a wrapper for the text encoder to handle T3.forward() signature
-        class TextEncoderWrapper:
-            def __init__(self, t3_model):
-                self.t3_model = t3_model
-                
-            def __call__(self, text):
-                # Try different ways to call the T3 model based on its signature
-                try:
-                    # Method 1: Try calling with text as positional argument
-                    return self.t3_model(text)
-                except TypeError as e:
-                    if "takes 1 positional argument but 2 were given" in str(e):
-                        # Method 2: Try calling with text as keyword argument
-                        try:
-                            return self.t3_model.forward(text=text)
-                        except:
-                            # Method 3: Try calling with text as first argument after self
-                            try:
-                                return self.t3_model.forward(text)
-                            except:
-                                # Method 4: Try calling with text as input parameter
-                                try:
-                                    return self.t3_model.forward(input=text)
-                                except:
-                                    # Method 5: Try calling with text as input_ids
-                                    try:
-                                        return self.t3_model.forward(input_ids=text)
-                                    except Exception as final_e:
-                                        logger.error(f"❌ All T3 forward methods failed: {final_e}")
-                                        raise e
-                    else:
-                        raise e
-        
-        # Attach the wrapped text encoder to s3gen
-        vc_model.s3gen.text_encoder = TextEncoderWrapper(tts_model.t3)
+        # Initialize VC model using the correct method
+        vc_model = ChatterboxVC.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxVC model initialized successfully")
-        logger.info("✅ Text encoder wrapper attached to s3gen")
         
         # Debug: Check T3 model's forward method signature
         try:
