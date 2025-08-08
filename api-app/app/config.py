@@ -46,6 +46,18 @@ class Settings:
     RUNPOD_API_KEY: Optional[str] = os.getenv("RUNPOD_API_KEY")
     VC_CB_ENDPOINT_ID: Optional[str] = os.getenv("VC_CB_ENDPOINT_ID")
     TTS_CB_ENDPOINT_ID: Optional[str] = os.getenv("TTS_CB_ENDPOINT_ID")
+
+    # Redis / Queueing
+    REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
+    REDIS_NAMESPACE: str = os.getenv("REDIS_NAMESPACE", "runpod")
+    RUNPOD_MAX_CONCURRENCY: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY", "1"))
+    REDIS_USE_TLS: bool = os.getenv("REDIS_USE_TLS", "true").lower() == "true"
+    REDIS_STREAM_NAME: str = os.getenv("REDIS_STREAM_NAME", "runpod:jobs")
+    REDIS_CONSUMER_GROUP: str = os.getenv("REDIS_CONSUMER_GROUP", "runpod-consumers")
+    REDIS_CONSUMER_NAME: str = os.getenv("REDIS_CONSUMER_NAME", "worker-1")
+    REDIS_DLP_STREAM: str = os.getenv("REDIS_DLP_STREAM", "runpod:dlq")
+    REDIS_JOB_TTL_SECONDS: int = int(os.getenv("REDIS_JOB_TTL_SECONDS", "604800"))  # 7 days
+    FIREBASE_WEBHOOK_SECRET: Optional[str] = os.getenv("FIREBASE_WEBHOOK_SECRET")
     
     # RunPod Configuration - ChatterboxTTS Only
 

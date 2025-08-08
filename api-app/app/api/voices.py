@@ -4,6 +4,7 @@ import logging
 import os
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
+from ..services.redis_queue import RedisQueueService
 from ..models.schemas import VoiceCloneRequest, VoiceCloneResponse, VoiceInfo
 from ..config import settings
 
@@ -19,6 +20,7 @@ runpod_client = RunPodClient(
 
 # Initialize Firebase service for library display
 firebase_service = None
+redis_queue: RedisQueueService | None = None
 
 def get_firebase_service():
     """Get or initialize Firebase service"""
@@ -70,8 +72,20 @@ def get_firebase_service():
     
     return firebase_service
 
+def get_queue_service() -> RedisQueueService | None:
+    global redis_queue
+    if redis_queue is not None:
+        return redis_queue
+    try:
+        redis_queue = RedisQueueService()
+        logger.info("✅ Redis queue initialized")
+        return redis_queue
+    except Exception as e:
+        logger.warning(f"⚠️ Redis not configured: {e}")
+        return None
+
 @router.post("/clone", response_model=VoiceCloneResponse)
-async def clone_voice(request: VoiceCloneRequest):
+async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
     """
     Clone a voice using uploaded audio.
     """
@@ -96,7 +110,25 @@ async def clone_voice(request: VoiceCloneRequest):
             logger.error(f"   - Minimum expected: 1000")
             raise HTTPException(status_code=400, detail="Invalid audio data - please provide a proper audio file")
         
-        # Call RunPod for voice cloning
+        # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
+        queue = get_queue_service()
+        if queue:
+            provided_job_id = job_id or f"vc_{request.name}"
+            queue.enqueue_job(
+                job_id=provided_job_id,
+                job_type="vc",
+                payload={
+                    "name": request.name,
+                    "audio_base64": request.audio_data,
+                    "audio_format": request.audio_format,
+                    "language": request.language,
+                    "is_kids_voice": str(request.is_kids_voice).lower(),
+                    "model_type": request.model_type,
+                },
+            )
+            return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
+
+        # Fallback: Call RunPod synchronously when Redis is not configured
         result = runpod_client.create_voice_clone(
             name=request.name,
             audio_base64=request.audio_data,

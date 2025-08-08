@@ -3,6 +3,7 @@ from typing import List
 import logging
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
+from ..services.redis_queue import RedisQueueService
 from ..models.schemas import TTSGenerateRequest, TTSGenerateResponse, TTSGeneration
 from ..config import settings
 
@@ -20,9 +21,22 @@ from .voices import get_firebase_service
 
 # Get Firebase service using the proper initialization
 firebase_service = get_firebase_service()
+redis_queue: RedisQueueService | None = None
+
+def get_queue_service() -> RedisQueueService | None:
+    global redis_queue
+    if redis_queue is not None:
+        return redis_queue
+    try:
+        redis_queue = RedisQueueService()
+        logger.info("✅ Redis queue initialized")
+        return redis_queue
+    except Exception as e:
+        logger.warning(f"⚠️ Redis not configured: {e}")
+        return None
 
 @router.post("/generate", response_model=TTSGenerateResponse)
-async def generate_tts(request: TTSGenerateRequest):
+async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
     """
     Generate TTS using a voice profile.
     """
@@ -32,7 +46,26 @@ async def generate_tts(request: TTSGenerateRequest):
         logger.info(f"🔑 Profile base64 length: {len(request.profile_base64)}")
         logger.info(f"📝 Text preview: {request.text[:50]}...")
         
-        # Call RunPod for TTS generation
+        # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
+        queue = get_queue_service()
+        if queue:
+            provided_job_id = job_id or f"tts_{request.voice_id}"
+            queue.enqueue_job(
+                job_id=provided_job_id,
+                job_type="tts",
+                payload={
+                    "voice_id": request.voice_id,
+                    "text": request.text,
+                    "profile_base64": request.profile_base64,
+                    "language": request.language,
+                    "story_type": request.story_type,
+                    "is_kids_voice": str(request.is_kids_voice).lower(),
+                    "model_type": request.model_type,
+                },
+            )
+            return TTSGenerateResponse(status="queued", metadata={"job_id": provided_job_id})
+
+        # Fallback: Call RunPod for TTS generation synchronously
         logger.info("📞 Calling RunPod client generate_tts_with_context...")
         logger.info(f"🔧 RunPod client config - TTS Endpoint ID: {runpod_client.tts_endpoint_id}")
         logger.info(f"🔧 RunPod client config - Base URL: {runpod_client.base_url}")
