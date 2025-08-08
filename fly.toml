@@ -1,0 +1,33 @@
+app = "runpod-chatterbox"
+primary_region = "ams" # change if needed
+
+[build]
+  dockerfile = "api-app/Dockerfile"
+  context = "api-app"
+
+[env]
+  API_HOST = "0.0.0.0"
+  API_PORT = "8000"
+  DEBUG = "false"
+  FIREBASE_STORAGE_ENABLED = "true"
+  LOCAL_STORAGE_ENABLED = "false"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_start_machines = true
+  auto_stop_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "20s"
+    method = "GET"
+    path = "/api/health/health"
