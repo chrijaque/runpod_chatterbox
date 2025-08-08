@@ -2,7 +2,7 @@ app = "runpod-chatterbox"
 primary_region = "ams" # change if needed
 
 [build]
-  dockerfile = ".Dockerfile"
+  dockerfile = "./Dockerfile"
   context = "."
 
 [env]
