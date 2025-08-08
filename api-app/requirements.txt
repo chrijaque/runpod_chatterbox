@@ -8,8 +8,8 @@ pydantic>=2.5.0
 firebase-admin>=6.2.0
 google-cloud-storage>=2.10.0
 
-# Fix protobuf version conflict
-protobuf>=3.9.2,<3.20
+# Fix protobuf version conflict (compatible with firebase-admin/google libs)
+protobuf>=3.20.3,<5
 
 # CORS and additional utilities
 python-jose[cryptography]>=3.3.0
