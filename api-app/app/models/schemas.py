@@ -54,10 +54,16 @@ class TTSGeneration(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    message: str
+    message: Optional[str] = None
     timestamp: Optional[str] = None
+    service: Optional[str] = None
+    firebase_connected: Optional[bool] = None
 
 class DebugResponse(BaseModel):
     status: str
-    message: str
-    debug_info: Optional[Dict[str, Any]] = None 
+    message: Optional[str] = None
+    directories: Optional[Dict[str, Any]] = None
+    current_working_directory: Optional[str] = None
+    timestamp: Optional[str] = None
+    firebase_connected: Optional[bool] = None
+    firebase_storage_usage: Optional[Dict[str, Any]] = None
