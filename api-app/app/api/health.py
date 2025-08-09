@@ -15,14 +15,16 @@ router = APIRouter(tags=["health"])
 # Import the get_firebase_service function
 from .voices import get_firebase_service
 
-# Get Firebase service using the proper initialization
+# Get Firebase service using the proper initialization (may be None if not configured)
 firebase_service = get_firebase_service()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     """Health check endpoint"""
     try:
-        firebase_connected = firebase_service.is_connected()
+        # Re-resolve service in case env changed after startup
+        service = firebase_service or get_firebase_service()
+        firebase_connected = service.is_connected() if service else False
         
         return HealthResponse(
             status="healthy",
@@ -39,12 +41,13 @@ async def health_check():
 async def debug_directories():
     """Debug endpoint to check Firebase storage status"""
     try:
-        firebase_connected = firebase_service.is_connected()
+        service = firebase_service or get_firebase_service()
+        firebase_connected = service.is_connected() if service else False
         
         # Get Firebase storage usage
         storage_usage = {}
-        if firebase_connected:
-            storage_usage = firebase_service.get_storage_usage()
+        if firebase_connected and service:
+            storage_usage = service.get_storage_usage()
         
         return DebugResponse(
             status="success",

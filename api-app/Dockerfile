@@ -22,9 +22,9 @@ RUN mkdir -p voice_profiles voice_samples temp_voice
 # Expose port
 EXPOSE 8000
 
-# Health check
+# Health check (match FastAPI route: /api/health/health)
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/api/health/health || exit 1
 
 # Start the application
 CMD ["python", "start_fastapi.py"] 
