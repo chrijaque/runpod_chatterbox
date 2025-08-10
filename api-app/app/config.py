@@ -27,12 +27,14 @@ class Settings:
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
     # CORS Configuration
+    # Default origins; can be overridden by ALLOW_ORIGINS (comma-separated)
     CORS_ORIGINS: list = [
-        "http://localhost:3000", 
-        "http://localhost:5001", 
-        "http://127.0.0.1:3000", 
+        "http://localhost:3000",
+        "http://localhost:5001",
+        "http://127.0.0.1:3000",
         "http://127.0.0.1:5001"
     ]
+    ALLOW_ORIGINS: Optional[str] = os.getenv("ALLOW_ORIGINS")
     
     # Storage Configuration
     LOCAL_STORAGE_ENABLED: bool = os.getenv("LOCAL_STORAGE_ENABLED", "False").lower() == "true"
@@ -58,6 +60,19 @@ class Settings:
     REDIS_DLP_STREAM: str = os.getenv("REDIS_DLP_STREAM", "runpod:dlq")
     REDIS_JOB_TTL_SECONDS: int = int(os.getenv("REDIS_JOB_TTL_SECONDS", "604800"))  # 7 days
     FIREBASE_WEBHOOK_SECRET: Optional[str] = os.getenv("FIREBASE_WEBHOOK_SECRET")
+    
+    # Security / Auth
+    DAEZEND_API_SHARED_SECRET: Optional[str] = os.getenv("DAEZEND_API_SHARED_SECRET")
+    SECURITY_ENABLE_HMAC: bool = os.getenv("SECURITY_ENABLE_HMAC", "false").lower() == "true"
+    SECURITY_ENABLE_FIREBASE_AUTH: bool = os.getenv("SECURITY_ENABLE_FIREBASE_AUTH", "false").lower() == "true"
+    SECURITY_ENABLE_APP_CHECK: bool = os.getenv("SECURITY_ENABLE_APP_CHECK", "false").lower() == "true"
+    HMAC_MAX_SKEW_SECONDS: int = int(os.getenv("HMAC_MAX_SKEW_SECONDS", "300"))
+    IDEMPOTENCY_TTL_SECONDS: int = int(os.getenv("IDEMPOTENCY_TTL_SECONDS", "86400"))
+    
+    # Rate limiting
+    RATE_LIMIT_DEFAULT_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MINUTE", "60"))
+    RATE_LIMIT_CLONE_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_CLONE_PER_MINUTE", "5"))
+    RATE_LIMIT_TTS_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_TTS_PER_MINUTE", "10"))
     
     # RunPod Configuration - ChatterboxTTS Only
 
@@ -126,4 +141,15 @@ else:
     logger.warning("⚠️ Firebase functionality will not work without proper credentials")
 logger.info(f"📋 RunPod config valid: {settings.validate_runpod_config()}")
 logger.info(f"📋 Firebase config valid: {settings.validate_firebase_config()}")
+if settings.ALLOW_ORIGINS:
+    try:
+        parsed = [o.strip() for o in settings.ALLOW_ORIGINS.split(",") if o.strip()]
+        if parsed:
+            settings.CORS_ORIGINS = parsed
+    except Exception:
+        pass
+logger.info(f"📋 CORS origins: {settings.CORS_ORIGINS}")
+logger.info(f"📋 Security (HMAC): {'ENABLED' if settings.SECURITY_ENABLE_HMAC else 'disabled'}")
+logger.info(f"📋 Security (Firebase Auth): {'ENABLED' if settings.SECURITY_ENABLE_FIREBASE_AUTH else 'disabled'}")
+logger.info(f"📋 Security (App Check): {'ENABLED' if settings.SECURITY_ENABLE_APP_CHECK else 'disabled'}")
 logger.info("🔍 ===== END CONFIGURATION DEBUG =====") 

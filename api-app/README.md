@@ -1,3 +1,195 @@
+## Chatterbox API (FastAPI) — Usage Guide
+
+Base URL (production): `https://runpod-chatterbox.fly.dev`
+
+This API brokers between your main app, Redis queue, RunPod workers, and Firebase Storage. Some endpoints are public read-only for listing, while job-creating endpoints are internal-only and require HMAC authentication. Client-facing endpoints can additionally enforce Firebase Auth and App Check (feature flags).
+
+### Security overview
+- HMAC for internal-only routes (main app → API):
+  - Headers required:
+    - `X-Daezend-Timestamp`: epoch milliseconds
+    - `X-Daezend-Signature`: `hex(HMAC_SHA256(secret, method + "\n" + path + "\n" + timestamp + "\n" + rawBody))`
+    - `X-Idempotency-Key`: unique ID per request
+  - Env: `DAEZEND_API_SHARED_SECRET` must be identical in the main app and API app.
+  - Toggle: `SECURITY_ENABLE_HMAC=true`
+- Firebase Auth (browser/mobile): send `Authorization: Bearer <Firebase ID token>`
+  - Toggle: `SECURITY_ENABLE_FIREBASE_AUTH=true`
+- Firebase App Check (browser/mobile): send `X-Firebase-AppCheck: <token>`
+  - Toggle: `SECURITY_ENABLE_APP_CHECK=true`
+- CORS allowlist: set `ALLOW_ORIGINS="https://yourapp.com,https://staging.yourapp.com"`
+
+Feature flags let you roll in protections progressively. Start with HMAC on internal routes, then enable Firebase Auth/App Check for client-callable routes.
+
+### Environment variables (API)
+- Core:
+  - `RUNPOD_API_KEY`, `VC_CB_ENDPOINT_ID`, `TTS_CB_ENDPOINT_ID`
+  - `FIREBASE_STORAGE_BUCKET` (e.g., `gs://<project>.firebasestorage.app`)
+  - `RUNPOD_SECRET_Firebase` (service account JSON)
+- Security:
+  - `DAEZEND_API_SHARED_SECRET`
+  - `SECURITY_ENABLE_HMAC`, `SECURITY_ENABLE_FIREBASE_AUTH`, `SECURITY_ENABLE_APP_CHECK`
+  - `HMAC_MAX_SKEW_SECONDS` (default 300)
+  - `IDEMPOTENCY_TTL_SECONDS` (default 86400)
+  - `ALLOW_ORIGINS` (CSV list of allowed origins)
+- Redis/Queue:
+  - `REDIS_URL` (Upstash rediss URL)
+  - `REDIS_NAMESPACE` (default `runpod`)
+  - `REDIS_STREAM_NAME` (default `runpod:jobs`)
+  - `REDIS_CONSUMER_GROUP`, `REDIS_CONSUMER_NAME`
+  - `RATE_LIMIT_DEFAULT_PER_MINUTE` (60), `RATE_LIMIT_CLONE_PER_MINUTE` (5), `RATE_LIMIT_TTS_PER_MINUTE` (10)
+
+### HMAC signing example (Node.js)
+```js
+import crypto from 'node:crypto'
+
+function sign(secret, method, path, timestamp, bodyBuffer) {
+  const msg = Buffer.concat([
+    Buffer.from(`${method}\n${path}\n${timestamp}\n`, 'utf8'),
+    bodyBuffer || Buffer.alloc(0)
+  ])
+  return crypto.createHmac('sha256', secret).update(msg).digest('hex')
+}
+
+// usage
+const timestamp = Date.now().toString()
+const body = JSON.stringify({ name: 'voice_abc', audio_data: '...', audio_format: 'wav' })
+const sig = sign(process.env.DAEZEND_API_SHARED_SECRET, 'POST', '/api/voices/clone', timestamp, Buffer.from(body))
+```
+
+### Health
+- `GET /api/health/health`
+  - Always 200 OK when server is up.
+  - Response:
+    ```json
+    { "status": "healthy", "service": "voice-library-api", "firebase_connected": false, "timestamp": "..." }
+    ```
+
+### Voices (client-callable)
+- `GET /api/voices`
+  - Lists sample voices. Auth/App Check may be required depending on flags.
+  - Response: `{ status, voices: VoiceInfo[], language, is_kids_voice, total }`
+
+- `GET /api/voices/by-language/{language}`
+  - Lists voices for a specific language.
+
+- `GET /api/voices/{voice_id}/profile`
+  - Returns base64 `profile_base64` for a voice profile.
+
+VoiceInfo schema (response shape):
+```json
+{
+  "voice_id": "voice_john",
+  "name": "John",
+  "sample_file": "https://.../sample.wav",
+  "embedding_file": "https://.../profile.npy",
+  "created_date": 1712345678,
+  "language": "en",
+  "is_kids_voice": false
+}
+```
+
+### Voice cloning (internal-only)
+- `POST /api/voices/clone`
+  - Security: HMAC required (when `SECURITY_ENABLE_HMAC=true`).
+  - Body (JSON):
+    ```json
+    {
+      "name": "voice_myid",
+      "audio_data": "<base64>",
+      "audio_format": "wav",
+      "language": "en",
+      "is_kids_voice": false,
+      "model_type": "chatterbox"
+    }
+    ```
+  - Returns either `{"status":"queued","metadata":{"job_id":"..."}}` if Redis is configured, or a success payload including Firebase paths when synchronous.
+  - Headers (HMAC): `X-Daezend-Timestamp`, `X-Daezend-Signature`, `X-Idempotency-Key`
+
+Example curl (HMAC):
+```bash
+BODY='{"name":"voice_test","audio_data":"<base64>","audio_format":"wav","language":"en","is_kids_voice":false,"model_type":"chatterbox"}'
+TS=$(date +%s%3N)
+SIG=$(python - <<'PY'
+import hmac,hashlib,os,sys
+secret=os.environ['DAEZEND_API_SHARED_SECRET']
+method='POST'; path='/api/voices/clone'; ts=os.environ['TS']; body=os.environ['BODY'].encode()
+msg=(method+'\n'+path+'\n'+ts+'\n').encode()+body
+print(hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest())
+PY
+)
+curl -X POST https://runpod-chatterbox.fly.dev/api/voices/clone \
+  -H "Content-Type: application/json" \
+  -H "X-Daezend-Timestamp: $TS" \
+  -H "X-Daezend-Signature: $SIG" \
+  -H "X-Idempotency-Key: test-voice-1" \
+  -d "$BODY"
+```
+
+### TTS (client-callable listing; internal-only generation)
+- `POST /api/tts/generate` (internal-only)
+  - Security: HMAC required (when enabled).
+  - Body:
+    ```json
+    {
+      "voice_id": "voice_myid",
+      "text": "Hello there",
+      "profile_base64": "<base64>",
+      "language": "en",
+      "story_type": "user",
+      "is_kids_voice": false,
+      "model_type": "chatterbox"
+    }
+    ```
+  - Returns `{"status":"queued","metadata":{"job_id":"..."}}` with Redis or a `success` payload with `audio_path` when synchronous.
+
+- `GET /api/tts/generations`
+  - Lists generated stories (flat list) from Firebase.
+
+- `GET /api/tts/stories/{language}`
+  - Lists story entries for a language (user/app, default user via query param `story_type`).
+
+- `GET /api/tts/stories/{language}/{story_type}/{file_id}/audio`
+  - Returns the public URL for a specific file.
+
+TTSGenerateRequest (body):
+```json
+{
+  "voice_id": "voice_x",
+  "text": "...",
+  "profile_base64": "...",
+  "language": "en",
+  "story_type": "user",
+  "is_kids_voice": false,
+  "model_type": "chatterbox"
+}
+```
+
+### Queueing model (Redis Streams)
+- If `REDIS_URL` is set, job-creating endpoints enqueue and return immediately with `{status:"queued"}` and `job_id`.
+- A worker (see `app/worker.py`) consumes jobs, calls RunPod, uploads outputs to Firebase, and updates status.
+- Recommended: Use idempotency keys and track job state in Redis hashes under the configured namespace.
+
+### Status codes & errors
+- 200: success; 202: queued; 401/403: auth errors; 404: not found; 409: duplicate (idempotency); 429: rate-limited; 500: server errors.
+- Error payloads include `detail` with a descriptive message.
+
+### Access from main app (recommended patterns)
+1) Internal calls (server-to-server) use HMAC and idempotency:
+   - Generate timestamp and signature as described.
+   - Retry on 5xx; de-duplicate with the same `X-Idempotency-Key`.
+2) Client/browser calls use Firebase Auth + App Check (when enabled):
+   - Include `Authorization: Bearer <ID token>` and `X-Firebase-AppCheck`.
+   - Respect CORS.
+
+### Deployment & health
+- Fly hostname: `https://runpod-chatterbox.fly.dev`
+- Health check: `GET /api/health/health`
+- Ensure secrets are set via `flyctl secrets set ...` and CORS origins are correct.
+
+---
+
+For any questions about enabling the security toggles or wiring HMAC/Firebase in your main app, see the Security overview above. Enable flags gradually to avoid breaking existing integrations.
+
 # Voice Library API - Modular FastAPI Structure
 
 A production-ready voice cloning and TTS API built with FastAPI, featuring Firebase integration and modular architecture.
