@@ -6,6 +6,7 @@ from ..services.firebase import FirebaseService
 from ..services.redis_queue import RedisQueueService
 from ..models.schemas import TTSGenerateRequest, TTSGenerateResponse, TTSGeneration
 from ..config import settings
+from ..middleware.security import verify_hmac
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +36,7 @@ def get_queue_service() -> RedisQueueService | None:
         logger.warning(f"⚠️ Redis not configured: {e}")
         return None
 
-@router.post("/generate", response_model=TTSGenerateResponse)
+@router.post("/generate", response_model=TTSGenerateResponse, dependencies=[Depends(verify_hmac)])
 async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
     """
     Generate TTS using a voice profile.
@@ -49,11 +50,13 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
         # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
         queue = get_queue_service()
         if queue:
-            provided_job_id = job_id or f"tts_{request.voice_id}"
+            provided_job_id = job_id or f"tts_{request.user_id}_{request.story_id}_{request.voice_id}"
             queue.enqueue_job(
                 job_id=provided_job_id,
                 job_type="tts",
                 payload={
+                    "user_id": request.user_id,
+                    "story_id": request.story_id,
                     "voice_id": request.voice_id,
                     "text": request.text,
                     "profile_base64": request.profile_base64,

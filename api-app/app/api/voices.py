@@ -7,6 +7,7 @@ from ..services.firebase import FirebaseService
 from ..services.redis_queue import RedisQueueService
 from ..models.schemas import VoiceCloneRequest, VoiceCloneResponse, VoiceInfo
 from ..config import settings
+from ..middleware.security import verify_hmac
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -84,7 +85,7 @@ def get_queue_service() -> RedisQueueService | None:
         logger.warning(f"⚠️ Redis not configured: {e}")
         return None
 
-@router.post("/clone", response_model=VoiceCloneResponse)
+@router.post("/clone", response_model=VoiceCloneResponse, dependencies=[Depends(verify_hmac)])
 async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
     """
     Clone a voice using uploaded audio.
@@ -113,17 +114,19 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
         queue = get_queue_service()
         if queue:
-            provided_job_id = job_id or f"vc_{request.name}"
+            provided_job_id = job_id or f"vc_{request.user_id}_{request.name}"
             queue.enqueue_job(
                 job_id=provided_job_id,
                 job_type="vc",
                 payload={
+                    "user_id": request.user_id,
                     "name": request.name,
                     "audio_base64": request.audio_data,
                     "audio_format": request.audio_format,
                     "language": request.language,
                     "is_kids_voice": str(request.is_kids_voice).lower(),
                     "model_type": request.model_type,
+                    "profile_id": request.profile_id or "",
                 },
             )
             return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
