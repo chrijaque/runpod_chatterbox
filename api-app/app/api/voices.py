@@ -103,7 +103,9 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         logger.info(f"   - Audio data preview: {request.audio_data[:200] + '...' if request.audio_data and len(request.audio_data) > 200 else request.audio_data}")
         logger.info(f"   - Audio data end: {request.audio_data[-100:] if request.audio_data and len(request.audio_data) > 100 else request.audio_data}")
         
-        # Validate audio data before sending to RunPod
+        # Validate identifiers and audio data before sending to RunPod
+        if not request.user_id:
+            raise HTTPException(status_code=400, detail="Missing user_id")
         if not request.audio_data or len(request.audio_data) < 1000:
             logger.error(f"❌ Invalid audio data received from frontend:")
             logger.error(f"   - Has audio data: {bool(request.audio_data)}")
@@ -129,6 +131,7 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
                     "profile_id": request.profile_id or "",
                 },
             )
+            logger.info(f"Enqueued VC job {provided_job_id} with user_id={request.user_id}")
             return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
 
         # Fallback: Call RunPod synchronously when Redis is not configured
