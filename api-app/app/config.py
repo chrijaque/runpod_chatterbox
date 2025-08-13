@@ -30,9 +30,8 @@ class Settings:
     # Default origins; can be overridden by ALLOW_ORIGINS (comma-separated)
     CORS_ORIGINS: list = [
         "http://localhost:3000",
-        "http://localhost:5001",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5001"
+        "https://daezend.com",
+        "https://www.daezend.com"
     ]
     ALLOW_ORIGINS: Optional[str] = os.getenv("ALLOW_ORIGINS")
     
