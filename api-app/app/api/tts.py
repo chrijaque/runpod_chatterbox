@@ -44,8 +44,16 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
     try:
         logger.info(f"📖 TTS generation request received for voice: {request.voice_id}")
         logger.info(f"📊 Request details: language={request.language}, story_type={request.story_type}, kids_voice={request.is_kids_voice}")
-        logger.info(f"🔑 Profile base64 length: {len(request.profile_base64)}")
+        try:
+            b64_len = len(request.profile_base64 or "")
+        except Exception:
+            b64_len = 0
+        logger.info(f"🔑 Profile base64 length: {b64_len}")
+        logger.info(f"📁 Profile path: {getattr(request, 'profile_path', None) or ''}")
         logger.info(f"📝 Text preview: {request.text[:50]}...")
+        # Validate that one of profile_base64 or profile_path is provided
+        if not (request.profile_base64 or getattr(request, 'profile_path', None)):
+            raise HTTPException(status_code=400, detail="Either profile_base64 or profile_path must be provided")
         
         # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
         queue = get_queue_service()
@@ -59,7 +67,8 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
                     "story_id": request.story_id,
                     "voice_id": request.voice_id,
                     "text": request.text,
-                    "profile_base64": request.profile_base64,
+                    "profile_base64": request.profile_base64 or "",
+                    "profile_path": getattr(request, 'profile_path', None) or "",
                     "language": request.language,
                     "story_type": request.story_type,
                     "is_kids_voice": str(request.is_kids_voice).lower(),

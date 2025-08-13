@@ -25,7 +25,8 @@ class TTSGenerateRequest(BaseModel):
     user_id: str
     voice_id: str
     text: str
-    profile_base64: str
+    profile_base64: Optional[str] = None
+    profile_path: Optional[str] = None
     story_id: str
     language: str = "en"
     story_type: str = "user"
