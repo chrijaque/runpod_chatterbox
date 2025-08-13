@@ -4,6 +4,7 @@ import redis
 
 from .config import settings
 from .services.runpod_client import RunPodClient
+from .services.redis_queue import RedisQueueService
 
 
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +29,7 @@ def ensure_group(client: redis.Redis, stream: str, group: str) -> None:
 
 
 def main() -> None:
+    # Use per-pod stream config so TTS and VC pods can run independently
     stream = settings.REDIS_STREAM_NAME
     group = settings.REDIS_CONSUMER_GROUP
     consumer = settings.REDIS_CONSUMER_NAME
@@ -41,17 +43,22 @@ def main() -> None:
         tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID,
     )
 
-    in_flight: int = 0
-    max_concurrency: int = settings.RUNPOD_MAX_CONCURRENCY
+    in_flight_vc: int = 0
+    in_flight_tts: int = 0
+    max_vc: int = settings.RUNPOD_MAX_CONCURRENCY_VC
+    max_tts: int = settings.RUNPOD_MAX_CONCURRENCY_TTS
 
     logger.info(
-        f"👷 Worker started stream={stream} group={group} consumer={consumer} max_concurrency={max_concurrency}"
+        f"👷 Worker started stream={stream} group={group} consumer={consumer} max_vc={max_vc} max_tts={max_tts}"
     )
 
     while True:
         try:
-            if in_flight >= max_concurrency:
-                time.sleep(0.5)
+            # Choose which type we can take next based on available slots
+            want_vc = in_flight_vc < max_vc
+            want_tts = in_flight_tts < max_tts
+            if not (want_vc or want_tts):
+                time.sleep(0.2)
                 continue
 
             messages = client.xreadgroup(group, consumer, streams={stream: ">"}, count=1, block=5000)
@@ -65,8 +72,14 @@ def main() -> None:
                     logger.info(f"📥 Received job {job_id} type={job_type} msg_id={msg_id}")
 
                     try:
-                        in_flight += 1
                         if job_type == "vc":
+                            if in_flight_vc >= max_vc:
+                                # skip processing now; re-add to stream tail
+                                logger.info("⏭️ VC slot full, requeueing message")
+                                client.xadd(stream, data)
+                                client.xack(stream, group, msg_id)
+                                continue
+                            in_flight_vc += 1
                             name = data.get("payload:name")
                             audio_b64 = data.get("payload:audio_base64")
                             audio_format = data.get("payload:audio_format", "wav")
@@ -84,6 +97,12 @@ def main() -> None:
                             )
                             logger.info(f"✅ VC job done {job_id}: status={result.get('status')}")
                         elif job_type == "tts":
+                            if in_flight_tts >= max_tts:
+                                logger.info("⏭️ TTS slot full, requeueing message")
+                                client.xadd(stream, data)
+                                client.xack(stream, group, msg_id)
+                                continue
+                            in_flight_tts += 1
                             voice_id = data.get("payload:voice_id")
                             text = data.get("payload:text")
                             profile_b64 = data.get("payload:profile_base64")
@@ -107,10 +126,36 @@ def main() -> None:
 
                         client.xack(stream, group, msg_id)
                         logger.info(f"🧾 ACK job msg_id={msg_id}")
+                        try:
+                            RedisQueueService().set_job_status(job_id, "completed")
+                        except Exception:
+                            pass
                     except Exception as e:
                         logger.error(f"❌ Job {job_id} failed: {e}")
+                        # retry with backoff or send to DLQ
+                        try:
+                            rq = RedisQueueService()
+                            retries = rq.increment_retry(job_id)
+                            if retries > settings.REDIS_MAX_RETRIES:
+                                rq.set_job_status(job_id, "failed", error=str(e))
+                                rq.send_to_dlq({"job_id": job_id, "type": job_type or "?", "error": str(e)})
+                                client.xack(stream, group, msg_id)
+                                logger.info(f"🧾 DLQ and ACK msg_id={msg_id}")
+                            else:
+                                delay = settings.REDIS_RETRY_BASE_DELAY_SECONDS * (2 ** (retries - 1))
+                                rq.set_job_status(job_id, "retrying", retries=str(retries), delay=str(delay))
+                                # Requeue with delay
+                                fields = {k: v for k, v in data.items()}
+                                rq.delay_requeue(fields, delay_seconds=delay)
+                                client.xack(stream, group, msg_id)
+                                logger.info(f"🔁 Requeued job {job_id} with delay={delay}s and ACK old msg")
+                        except Exception as re_err:
+                            logger.error(f"❌ Retry handling failed: {re_err}")
                     finally:
-                        in_flight -= 1
+                        if job_type == "vc" and in_flight_vc > 0:
+                            in_flight_vc -= 1
+                        if job_type == "tts" and in_flight_tts > 0:
+                            in_flight_tts -= 1
 
         except Exception as loop_error:
             logger.error(f"❌ Worker loop error: {loop_error}")

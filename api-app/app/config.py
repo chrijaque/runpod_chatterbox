@@ -52,11 +52,17 @@ class Settings:
     REDIS_URL: Optional[str] = os.getenv("REDIS_URL")
     REDIS_NAMESPACE: str = os.getenv("REDIS_NAMESPACE", "runpod")
     RUNPOD_MAX_CONCURRENCY: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY", "1"))
+    RUNPOD_MAX_CONCURRENCY_VC: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_VC", os.getenv("RUNPOD_MAX_CONCURRENCY", "1")))
+    RUNPOD_MAX_CONCURRENCY_TTS: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_TTS", os.getenv("RUNPOD_MAX_CONCURRENCY", "1")))
     REDIS_USE_TLS: bool = os.getenv("REDIS_USE_TLS", "true").lower() == "true"
     REDIS_STREAM_NAME: str = os.getenv("REDIS_STREAM_NAME", "runpod:jobs")
+    REDIS_STREAM_NAME_VC: str = os.getenv("REDIS_STREAM_NAME_VC", "runpod:jobs:vc")
+    REDIS_STREAM_NAME_TTS: str = os.getenv("REDIS_STREAM_NAME_TTS", "runpod:jobs:tts")
     REDIS_CONSUMER_GROUP: str = os.getenv("REDIS_CONSUMER_GROUP", "runpod-consumers")
     REDIS_CONSUMER_NAME: str = os.getenv("REDIS_CONSUMER_NAME", "worker-1")
     REDIS_DLP_STREAM: str = os.getenv("REDIS_DLP_STREAM", "runpod:dlq")
+    REDIS_MAX_RETRIES: int = int(os.getenv("REDIS_MAX_RETRIES", "3"))
+    REDIS_RETRY_BASE_DELAY_SECONDS: int = int(os.getenv("REDIS_RETRY_BASE_DELAY_SECONDS", "5"))
     REDIS_JOB_TTL_SECONDS: int = int(os.getenv("REDIS_JOB_TTL_SECONDS", "604800"))  # 7 days
     FIREBASE_WEBHOOK_SECRET: Optional[str] = os.getenv("FIREBASE_WEBHOOK_SECRET")
     
