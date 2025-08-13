@@ -2,12 +2,14 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
 class VoiceCloneRequest(BaseModel):
+    user_id: str
     name: str
     audio_data: str  # Base64 encoded audio
     audio_format: str = "wav"
     language: str = "en"
     is_kids_voice: bool = False
     model_type: str = "chatterbox"  # Model selection (chatterbox only)
+    profile_id: Optional[str] = None
 
 class VoiceCloneResponse(BaseModel):
     status: str
@@ -20,9 +22,11 @@ class VoiceCloneResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
 class TTSGenerateRequest(BaseModel):
+    user_id: str
     voice_id: str
     text: str
     profile_base64: str
+    story_id: str
     language: str = "en"
     story_type: str = "user"
     is_kids_voice: bool = False

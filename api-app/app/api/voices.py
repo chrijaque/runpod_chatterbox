@@ -3,6 +3,7 @@ from typing import List
 import logging
 import os
 from ..services.runpod_client import RunPodClient
+from ..services.firebase import FirebaseService
 from ..services.redis_queue import RedisQueueService
 from ..models.schemas import VoiceCloneRequest, VoiceCloneResponse, VoiceInfo
 from ..config import settings
@@ -18,7 +19,7 @@ runpod_client = RunPodClient(
     tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
 )
 
-# Firebase listing may be used elsewhere; clone endpoint does not depend on it
+# Initialize Firebase service for library display
 firebase_service = None
 redis_queue: RedisQueueService | None = None
 
@@ -110,27 +111,78 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             logger.error(f"   - Minimum expected: 1000")
             raise HTTPException(status_code=400, detail="Invalid audio data - please provide a proper audio file")
         
-        # Enqueue via Redis and return early; worker + RunPod handle processing and Firebase writebacks
+        # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
         queue = get_queue_service()
-        if not queue:
-            logger.error("❌ Redis queue not configured")
-            raise HTTPException(status_code=503, detail="Queue not configured")
+        if queue:
+            provided_job_id = job_id or f"vc_{request.user_id}_{request.name}"
+            queue.enqueue_job(
+                job_id=provided_job_id,
+                job_type="vc",
+                payload={
+                    "user_id": request.user_id,
+                    "name": request.name,
+                    "audio_base64": request.audio_data,
+                    "audio_format": request.audio_format,
+                    "language": request.language,
+                    "is_kids_voice": str(request.is_kids_voice).lower(),
+                    "model_type": request.model_type,
+                    "profile_id": request.profile_id or "",
+                },
+            )
+            return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
 
-        provided_job_id = job_id or f"vc_{request.name}"
-        queue.enqueue_job(
-            job_id=provided_job_id,
-            job_type="vc",
-            payload={
-                "name": request.name,
-                "audio_base64": request.audio_data,
-                "audio_format": request.audio_format,
-                "language": request.language,
-                "is_kids_voice": str(request.is_kids_voice).lower(),
-                "model_type": request.model_type,
-                "user_id": getattr(request, 'user_id', ''),
-            },
+        # Fallback: Call RunPod synchronously when Redis is not configured
+        result = runpod_client.create_voice_clone(
+            name=request.name,
+            audio_base64=request.audio_data,
+            audio_format=request.audio_format,
+            language=request.language,
+            is_kids_voice=request.is_kids_voice,
+            model_type=request.model_type  # New: pass model type
         )
-        return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
+        
+        logger.info(f"🔍 RunPod result type: {type(result)}")
+        logger.info(f"🔍 RunPod result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+        logger.info(f"🔍 RunPod result status: {result.get('status')}")
+        
+        if result.get("status") == "success":
+            logger.info("✅ Voice clone completed successfully")
+            
+            # Extract all fields from RunPod response
+            voice_id = result.get("voice_id")
+            profile_path = result.get("profile_path")
+            recorded_audio_path = result.get("recorded_audio_path")
+            sample_audio_path = result.get("sample_audio_path")
+            generation_time = result.get("generation_time")
+            language = result.get("language")
+            metadata = result.get("metadata", {})
+            
+            logger.info(f"🎯 Voice ID: {voice_id}")
+            logger.info(f"📦 Profile path: {profile_path}")
+            logger.info(f"🎵 Recorded audio path: {recorded_audio_path}")
+            logger.info(f"🎵 Sample audio path: {sample_audio_path}")
+            logger.info(f"⏱️ Generation time: {generation_time}")
+            logger.info(f"🌍 Language: {language}")
+            
+            return VoiceCloneResponse(
+                status="success",
+                voice_id=voice_id,
+                profile_path=profile_path,
+                recorded_audio_path=recorded_audio_path,
+                sample_audio_path=sample_audio_path,
+                generation_time=generation_time,
+                language=language,
+                metadata=metadata
+            )
+        elif result.get("status") == "error":
+            # Handle error response from RunPod
+            error_message = result.get("message", "Unknown error occurred")
+            logger.error(f"❌ RunPod job failed: {error_message}")
+            raise HTTPException(status_code=500, detail=error_message)
+        else:
+            error_message = result.get("message", "Unknown error occurred")
+            logger.error(f"❌ Voice clone failed: {error_message}")
+            raise HTTPException(status_code=500, detail=error_message)
             
     except Exception as e:
         logger.error(f"❌ Voice clone error: {str(e)}")
