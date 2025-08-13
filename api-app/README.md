@@ -128,9 +128,11 @@ curl -X POST https://runpod-chatterbox.fly.dev/api/voices/clone \
 ### TTS (client-callable listing; internal-only generation)
 - `POST /api/tts/generate` (internal-only)
   - Security: HMAC required (when enabled).
-  - Body:
+  - Body (includes identifiers used by workers to update Firestore):
     ```json
     {
+      "user_id": "user_123",
+      "story_id": "story_abc",
       "voice_id": "voice_myid",
       "text": "Hello there",
       "profile_base64": "<base64>",
@@ -166,7 +168,9 @@ TTSGenerateRequest (body):
 
 ### Queueing model (Redis Streams)
 - If `REDIS_URL` is set, job-creating endpoints enqueue and return immediately with `{status:"queued"}` and `job_id`.
-- A worker (see `app/worker.py`) consumes jobs, calls RunPod, uploads outputs to Firebase, and updates status.
+- A worker consumes jobs, calls RunPod, uploads outputs to Firebase Storage and updates Firestore docs:
+  - Clone: writes `voice_profiles/{profile_id}` with status and paths
+  - TTS: updates `stories/{story_id}` with `audioStatus`, `audioUrl`, and appends `audioVersions` entry
 - Recommended: Use idempotency keys and track job state in Redis hashes under the configured namespace.
 
 ### Status codes & errors
