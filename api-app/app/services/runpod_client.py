@@ -37,7 +37,8 @@ class RunPodClient:
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
     def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64", 
-                          language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox") -> Dict[str, Any]:
+                          language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox",
+                          user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -93,7 +94,14 @@ class RunPodClient:
                     "responseFormat": response_format,
                     "language": language,
                     "is_kids_voice": is_kids_voice,
-                    "model_type": model_type
+                    "model_type": model_type,
+                    # Pass through metadata so the handler can set Storage/Firestore correctly
+                    "metadata": {
+                        "user_id": user_id,
+                        "language": language,
+                        "is_kids_voice": is_kids_voice,
+                        "model_type": model_type,
+                    },
                 }
             }
             
@@ -155,7 +163,7 @@ class RunPodClient:
 
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
                                  language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
-                                 model_type: str = "chatterbox") -> Dict[str, Any]:
+                                 model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -190,7 +198,15 @@ class RunPodClient:
                     "language": language,
                     "story_type": story_type,
                     "is_kids_voice": is_kids_voice,
-                    "model_type": model_type
+                    "model_type": model_type,
+                    "metadata": {
+                        "user_id": user_id,
+                        "story_id": story_id,
+                        "language": language,
+                        "story_type": story_type,
+                        "is_kids_voice": is_kids_voice,
+                        "model_type": model_type,
+                    },
                 }
             }
             

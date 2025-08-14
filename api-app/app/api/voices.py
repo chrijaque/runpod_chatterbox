@@ -113,26 +113,7 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             logger.error(f"   - Minimum expected: 1000")
             raise HTTPException(status_code=400, detail="Invalid audio data - please provide a proper audio file")
         
-        # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
-        queue = get_queue_service()
-        if queue:
-            provided_job_id = job_id or f"vc_{request.user_id}_{request.name}"
-            queue.enqueue_job(
-                job_id=provided_job_id,
-                job_type="vc",
-                payload={
-                    "user_id": request.user_id,
-                    "name": request.name,
-                    "audio_base64": request.audio_data,
-                    "audio_format": request.audio_format,
-                    "language": request.language,
-                    "is_kids_voice": str(request.is_kids_voice).lower(),
-                    "model_type": request.model_type,
-                    "profile_id": request.profile_id or "",
-                },
-            )
-            logger.info(f"Enqueued VC job {provided_job_id} with user_id={request.user_id}")
-            return VoiceCloneResponse(status="queued", metadata={"job_id": provided_job_id})
+        # Queue disabled: call RunPod directly (synchronous)
 
         # Fallback: Call RunPod synchronously when Redis is not configured
         result = runpod_client.create_voice_clone(
@@ -141,7 +122,8 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             audio_format=request.audio_format,
             language=request.language,
             is_kids_voice=request.is_kids_voice,
-            model_type=request.model_type  # New: pass model type
+            model_type=request.model_type,  # New: pass model type
+            user_id=request.user_id,
         )
         
         logger.info(f"🔍 RunPod result type: {type(result)}")

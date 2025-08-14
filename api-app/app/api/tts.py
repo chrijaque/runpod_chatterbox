@@ -55,27 +55,7 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
         if not (request.profile_base64 or getattr(request, 'profile_path', None)):
             raise HTTPException(status_code=400, detail="Either profile_base64 or profile_path must be provided")
         
-        # If Redis is configured, enqueue and return early; worker will process and Firebase will notify main app
-        queue = get_queue_service()
-        if queue:
-            provided_job_id = job_id or f"tts_{request.user_id}_{request.story_id}_{request.voice_id}"
-            queue.enqueue_job(
-                job_id=provided_job_id,
-                job_type="tts",
-                payload={
-                    "user_id": request.user_id,
-                    "story_id": request.story_id,
-                    "voice_id": request.voice_id,
-                    "text": request.text,
-                    "profile_base64": request.profile_base64 or "",
-                    "profile_path": getattr(request, 'profile_path', None) or "",
-                    "language": request.language,
-                    "story_type": request.story_type,
-                    "is_kids_voice": str(request.is_kids_voice).lower(),
-                    "model_type": request.model_type,
-                },
-            )
-            return TTSGenerateResponse(status="queued", metadata={"job_id": provided_job_id})
+        # Queue disabled: call RunPod directly (synchronous)
 
         # Fallback: Call RunPod for TTS generation synchronously
         logger.info("📞 Calling RunPod client generate_tts_with_context...")
@@ -86,11 +66,13 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
             result = runpod_client.generate_tts_with_context(
                 voice_id=request.voice_id,
                 text=request.text,
-                profile_base64=request.profile_base64,
+                profile_base64=request.profile_base64 or "",
                 language=request.language,
                 story_type=request.story_type,
                 is_kids_voice=request.is_kids_voice,
-                model_type=request.model_type
+                model_type=request.model_type,
+                user_id=request.user_id,
+                story_id=request.story_id,
             )
             logger.info(f"✅ RunPod call completed successfully")
         except Exception as e:
