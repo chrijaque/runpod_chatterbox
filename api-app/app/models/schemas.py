@@ -32,6 +32,7 @@ class TTSGenerateRequest(BaseModel):
     story_type: str = "user"
     is_kids_voice: bool = False
     model_type: str = "chatterbox"  # Model selection (chatterbox only)
+    callback_url: Optional[str] = None
 
 class TTSGenerateResponse(BaseModel):
     status: str

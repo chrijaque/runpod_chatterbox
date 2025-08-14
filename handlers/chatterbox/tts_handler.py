@@ -809,6 +809,7 @@ def handler(event, responseFormat="base64"):
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
+    callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
     
     if not text or not voice_id:
         return {"status": "error", "message": "Both text and voice_id are required"}
@@ -834,6 +835,29 @@ def handler(event, responseFormat="base64"):
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
+        # If callback_url provided, post completion payload
+        try:
+            if callback_url and isinstance(result, dict) and result.get("status") == "success":
+                import requests
+                payload = {
+                    "story_id": api_metadata.get("story_id") or event["input"].get("story_id"),
+                    "user_id": api_metadata.get("user_id") or event["input"].get("user_id"),
+                    "voice_id": voice_id,
+                    "audio_url": result.get("firebase_url") or result.get("audio_url") or result.get("audio_path"),
+                    "storage_path": result.get("firebase_path"),
+                    "language": language,
+                    "metadata": {
+                        **({} if not isinstance(api_metadata, dict) else api_metadata),
+                        "generation_time": result.get("generation_time"),
+                    },
+                }
+                try:
+                    resp = requests.post(callback_url, json=payload, timeout=10)
+                    logger.info(f"🔔 Callback POST {callback_url} -> {resp.status_code}")
+                except Exception as cb_e:
+                    logger.warning(f"⚠️ Callback POST failed: {cb_e}")
+        except Exception as e:
+            logger.warning(f"⚠️ Error preparing callback: {e}")
         return result
 
     except Exception as e:

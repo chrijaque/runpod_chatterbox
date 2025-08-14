@@ -173,7 +173,7 @@ class RunPodClient:
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
                                  language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
                                  model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
-                                 profile_path: Optional[str] = None) -> Dict[str, Any]:
+                                 profile_path: Optional[str] = None, callback_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -208,6 +208,7 @@ class RunPodClient:
                     "story_type": story_type,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
+                    "callback_url": callback_url,
                 },
                 "input": {
                     "voice_id": voice_id,
@@ -230,6 +231,7 @@ class RunPodClient:
                         "story_type": story_type,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
+                        "callback_url": callback_url,
                     },
                 }
             }
