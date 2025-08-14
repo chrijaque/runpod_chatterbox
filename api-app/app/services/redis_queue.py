@@ -19,7 +19,7 @@ class RedisQueueService:
             raise ValueError("REDIS_URL is not configured")
 
         # Upstash supports rediss and HTTPS REST; we use redis-py with rediss URL
-        self.client = redis.Redis.from_url(redis_url, decode_responses=True, ssl=settings.REDIS_USE_TLS)
+        self.client = redis.Redis.from_url(redis_url, decode_responses=True)
         # Default combined stream; per-type streams below
         self.stream = settings.REDIS_STREAM_NAME
         self.stream_vc = settings.REDIS_STREAM_NAME_VC

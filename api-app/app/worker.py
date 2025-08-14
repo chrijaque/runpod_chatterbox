@@ -14,7 +14,7 @@ logger = logging.getLogger("worker")
 def get_redis_client() -> redis.Redis:
     if not settings.REDIS_URL:
         raise RuntimeError("REDIS_URL is not configured")
-    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True, ssl=settings.REDIS_USE_TLS)
+    return redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
 def ensure_group(client: redis.Redis, stream: str, group: str) -> None:
