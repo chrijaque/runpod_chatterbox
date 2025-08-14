@@ -87,6 +87,13 @@ class RunPodClient:
             url = f"{self.base_url}/{endpoint_id}/run"
             
             payload = {
+                # Some handlers read top-level metadata
+                "metadata": {
+                    "user_id": user_id,
+                    "language": language,
+                    "is_kids_voice": is_kids_voice,
+                    "model_type": model_type,
+                },
                 "input": {
                     "name": name,
                     "audio_data": audio_base64,
@@ -95,7 +102,9 @@ class RunPodClient:
                     "language": language,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
-                    # Pass through metadata so the handler can set Storage/Firestore correctly
+                    # Duplicate critical identifiers at the top level for handlers that don't read nested metadata
+                    "user_id": user_id,
+                    # Also include a nested metadata object for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
                         "language": language,
@@ -163,7 +172,8 @@ class RunPodClient:
 
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
                                  language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
-                                 model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None) -> Dict[str, Any]:
+                                 model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
+                                 profile_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -190,15 +200,29 @@ class RunPodClient:
             url = f"{self.base_url}/{endpoint_id}/run"
             
             payload = {
+                # Some handlers read top-level metadata
+                "metadata": {
+                    "user_id": user_id,
+                    "story_id": story_id,
+                    "language": language,
+                    "story_type": story_type,
+                    "is_kids_voice": is_kids_voice,
+                    "model_type": model_type,
+                },
                 "input": {
                     "voice_id": voice_id,
                     "text": text,
                     "profile_base64": profile_base64,
+                    "profile_path": profile_path,
                     "responseFormat": response_format,
                     "language": language,
                     "story_type": story_type,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
+                    # Duplicate identifiers at top level for handlers that don't look into metadata
+                    "user_id": user_id,
+                    "story_id": story_id,
+                    # Nested metadata for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
                         "story_id": story_id,
