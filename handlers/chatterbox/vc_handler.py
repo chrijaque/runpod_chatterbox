@@ -618,13 +618,14 @@ def handle_voice_clone_request(input, responseFormat):
     # Handle voice generation request only
     name = input.get('name')
     audio_data = input.get('audio_data')  # Base64 encoded audio data
+    audio_path = input.get('audio_path')  # Firebase Storage path e.g. audio/voices/en/recorded/uid_ts.wav
     audio_format = input.get('audio_format', 'wav')  # Format of the input audio
     responseFormat = input.get('responseFormat', 'base64')  # Response format from frontend
     language = input.get('language', 'en')  # Language for storage organization
     is_kids_voice = input.get('is_kids_voice', False)  # Kids voice flag
 
-    if not name or not audio_data:
-        return {"status": "error", "message": "Both name and audio_data are required"}
+    if not name or (not audio_data and not audio_path):
+        return {"status": "error", "message": "name and either audio_data or audio_path are required"}
 
     logger.info(f"New request. Voice clone name: {name}")
     logger.info(f"Response format requested: {responseFormat}")
@@ -635,13 +636,32 @@ def handle_voice_clone_request(input, responseFormat):
         voice_id = get_voice_id(name)
         logger.info(f"Generated voice ID: {voice_id}")
         
-        # Save the uploaded audio to temp directory
+        # Prepare a local temp file from either base64 data or Firebase path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
-        audio_bytes = base64.b64decode(audio_data)
-        with open(temp_voice_file, 'wb') as f:
-            f.write(audio_bytes)
-        logger.info(f"Saved temporary voice file to {temp_voice_file}")
+        temp_voice_file = None
+        if audio_path:
+            # Infer extension from path
+            lower = str(audio_path).lower()
+            ext = ".wav"
+            if lower.endswith(".mp3"): ext = ".mp3"
+            elif lower.endswith(".ogg"): ext = ".ogg"
+            elif lower.endswith(".m4a"): ext = ".m4a"
+            temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}{ext}"
+            try:
+                if bucket is None and not initialize_firebase():
+                    return {"status": "error", "message": "Failed to initialize Firebase storage"}
+                blob = bucket.blob(audio_path)
+                blob.download_to_filename(str(temp_voice_file))
+                logger.info(f"Downloaded audio from Firebase {audio_path} to {temp_voice_file}")
+            except Exception as dl_e:
+                logger.error(f"❌ Failed to download audio_path {audio_path}: {dl_e}")
+                return {"status": "error", "message": f"Failed to download audio_path: {dl_e}"}
+        else:
+            temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
+            audio_bytes = base64.b64decode(audio_data)
+            with open(temp_voice_file, 'wb') as f:
+                f.write(audio_bytes)
+            logger.info(f"Saved temporary voice file to {temp_voice_file}")
 
         # Call the VC model's create_voice_clone method
         logger.info("🔄 Calling VC model's create_voice_clone method...")
@@ -653,7 +673,9 @@ def handle_voice_clone_request(input, responseFormat):
             'voice_type': input.get('voice_type'),
             'quality': input.get('quality'),
             'language': language,
-            'is_kids_voice': is_kids_voice
+            'is_kids_voice': is_kids_voice,
+            # If request was pointer-based, pass the recorded_path to VC so it skips re-upload
+            'recorded_path': audio_path if audio_path else None,
         }
         
         # Call the VC model - it handles everything!
@@ -670,7 +692,14 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception as cleanup_error:
             logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
-        # Return the result from the VC-model
+        # Post-process result: if caller supplied audio_path, avoid duplicate recorded upload
+        # and ensure recorded_audio_path reflects the original pointer
+        try:
+            if isinstance(result, dict) and audio_path:
+                result.setdefault('metadata', {})
+                result['recorded_audio_path'] = audio_path
+        except Exception:
+            pass
         logger.info(f"📤 Voice clone completed successfully")
         return result
 

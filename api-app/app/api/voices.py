@@ -103,27 +103,28 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         logger.info(f"   - Audio data preview: {request.audio_data[:200] + '...' if request.audio_data and len(request.audio_data) > 200 else request.audio_data}")
         logger.info(f"   - Audio data end: {request.audio_data[-100:] if request.audio_data and len(request.audio_data) > 100 else request.audio_data}")
         
-        # Validate identifiers and audio data before sending to RunPod
+        # Validate identifiers and audio input (either audio_data or audio_path)
         if not request.user_id:
             raise HTTPException(status_code=400, detail="Missing user_id")
-        if not request.audio_data or len(request.audio_data) < 1000:
-            logger.error(f"❌ Invalid audio data received from frontend:")
-            logger.error(f"   - Has audio data: {bool(request.audio_data)}")
-            logger.error(f"   - Audio data length: {len(request.audio_data) if request.audio_data else 0}")
-            logger.error(f"   - Minimum expected: 1000")
-            raise HTTPException(status_code=400, detail="Invalid audio data - please provide a proper audio file")
+        if not (request.audio_data or request.audio_path):
+            raise HTTPException(status_code=400, detail="Either audio_data or audio_path must be provided")
         
         # Queue disabled: call RunPod directly (synchronous)
 
         # Fallback: Call RunPod synchronously when Redis is not configured
+        # If audio_path provided, pass pointer through; the RunPod handler will download it.
+        if request.audio_path and "/recorded/" not in request.audio_path:
+            raise HTTPException(status_code=400, detail="audio_path must be under recorded/")
+
         result = runpod_client.create_voice_clone(
             name=request.name,
             audio_base64=request.audio_data,
             audio_format=request.audio_format,
             language=request.language,
             is_kids_voice=request.is_kids_voice,
-            model_type=request.model_type,  # New: pass model type
+            model_type=request.model_type,
             user_id=request.user_id,
+            audio_path=request.audio_path,
         )
         
         logger.info(f"🔍 RunPod result type: {type(result)}")
@@ -136,7 +137,7 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             # Extract all fields from RunPod response
             voice_id = result.get("voice_id")
             profile_path = result.get("profile_path")
-            recorded_audio_path = result.get("recorded_audio_path")
+            recorded_audio_path = request.audio_path or result.get("recorded_audio_path")
             sample_audio_path = result.get("sample_audio_path")
             generation_time = result.get("generation_time")
             language = result.get("language")

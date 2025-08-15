@@ -36,9 +36,9 @@ class RunPodClient:
         logger.info(f"📞 ChatterboxTTS TTS Endpoint: {self.tts_cb_endpoint_id}")
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
-    def create_voice_clone(self, name: str, audio_base64: str, audio_format: str = "wav", response_format: str = "base64", 
+    def create_voice_clone(self, name: str, audio_base64: str | None, audio_format: str = "wav", response_format: str = "base64", 
                           language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox",
-                          user_id: Optional[str] = None) -> Dict[str, Any]:
+                          user_id: Optional[str] = None, audio_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -57,6 +57,7 @@ class RunPodClient:
             logger.info(f"   audio_format: {audio_format}")
             logger.info(f"   response_format: {response_format}")
             logger.info(f"   model_type: {model_type}")
+            logger.info(f"   audio_path: {audio_path}")
             
             # Debug audio data being sent to RunPod
             logger.info(f"🔍 Audio data details being sent to RunPod:")
@@ -67,12 +68,13 @@ class RunPodClient:
             logger.info(f"   - Audio data end: {audio_base64[-100:] if audio_base64 and len(audio_base64) > 100 else audio_base64}")
             
             # Validate audio data before sending to RunPod
-            if not audio_base64 or len(audio_base64) < 1000:
-                logger.error(f"❌ Invalid audio data being sent to RunPod:")
-                logger.error(f"   - Has audio data: {bool(audio_base64)}")
-                logger.error(f"   - Audio data length: {len(audio_base64) if audio_base64 else 0}")
-                logger.error(f"   - Minimum expected: 1000")
-                raise Exception("Invalid audio data - audio file too small or empty")
+            if not audio_path:
+                if not audio_base64 or len(audio_base64) < 1000:
+                    logger.error(f"❌ Invalid audio data being sent to RunPod:")
+                    logger.error(f"   - Has audio data: {bool(audio_base64)}")
+                    logger.error(f"   - Audio data length: {len(audio_base64) if audio_base64 else 0}")
+                    logger.error(f"   - Minimum expected: 1000")
+                    raise Exception("Invalid audio data - audio file too small or empty")
             
             # Route to correct endpoint based on model type
             if model_type.lower() in ["chatterbox", "chatterboxtts", "cb"]:
@@ -96,7 +98,8 @@ class RunPodClient:
                 },
                 "input": {
                     "name": name,
-                    "audio_data": audio_base64,
+                    "audio_data": audio_base64 or "",
+                    "audio_path": audio_path,
                     "audio_format": audio_format,
                     "responseFormat": response_format,
                     "language": language,
