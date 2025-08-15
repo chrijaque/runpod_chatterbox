@@ -156,6 +156,40 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         logger.error(f"❌ Firebase upload failed: {e}")
         return None
 
+def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
+    """
+    Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
+    Returns new public URL or None.
+    """
+    global bucket
+    try:
+        if bucket is None and not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot rename")
+            return None
+        src_blob = bucket.blob(src_path)
+        if not src_blob.exists():
+            logger.warning(f"⚠️ Source blob does not exist: {src_path}")
+            return None
+        # Perform copy
+        new_blob = bucket.copy_blob(src_blob, bucket, dest_path)
+        # Set metadata if provided
+        if metadata:
+            new_blob.metadata = metadata
+        # Set content type if provided
+        if content_type:
+            new_blob.content_type = content_type
+        new_blob.make_public()
+        # Delete original
+        try:
+            src_blob.delete()
+        except Exception as del_e:
+            logger.warning(f"⚠️ Could not delete original blob {src_path}: {del_e}")
+        logger.info(f"✅ Renamed {src_path} → {dest_path}")
+        return new_blob.public_url
+    except Exception as e:
+        logger.error(f"❌ Rename failed {src_path} → {dest_path}: {e}")
+        return None
+
 def get_voice_id(name):
     """Generate a unique ID for a voice based on the name"""
     # Create a clean, filesystem-safe voice ID from the name
@@ -250,6 +284,12 @@ def handle_voice_clone_request(input, responseFormat):
     responseFormat = input.get('responseFormat', 'base64')  # Response format from frontend
     language = input.get('language', 'en')  # Language for storage organization
     is_kids_voice = input.get('is_kids_voice', False)  # Kids voice flag
+    # Naming hints (optional)
+    meta_top = input.get('metadata', {}) if isinstance(input.get('metadata'), dict) else {}
+    profile_filename_hint = input.get('profile_filename') or meta_top.get('profile_filename')
+    sample_filename_hint = input.get('sample_filename') or meta_top.get('sample_filename')
+    output_basename_hint = input.get('output_basename') or meta_top.get('output_basename')
+    user_id = input.get('user_id') or meta_top.get('user_id')
 
     if not name or (not audio_data and not audio_path):
         return {"status": "error", "message": "name and either audio_data or audio_path are required"}
@@ -328,6 +368,53 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception:
             pass
         logger.info(f"📤 Voice clone completed successfully")
+
+        # Post-process: rename uploaded files to standardized names if needed
+        try:
+            # Build common pieces
+            import re
+            safe_name = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_') or 'voice'
+            kids_prefix = 'kids/' if is_kids_voice else ''
+            # Defaults used by model
+            old_profile = f"audio/voices/{language}/{kids_prefix}profiles/voice_{safe_name}.npy"
+            old_sample = f"audio/voices/{language}/{kids_prefix}samples/voice_{safe_name}_sample.mp3"
+            old_recorded = f"audio/voices/{language}/recorded/voice_{safe_name}_recorded.wav"
+
+            # Desired names (use hints when provided)
+            target_profile_name = profile_filename_hint or f"voice_{safe_name}_{user_id or 'user'}.npy"
+            target_sample_name = sample_filename_hint or f"sample_{safe_name}_{user_id or 'user'}.mp3"
+            target_recorded_name = f"recording_{safe_name}_{user_id or 'user'}.wav"
+
+            new_profile = f"audio/voices/{language}/{kids_prefix}profiles/{target_profile_name}"
+            new_sample = f"audio/voices/{language}/{kids_prefix}samples/{target_sample_name}"
+            new_recorded = f"audio/voices/{language}/recorded/{target_recorded_name}"
+
+            common_metadata = {
+                'user_id': user_id or '',
+                'voice_id': voice_id,
+                'voice_name': name,
+                'language': language,
+                'is_kids_voice': str(bool(is_kids_voice)).lower(),
+            }
+
+            # Rename profile
+            rename_in_firebase(old_profile, new_profile, metadata=common_metadata, content_type='application/octet-stream')
+            # Rename sample
+            rename_in_firebase(old_sample, new_sample, metadata=common_metadata, content_type='audio/mpeg')
+            # If model uploaded cleaned recorded under default name, rename it too
+            rename_in_firebase(old_recorded, new_recorded, metadata=common_metadata, content_type='audio/wav')
+
+            # Attach new paths into result for callers
+            if isinstance(result, dict):
+                result.setdefault('metadata', {})
+                result['profile_path'] = new_profile
+                result['sample_audio_path'] = new_sample
+                # recorded_audio_path may have been set earlier from audio_path; keep pointer if provided
+                if not audio_path:
+                    result['recorded_audio_path'] = new_recorded
+        except Exception as post_e:
+            logger.warning(f"⚠️ Post-process rename failed: {post_e}")
+
         return result
 
     except Exception as e:

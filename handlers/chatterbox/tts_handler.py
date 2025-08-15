@@ -4,6 +4,10 @@ import os
 import tempfile
 import base64
 import logging
+import sys
+import glob
+import pathlib
+import shutil
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -13,7 +17,36 @@ from typing import Optional
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-"""Minimal, production-focused TTS handler for RunPod runtime."""
+def clear_python_cache():
+    """Clear all Python cache files to force fresh loading."""
+    logger.info("🧹 Clearing Python cache...")
+    
+    # Remove .pyc files
+    pyc_files = glob.glob("/workspace/**/*.pyc", recursive=True)
+    for pyc_file in pyc_files:
+        try:
+            os.remove(pyc_file)
+            logger.info(f"  - Removed: {pyc_file}")
+        except Exception as e:
+            logger.warning(f"  - Failed to remove {pyc_file}: {e}")
+    
+    # Remove __pycache__ directories
+    pycache_dirs = list(pathlib.Path("/workspace").rglob("__pycache__"))
+    for pycache_dir in pycache_dirs:
+        try:
+            shutil.rmtree(pycache_dir)
+            logger.info(f"  - Removed: {pycache_dir}")
+        except Exception as e:
+            logger.warning(f"  - Failed to remove {pycache_dir}: {e}")
+    
+    # Clear sys.modules for chatterbox
+    modules_to_clear = [name for name in sys.modules.keys() if 'chatterbox' in name]
+    for module_name in modules_to_clear:
+        del sys.modules[module_name]
+        logger.info(f"  - Cleared from sys.modules: {module_name}")
+
+# Clear cache BEFORE importing any chatterbox modules
+clear_python_cache()
 
 # Import the models from the forked repository
 try:
@@ -53,19 +86,429 @@ logger.info(f"  TEMP_VOICE_DIR exists: {TEMP_VOICE_DIR.exists()}")
 storage_client = None
 bucket = None
 
-# No repository mutation or cache clearing at runtime – the runtime uses a fixed image
+# Update repository to latest commit BEFORE initializing models
+logger.info("🔧 Updating repository to latest commit...")
+try:
+    import subprocess
+    import os
+    
+    # Find the chatterbox_embed directory
+    chatterbox_embed_path = None
+    for root, dirs, files in os.walk("/workspace"):
+        if "chatterbox_embed" in dirs:
+            chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
+            break
+    
+    if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
+        
+        # Check if it's a git repository
+        git_dir = os.path.join(chatterbox_embed_path, ".git")
+        if os.path.exists(git_dir):
+            logger.info("✅ Found .git directory - updating to latest commit...")
+            
+            # Get current commit hash
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=chatterbox_embed_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    old_commit_hash = result.stdout.strip()
+                    logger.info(f"🔍 Current commit: {old_commit_hash}")
+                else:
+                    logger.warning(f"⚠️ Could not get current commit: {result.stderr}")
+                    old_commit_hash = "unknown"
+            except Exception as e:
+                logger.warning(f"⚠️ Error getting current commit: {e}")
+                old_commit_hash = "error"
+            
+            # Fetch latest changes
+            try:
+                logger.info("🔄 Fetching latest changes...")
+                result = subprocess.run(
+                    ["git", "fetch", "origin"],
+                    cwd=chatterbox_embed_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=30
+                )
+                if result.returncode == 0:
+                    logger.info("✅ Successfully fetched latest changes")
+                    
+                    # Get the default branch
+                    result = subprocess.run(
+                        ["git", "remote", "show", "origin"],
+                        cwd=chatterbox_embed_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0:
+                        for line in result.stdout.split('\n'):
+                            if 'HEAD branch' in line:
+                                default_branch = line.split()[-1]
+                                logger.info(f"🔍 Default branch: {default_branch}")
+                                
+                                # Check what's in the remote branch
+                                result = subprocess.run(
+                                    ["git", "rev-parse", f"origin/{default_branch}"],
+                                    cwd=chatterbox_embed_path,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=10
+                                )
+                                if result.returncode == 0:
+                                    remote_commit = result.stdout.strip()
+                                    logger.info(f"🔍 Remote {default_branch} commit: {remote_commit}")
+                                    
+                                    # Reset to latest commit
+                                    logger.info(f"🔍 Resetting to origin/{default_branch}...")
+                                    result = subprocess.run(
+                                        ["git", "reset", "--hard", f"origin/{default_branch}"],
+                                        cwd=chatterbox_embed_path,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=30
+                                    )
+                                    if result.returncode == 0:
+                                        logger.info(f"✅ Successfully reset to latest {default_branch}")
+                                        
+                                        # Get new commit hash
+                                        result = subprocess.run(
+                                            ["git", "rev-parse", "HEAD"],
+                                            cwd=chatterbox_embed_path,
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=10
+                                        )
+                                        if result.returncode == 0:
+                                            new_commit_hash = result.stdout.strip()
+                                            logger.info(f"🆕 New commit hash: {new_commit_hash}")
+                                            
+                                            if new_commit_hash != old_commit_hash:
+                                                logger.info("🔄 Repository updated to latest commit!")
+                                                
+                                                # Reload the chatterbox modules to use the updated code
+                                                logger.info("🔄 Reloading chatterbox modules...")
+                                                modules_to_reload = [name for name in sys.modules.keys() if 'chatterbox' in name]
+                                                for module_name in modules_to_reload:
+                                                    del sys.modules[module_name]
+                                                    logger.info(f"🔄 Reloaded: {module_name}")
+                                                
+                                                # Re-import the models
+                                                try:
+                                                    from chatterbox.vc import ChatterboxVC
+                                                    from chatterbox.tts import ChatterboxTTS
+                                                    logger.info("✅ Successfully re-imported models after update")
+                                                except ImportError as e:
+                                                    logger.warning(f"⚠️ Failed to re-import models: {e}")
+                                            else:
+                                                logger.info("✅ Already at latest commit")
+                                        else:
+                                            logger.warning(f"⚠️ Failed to get new commit hash: {result.stderr}")
+                                    else:
+                                        logger.warning(f"⚠️ Failed to reset to latest: {result.stderr}")
+                                else:
+                                    logger.warning(f"⚠️ Could not get remote commit: {result.stderr}")
+                                break
+                        else:
+                            logger.warning(f"⚠️ Could not determine default branch: {result.stderr}")
+                    else:
+                        logger.warning(f"⚠️ Failed to fetch latest changes: {result.stderr}")
+            except Exception as e:
+                logger.warning(f"⚠️ Error updating repository: {e}")
+        else:
+            logger.warning("⚠️ No .git directory found - not a git repository")
+    else:
+        logger.warning("⚠️ Could not find chatterbox_embed directory")
+except Exception as e:
+    logger.error(f"❌ Error during repository update: {e}")
 
 # Initialize models AFTER repository update
-logger.info("🔧 Initializing models...")
+logger.info("🔧 Initializing models from forked repository...")
 try:
     if FORKED_HANDLER_AVAILABLE:
         # Initialize TTS model first (needed for s3gen)
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxTTS ready")
+        logger.info("✅ ChatterboxTTS model initialized successfully")
         
         # Initialize VC model using the correct method
         vc_model = ChatterboxVC.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxVC ready")
+        logger.info("✅ ChatterboxVC model initialized successfully")
+        
+        # Debug: Check T3 model's forward method signature
+        try:
+            import inspect
+            t3_forward_sig = inspect.signature(tts_model.t3.forward)
+            logger.info(f"🔍 T3 forward method signature: {t3_forward_sig}")
+            logger.info(f"🔍 T3 forward method parameters: {list(t3_forward_sig.parameters.keys())}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not get T3 forward signature: {e}")
+        
+        # Validate models have expected methods
+        logger.info("🔍 Validating model methods...")
+        
+        # Check VC model methods
+        vc_expected_methods = ['create_voice_clone']
+        vc_available_methods = [method for method in dir(vc_model) if not method.startswith('_')]
+        vc_missing_methods = [method for method in vc_expected_methods if not hasattr(vc_model, method)]
+        
+        logger.info(f"🔍 VC Available methods: {vc_available_methods}")
+        logger.info(f"🔍 VC Expected methods: {vc_expected_methods}")
+        if vc_missing_methods:
+            logger.warning(f"⚠️ Missing VC methods: {vc_missing_methods}")
+        else:
+            logger.info("✅ All VC methods are available")
+        
+        # Check TTS model methods
+        tts_expected_methods = ['generate_tts_story', 'generate_long_text']
+        tts_available_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+        tts_missing_methods = [method for method in tts_expected_methods if not hasattr(tts_model, method)]
+        
+        logger.info(f"🔍 TTS Available methods: {tts_available_methods}")
+        logger.info(f"🔍 TTS Expected methods: {tts_expected_methods}")
+        if tts_missing_methods:
+            logger.warning(f"⚠️ Missing TTS methods: {tts_missing_methods}")
+        else:
+            logger.info("✅ All TTS methods are available")
+        
+        # Log model details for debugging
+        import inspect
+        logger.info(f"📦 VC model type: {type(vc_model).__name__}")
+        logger.info(f"📦 TTS model type: {type(tts_model).__name__}")
+        
+        try:
+            vc_file = inspect.getfile(vc_model.__class__)
+            tts_file = inspect.getfile(tts_model.__class__)
+            logger.info(f"📦 VC model file: {vc_file}")
+            logger.info(f"📦 TTS model file: {tts_file}")
+            if "chatterbox_embed" in vc_file and "chatterbox_embed" in tts_file:
+                logger.info("✅ Models are from the correct repository")
+            else:
+                logger.warning("⚠️ Models are NOT from the expected repository")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not determine model files: {e}")
+        
+        # Debug: Check Git commit of forked repository
+        logger.info("🔍 ===== FORKED REPOSITORY GIT DEBUG =====")
+        try:
+            import subprocess
+            import os
+            
+            # Find the chatterbox_embed directory
+            chatterbox_embed_path = None
+            for root, dirs, files in os.walk("/workspace"):
+                if "chatterbox_embed" in dirs:
+                    chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
+                    break
+            
+            if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+                logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
+                
+                # Check if it's a git repository
+                git_dir = os.path.join(chatterbox_embed_path, ".git")
+                if os.path.exists(git_dir):
+                    logger.info("✅ Found .git directory - it's a git repository")
+                    
+                    # Get current commit hash
+                    try:
+                        result = subprocess.run(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_hash = result.stdout.strip()
+                            logger.info(f"🔍 Current commit hash: {commit_hash}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit hash: {result.stderr}")
+                            commit_hash = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit hash: {e}")
+                        commit_hash = "error"
+                    
+                    # Get commit message
+                    try:
+                        result = subprocess.run(
+                            ["git", "log", "-1", "--pretty=format:%s"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_message = result.stdout.strip()
+                            logger.info(f"📝 Last commit message: {commit_message}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit message: {result.stderr}")
+                            commit_message = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit message: {e}")
+                        commit_message = "error"
+                    
+                    # Get commit date
+                    try:
+                        result = subprocess.run(
+                            ["git", "log", "-1", "--pretty=format:%ci"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            commit_date = result.stdout.strip()
+                            logger.info(f"📅 Last commit date: {commit_date}")
+                        else:
+                            logger.warning(f"⚠️ Could not get commit date: {result.stderr}")
+                            commit_date = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting commit date: {e}")
+                        commit_date = "error"
+                    
+                    # Get remote URL
+                    try:
+                        result = subprocess.run(
+                            ["git", "remote", "get-url", "origin"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            remote_url = result.stdout.strip()
+                            logger.info(f"🌐 Remote URL: {remote_url}")
+                        else:
+                            logger.warning(f"⚠️ Could not get remote URL: {result.stderr}")
+                            remote_url = "unknown"
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error getting remote URL: {e}")
+                        remote_url = "error"
+                    
+                    # Check if there are uncommitted changes
+                    try:
+                        result = subprocess.run(
+                            ["git", "status", "--porcelain"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=10
+                        )
+                        if result.returncode == 0:
+                            if result.stdout.strip():
+                                logger.warning("⚠️ Repository has uncommitted changes!")
+                                logger.warning(f"📋 Changes: {result.stdout.strip()}")
+                            else:
+                                logger.info("✅ Repository is clean (no uncommitted changes)")
+                        else:
+                            logger.warning(f"⚠️ Could not check git status: {result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error checking git status: {e}")
+                    
+                    # Update to latest commit at runtime
+                    try:
+                        logger.info("🔄 Updating to latest commit...")
+                        result = subprocess.run(
+                            ["git", "fetch", "origin"],
+                            cwd=chatterbox_embed_path,
+                            capture_output=True,
+                            text=True,
+                            timeout=30
+                        )
+                        if result.returncode == 0:
+                            logger.info("✅ Successfully fetched latest changes")
+                            
+                            # Get the default branch
+                            result = subprocess.run(
+                                ["git", "remote", "show", "origin"],
+                                cwd=chatterbox_embed_path,
+                                capture_output=True,
+                                text=True,
+                                timeout=10
+                            )
+                            if result.returncode == 0:
+                                for line in result.stdout.split('\n'):
+                                    if 'HEAD branch' in line:
+                                        default_branch = line.split()[-1]
+                                        logger.info(f"🔍 Default branch: {default_branch}")
+                                        
+                                        # Reset to latest commit
+                                        result = subprocess.run(
+                                            ["git", "reset", "--hard", f"origin/{default_branch}"],
+                                            cwd=chatterbox_embed_path,
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=30
+                                        )
+                                        if result.returncode == 0:
+                                            logger.info(f"✅ Successfully reset to latest {default_branch}")
+                                            
+                                            # Get new commit hash
+                                            result = subprocess.run(
+                                                ["git", "rev-parse", "HEAD"],
+                                                cwd=chatterbox_embed_path,
+                                                capture_output=True,
+                                                text=True,
+                                                timeout=10
+                                            )
+                                            if result.returncode == 0:
+                                                new_commit_hash = result.stdout.strip()
+                                                logger.info(f"🆕 New commit hash: {new_commit_hash}")
+                                                
+                                                if new_commit_hash != commit_hash:
+                                                    logger.info("🔄 Repository updated to latest commit!")
+                                                    # Update the commit_hash variable to reflect the new commit
+                                                    commit_hash = new_commit_hash
+                                                    
+                                                    # Reload the chatterbox modules to use the updated code
+                                                    logger.info("🔄 Reloading chatterbox modules...")
+                                                    modules_to_reload = [name for name in sys.modules.keys() if 'chatterbox' in name]
+                                                    for module_name in modules_to_reload:
+                                                        del sys.modules[module_name]
+                                                        logger.info(f"🔄 Reloaded: {module_name}")
+                                                    
+                                                    # Re-import the models
+                                                    try:
+                                                        from chatterbox.vc import ChatterboxVC
+                                                        from chatterbox.tts import ChatterboxTTS
+                                                        logger.info("✅ Successfully re-imported models after update")
+                                                    except ImportError as e:
+                                                        logger.warning(f"⚠️ Failed to re-import models: {e}")
+                                                else:
+                                                    logger.info("✅ Already at latest commit")
+                                        else:
+                                            logger.warning(f"⚠️ Failed to reset to latest: {result.stderr}")
+                                    break
+                            else:
+                                logger.warning(f"⚠️ Could not determine default branch: {result.stderr}")
+                        else:
+                            logger.warning(f"⚠️ Failed to fetch latest changes: {result.stderr}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Error updating repository: {e}")
+                    
+                    # Summary
+                    logger.info("📊 ===== FORKED REPO SUMMARY =====")
+                    logger.info(f"🔍 Commit Hash: {commit_hash}")
+                    logger.info(f"📝 Commit Message: {commit_message}")
+                    logger.info(f"📅 Commit Date: {commit_date}")
+                    logger.info(f"🌐 Remote URL: {remote_url}")
+                    
+                else:
+                    logger.warning("⚠️ No .git directory found - not a git repository")
+            else:
+                logger.warning("⚠️ Could not find chatterbox_embed directory")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during git debugging: {e}")
+            import traceback
+            logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        
+        logger.info("🔍 ===== END GIT DEBUG =====")
         
     else:
         logger.error("❌ Forked repository models not available")
@@ -81,33 +524,98 @@ except Exception as e:
 # 🐞  Firebase / GCS credential debug helper
 # -------------------------------------------------------------------
 def _debug_gcs_creds():
-    """Minimal Firebase credential check (kept for quick diagnostics)."""
-    try:
-        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        logger.info("Firebase secret present: %s", bool(firebase_secret_path))
-    except Exception:
-        pass
+    """Minimal Firebase credential check"""
+    import os
+    logger.info("🔍 Firebase credentials check")
+    
+    # Check if RunPod secret is available
+    firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
+    if firebase_secret_path:
+        if firebase_secret_path.startswith('{'):
+            logger.info("✅ Using RunPod Firebase secret (JSON content)")
+        else:
+            logger.info("✅ Using RunPod Firebase secret (file path)")
+    else:
+        logger.warning("⚠️ No RunPod Firebase secret found")
 
 def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
     
     try:
+        # Debug: Check environment variables
+        logger.info("🔍 Checking Firebase environment variables...")
         firebase_secret = os.getenv('RUNPOD_SECRET_Firebase')
-        firebase_secret_path = firebase_secret
-        if firebase_secret and firebase_secret.startswith('{'):
-            import json
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
-                json.dump(json.loads(firebase_secret), tmp_file)
-                firebase_secret_path = tmp_file.name
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = firebase_secret_path
-        if firebase_secret_path and os.path.exists(firebase_secret_path):
-            client = storage.Client.from_service_account_json(firebase_secret_path)
+        google_creds = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        logger.info(f"🔍 RUNPOD_SECRET_Firebase exists: {firebase_secret is not None}")
+        logger.info(f"🔍 GOOGLE_APPLICATION_CREDENTIALS exists: {google_creds is not None}")
+        
+        # Debug: Log Firebase credentials details
+        if firebase_secret:
+            logger.info(f"🔍 RUNPOD_SECRET_Firebase length: {len(firebase_secret)} characters")
+            logger.info(f"🔍 RUNPOD_SECRET_Firebase: Loaded successfully")
+            
+            # Try to parse and validate the JSON
+            try:
+                import json
+                cred_data = json.loads(firebase_secret)
+                logger.info(f"🔍 Firebase Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
+                logger.info(f"🔍 Firebase Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
+                logger.info("✅ Firebase credentials JSON is valid")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Firebase credentials JSON is invalid: {e}")
+                logger.error(f"❌ Credentials validation failed")
         else:
-            client = storage.Client()
-        storage_client = client
+            logger.warning("⚠️ RUNPOD_SECRET_Firebase is not set!")
+            logger.warning("⚠️ Firebase functionality will not work")
+        
+        # Check if we're in RunPod and have the secret
+        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
+        
+        if firebase_secret_path:
+            if firebase_secret_path.startswith('{'):
+                # It's JSON content, create a temporary file
+                logger.info("✅ Using RunPod Firebase secret as JSON content")
+                import tempfile
+                import json
+                
+                # Validate JSON first
+                try:
+                    creds_data = json.loads(firebase_secret_path)
+                    logger.info(f"✅ Valid JSON with project_id: {creds_data.get('project_id', 'unknown')}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Invalid JSON in RUNPOD_SECRET_Firebase: {e}")
+                    raise
+                
+                # Create temporary file with the JSON content
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
+                    json.dump(creds_data, tmp_file)
+                    tmp_path = tmp_file.name
+                
+                logger.info(f"✅ Created temporary credentials file: {tmp_path}")
+                
+                # Set the environment variable for Google Cloud SDK
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = tmp_path
+                logger.info(f"✅ Set GOOGLE_APPLICATION_CREDENTIALS to: {tmp_path}")
+                
+                storage_client = storage.Client.from_service_account_json(tmp_path)
+                
+            elif os.path.exists(firebase_secret_path):
+                # It's a file path
+                logger.info(f"✅ Using RunPod Firebase secret file: {firebase_secret_path}")
+                storage_client = storage.Client.from_service_account_json(firebase_secret_path)
+            else:
+                logger.warning(f"⚠️ RUNPOD_SECRET_Firebase exists but is not JSON content or valid file path")
+                # Fallback to GOOGLE_APPLICATION_CREDENTIALS
+                logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+                storage_client = storage.Client()
+        else:
+            # No RunPod secret, fallback to GOOGLE_APPLICATION_CREDENTIALS
+            logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
+            storage_client = storage.Client()
+        
         bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
-        logger.info("✅ Firebase storage client ready")
+        logger.info("✅ Firebase storage client initialized successfully")
         return True
     except Exception as e:
         logger.error(f"❌ Failed to initialize Firebase storage: {e}")
@@ -159,6 +667,40 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         logger.error(f"❌ Firebase upload failed: {e}")
         return None
 
+def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
+    """
+    Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
+    Returns new public URL or None.
+    """
+    global bucket
+    try:
+        if bucket is None and not initialize_firebase():
+            logger.error("❌ Firebase not initialized, cannot rename")
+            return None
+        src_blob = bucket.blob(src_path)
+        if not src_blob.exists():
+            logger.warning(f"⚠️ Source blob does not exist: {src_path}")
+            return None
+        # Perform copy
+        new_blob = bucket.copy_blob(src_blob, bucket, dest_path)
+        # Set metadata if provided
+        if metadata:
+            new_blob.metadata = metadata
+        # Set content type if provided
+        if content_type:
+            new_blob.content_type = content_type
+        new_blob.make_public()
+        # Delete original
+        try:
+            src_blob.delete()
+        except Exception as del_e:
+            logger.warning(f"⚠️ Could not delete original blob {src_path}: {del_e}")
+        logger.info(f"✅ Renamed {src_path} → {dest_path}")
+        return new_blob.public_url
+    except Exception as e:
+        logger.error(f"❌ Rename failed {src_path} → {dest_path}: {e}")
+        return None
+
 def list_files_for_debug():
     """List files in our directories for debugging"""
     logger.info("📂 Directory contents:")
@@ -177,7 +719,13 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     """
     global tts_model
     
-    logger.info("TTS generate: voice_id=%s, lang=%s, type=%s, kids=%s, text_len=%d", voice_id, language, story_type, is_kids_voice, len(text))
+    logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
+    logger.info(f"🔍 Parameters:")
+    logger.info(f"  voice_id: {voice_id}")
+    logger.info(f"  language: {language}")
+    logger.info(f"  story_type: {story_type}")
+    logger.info(f"  is_kids_voice: {is_kids_voice}")
+    logger.info(f"  text_length: {len(text)} characters")
     
     start_time = time.time()
     
@@ -191,24 +739,76 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                 "generation_time": time.time() - start_time
             }
         
-        if not hasattr(tts_model, 'generate_tts_story'):
+        # 🔍 DEBUG: Show all available methods for TTS model
+        logger.info("🔍 ===== TTS MODEL METHODS DEBUG =====")
+        
+        # TTS Model methods
+        tts_methods = [method for method in dir(tts_model) if not method.startswith('_')]
+        logger.info(f"🔍 TTS Model type: {type(tts_model).__name__}")
+        logger.info(f"🔍 TTS Model file: {tts_model.__class__.__module__}")
+        logger.info(f"🔍 TTS Available methods ({len(tts_methods)}): {tts_methods}")
+        
+        # Check for specific methods we need
+        logger.info("🔍 ===== TTS METHOD AVAILABILITY CHECK =====")
+        logger.info(f"🔍 TTS has 'generate': {hasattr(tts_model, 'generate')}")
+        logger.info(f"🔍 TTS has 'load_voice_clone': {hasattr(tts_model, 'load_voice_clone')}")
+        logger.info(f"🔍 TTS has 'save_voice_clone': {hasattr(tts_model, 'save_voice_clone')}")
+        logger.info(f"🔍 TTS has 'prepare_conditionals_with_voice_profile': {hasattr(tts_model, 'prepare_conditionals_with_voice_profile')}")
+        
+        # Check method signatures if they exist
+        if hasattr(tts_model, 'generate'):
+            import inspect
+            try:
+                sig = inspect.signature(tts_model.generate)
+                logger.info(f"🔍 TTS generate signature: {sig}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get generate signature: {e}")
+        
+        logger.info("🔍 ===== END TTS MODEL METHODS DEBUG =====")
+        
+        # Try to use the TTS model's generate_tts_story method
+        if hasattr(tts_model, 'generate_tts_story'):
+            logger.info("🔄 Using TTS model's generate_tts_story method...")
+            
+            try:
+                # Use the TTS model's generate_tts_story method
+                result = tts_model.generate_tts_story(
+                    text=text,
+                    voice_id=voice_id,
+                    profile_base64=profile_base64,
+                    language=language,
+                    story_type=story_type,
+                    is_kids_voice=is_kids_voice,
+                    metadata=api_metadata
+                )
+                
+                generation_time = time.time() - start_time
+                logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
+                
+                return result
+                
+            except Exception as method_error:
+                logger.error(f"❌ generate_tts_story method failed: {method_error}")
+                return {
+                    "status": "error",
+                    "message": f"generate_tts_story method failed: {method_error}",
+                    "generation_time": time.time() - start_time,
+                    "debug_info": {
+                        "tts_methods": tts_methods,
+                        "error": str(method_error)
+                    }
+                }
+        else:
+            logger.error("❌ TTS model doesn't have generate_tts_story method")
             return {
                 "status": "error",
-                "message": "TTS model missing generate_tts_story",
-                "generation_time": time.time() - start_time
+                "message": "TTS model doesn't have generate_tts_story method. Please update the RunPod deployment with the latest forked repository version.",
+                "generation_time": time.time() - start_time,
+                "debug_info": {
+                    "tts_methods": tts_methods,
+                    "available_tts_methods": [m for m in tts_methods if 'generate' in m.lower() or 'tts' in m.lower()]
+                }
             }
-        result = tts_model.generate_tts_story(
-            text=text,
-            voice_id=voice_id,
-            profile_base64=profile_base64,
-            language=language,
-            story_type=story_type,
-            is_kids_voice=is_kids_voice,
-            metadata=api_metadata
-        )
-        generation_time = time.time() - start_time
-        logger.info("✅ TTS generation completed in %.2fs", generation_time)
-        return result
         
     except Exception as e:
         generation_time = time.time() - start_time
@@ -269,6 +869,47 @@ def handler(event, responseFormat="base64"):
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
+        # Post-process: rename output file to requested naming if model saved with default name.
+        try:
+            if isinstance(result, dict) and result.get("status") == "success":
+                # Extract hints
+                import re
+                user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+                voice_id = event["input"].get("voice_id")
+                story_type = event["input"].get("story_type", "user")
+                language = event["input"].get("language", "en")
+                story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                output_basename = api_metadata.get("output_basename") or event["input"].get("output_basename")
+                if not story_name and output_basename:
+                    story_name = output_basename.split("_")[0]
+                safe_story = re.sub(r'[^a-z0-9]+', '_', (story_name or 'story').lower()).strip('_')
+                base = output_basename or f"{safe_story}_{voice_id}_{story_type}"
+                # Determine existing firebase path
+                firebase_path = result.get("firebase_path")
+                audio_url = result.get("firebase_url") or result.get("audio_url")
+                # If we only have URL, derive path from it
+                if not firebase_path and audio_url:
+                    from urllib.parse import urlparse
+                    p = urlparse(audio_url).path
+                    firebase_path = p[1:] if p.startswith('/') else p
+                # Build target path
+                if firebase_path:
+                    ext = firebase_path.split('.')[-1].lower() if '.' in firebase_path else 'mp3'
+                    target_path = f"audio/stories/{language}/{story_type}/{base}.{ext}"
+                    if target_path != firebase_path:
+                        new_url = rename_in_firebase(firebase_path, target_path, metadata={
+                            'user_id': user_id or '',
+                            'voice_id': voice_id or '',
+                            'language': language,
+                            'story_type': story_type,
+                            'story_name': safe_story,
+                        }, content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav')
+                        if new_url:
+                            result['firebase_path'] = target_path
+                            result['firebase_url'] = new_url
+                            result['audio_url'] = new_url
+        except Exception as post_e:
+            logger.warning(f"⚠️ TTS post-process rename failed: {post_e}")
         # If callback_url provided, post completion payload
         try:
             if callback_url and isinstance(result, dict) and result.get("status") == "success":
