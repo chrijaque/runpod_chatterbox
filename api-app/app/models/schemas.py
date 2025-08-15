@@ -14,6 +14,7 @@ class VoiceCloneRequest(BaseModel):
 
 class VoiceCloneResponse(BaseModel):
     status: str
+    job_id: Optional[str] = None
     voice_id: Optional[str] = None
     profile_path: Optional[str] = None
     recorded_audio_path: Optional[str] = None  # New: path to recorded audio

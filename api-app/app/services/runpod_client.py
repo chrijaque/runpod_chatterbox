@@ -137,14 +137,9 @@ class RunPodClient:
             logger.info(f"✅ Job ID: {result.get('id')}")
             logger.info(f"✅ Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
             
-            # Wait for job completion
+            # Return quickly with job info; Firestore will be updated asynchronously by the worker
             if result.get('id'):
-                logger.info(f"⏳ Waiting for job completion: {result['id']}")
-                final_result = self.wait_for_job_completion(endpoint_id, result['id'])
-                logger.info(f"✅ Job completed with result: {final_result}")
-                logger.info(f"✅ Final result type: {type(final_result)}")
-                logger.info(f"✅ Final result keys: {list(final_result.keys()) if isinstance(final_result, dict) else 'Not a dict'}")
-                return final_result
+                return {"status": "IN_QUEUE", "id": result.get('id')}
             else:
                 logger.error("❌ No job ID in response")
                 raise Exception("No job ID in response")

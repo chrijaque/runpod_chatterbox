@@ -131,35 +131,12 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         logger.info(f"🔍 RunPod result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
         logger.info(f"🔍 RunPod result status: {result.get('status')}")
         
-        if result.get("status") == "success":
-            logger.info("✅ Voice clone completed successfully")
-            
-            # Extract all fields from RunPod response
-            voice_id = result.get("voice_id")
-            profile_path = result.get("profile_path")
-            recorded_audio_path = request.audio_path or result.get("recorded_audio_path")
-            sample_audio_path = result.get("sample_audio_path")
-            generation_time = result.get("generation_time")
-            language = result.get("language")
-            metadata = result.get("metadata", {})
-            
-            logger.info(f"🎯 Voice ID: {voice_id}")
-            logger.info(f"📦 Profile path: {profile_path}")
-            logger.info(f"🎵 Recorded audio path: {recorded_audio_path}")
-            logger.info(f"🎵 Sample audio path: {sample_audio_path}")
-            logger.info(f"⏱️ Generation time: {generation_time}")
-            logger.info(f"🌍 Language: {language}")
-            
-            return VoiceCloneResponse(
-                status="success",
-                voice_id=voice_id,
-                profile_path=profile_path,
-                recorded_audio_path=recorded_audio_path,
-                sample_audio_path=sample_audio_path,
-                generation_time=generation_time,
-                language=language,
-                metadata=metadata
-            )
+        if result.get("status") in ["IN_QUEUE", "IN_PROGRESS"] and result.get("id"):
+            # Return quickly after dispatching job; UI will listen to Firestore updates
+            return VoiceCloneResponse(status="success", job_id=result.get("id"))
+        elif result.get("status") == "success":
+            # Legacy path if the client still waits for completion
+            return VoiceCloneResponse(status="success", job_id=result.get("id"))
         elif result.get("status") == "error":
             # Handle error response from RunPod
             error_message = result.get("message", "Unknown error occurred")
