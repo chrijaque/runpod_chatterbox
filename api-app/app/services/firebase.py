@@ -300,7 +300,7 @@ class FirebaseService:
                 logger.error(f"❌ Firebase upload from RunPod failed: {e}")
                 return None
 
-    def upload_runpod_voice_sample(self, voice_id: str, sample_filename: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
+    def upload_runpod_voice_sample(self, voice_id: str, sample_filename: str, language: str = "en", is_kids_voice: bool = False, *, user_id: Optional[str] = None, voice_name: Optional[str] = None) -> Optional[str]:
         """
         Upload voice sample from RunPod to Firebase with organized structure
         
@@ -313,14 +313,29 @@ class FirebaseService:
         runpod_path = f"/voice_samples/{sample_filename}"
         
         # Build Firebase path based on language and kids voice
+        safe_name = (voice_name or voice_id or "voice").lower().replace(" ", "_")
         if is_kids_voice:
-            firebase_path = f"audio/voices/{language}/kids/samples/{voice_id}_{sample_filename}"
+            firebase_path = f"audio/voices/{language}/kids/samples/sample_{safe_name}_{user_id or 'user'}.mp3"
         else:
-            firebase_path = f"audio/voices/{language}/samples/{voice_id}_{sample_filename}"
-        
-        return self.upload_from_runpod_directory(runpod_path, firebase_path)
+            firebase_path = f"audio/voices/{language}/samples/sample_{safe_name}_{user_id or 'user'}.mp3"
 
-    def upload_runpod_tts_generation(self, generation_id: str, tts_filename: str, language: str = "en", is_kids_voice: bool = False, story_type: str = "user") -> Optional[str]:
+        url = self.upload_from_runpod_directory(runpod_path, firebase_path)
+        if url:
+            try:
+                blob = self.bucket.blob(firebase_path)
+                blob.metadata = {
+                    "user_id": user_id or "",
+                    "voice_id": voice_id,
+                    "voice_name": voice_name or safe_name,
+                    "language": language,
+                    "is_kids_voice": str(bool(is_kids_voice)).lower(),
+                }
+                blob.patch()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not set metadata for {firebase_path}: {e}")
+        return url
+
+    def upload_runpod_tts_generation(self, generation_id: str, tts_filename: str, language: str = "en", is_kids_voice: bool = False, story_type: str = "user", *, user_id: Optional[str] = None, voice_id: Optional[str] = None, voice_name: Optional[str] = None, story_name: Optional[str] = None, output_basename: Optional[str] = None) -> Optional[str]:
         """
         Upload TTS generation from RunPod to Firebase with organized stories structure
         
@@ -334,9 +349,27 @@ class FirebaseService:
         runpod_path = f"/voice_samples/{tts_filename}"  # TTS files are in voice_samples
         
         # Build Firebase path based on language and story type
-        firebase_path = f"audio/stories/{language}/{story_type}/{generation_id}_{tts_filename}"
-        
-        return self.upload_from_runpod_directory(runpod_path, firebase_path)
+        safe_story = (story_name or generation_id or "story").lower().replace(" ", "_")
+        base = output_basename or f"{safe_story}_{voice_id or 'voice'}_{story_type}"
+        ext = tts_filename.split('.')[-1].lower() if '.' in tts_filename else 'mp3'
+        firebase_path = f"audio/stories/{language}/{story_type}/{base}.{ext}"
+
+        url = self.upload_from_runpod_directory(runpod_path, firebase_path)
+        if url:
+            try:
+                blob = self.bucket.blob(firebase_path)
+                blob.metadata = {
+                    "user_id": user_id or "",
+                    "voice_id": voice_id or "",
+                    "voice_name": voice_name or "",
+                    "language": language,
+                    "story_type": story_type,
+                    "story_name": safe_story,
+                }
+                blob.patch()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not set metadata for {firebase_path}: {e}")
+        return url
 
     def upload_base64_profile(self, profile_base64: str, firebase_path: str) -> Optional[str]:
         """
@@ -384,7 +417,7 @@ class FirebaseService:
             logger.error(f"❌ Firebase base64 profile upload failed: {e}")
             return None
 
-    def upload_voice_profile(self, voice_id: str, profile_filename: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
+    def upload_voice_profile(self, voice_id: str, profile_filename: str, language: str = "en", is_kids_voice: bool = False, *, user_id: Optional[str] = None, voice_name: Optional[str] = None) -> Optional[str]:
         """
         Upload voice profile from RunPod to Firebase
         
@@ -397,12 +430,27 @@ class FirebaseService:
         runpod_path = f"/voice_profiles/{profile_filename}"
         
         # Build Firebase path based on language and kids voice
+        safe_name = (voice_name or voice_id or "voice").lower().replace(" ", "_")
         if is_kids_voice:
-            firebase_path = f"audio/voices/{language}/kids/profiles/{voice_id}_{profile_filename}"
+            firebase_path = f"audio/voices/{language}/kids/profiles/voice_{safe_name}_{user_id or 'user'}.npy"
         else:
-            firebase_path = f"audio/voices/{language}/profiles/{voice_id}_{profile_filename}"
-        
-        return self.upload_from_runpod_directory(runpod_path, firebase_path)
+            firebase_path = f"audio/voices/{language}/profiles/voice_{safe_name}_{user_id or 'user'}.npy"
+
+        url = self.upload_from_runpod_directory(runpod_path, firebase_path)
+        if url:
+            try:
+                blob = self.bucket.blob(firebase_path)
+                blob.metadata = {
+                    "user_id": user_id or "",
+                    "voice_id": voice_id,
+                    "voice_name": voice_name or safe_name,
+                    "language": language,
+                    "is_kids_voice": str(bool(is_kids_voice)).lower(),
+                }
+                blob.patch()
+            except Exception as e:
+                logger.warning(f"⚠️ Could not set metadata for {firebase_path}: {e}")
+        return url
 
     def upload_base64_audio(self, audio_base64: str, firebase_path: str) -> Optional[str]:
         """

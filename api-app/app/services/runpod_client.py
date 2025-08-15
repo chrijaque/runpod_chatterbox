@@ -113,6 +113,8 @@ class RunPodClient:
                         "language": language,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
+                        # New naming hints
+                        "voice_name": name,
                     },
                 }
             }
@@ -171,7 +173,8 @@ class RunPodClient:
     def generate_tts_with_context(self, voice_id: str, text: str, profile_base64: str, response_format: str = "base64", 
                                  language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
                                  model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
-                                 profile_path: Optional[str] = None, callback_url: Optional[str] = None) -> Dict[str, Any]:
+                                 profile_path: Optional[str] = None, callback_url: Optional[str] = None,
+                                 story_name: Optional[str] = None, output_basename: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -207,6 +210,8 @@ class RunPodClient:
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
                     "callback_url": callback_url,
+                    "story_name": story_name,
+                    "output_basename": output_basename,
                 },
                 "input": {
                     "voice_id": voice_id,
@@ -221,6 +226,8 @@ class RunPodClient:
                     # Duplicate identifiers at top level for handlers that don't look into metadata
                     "user_id": user_id,
                     "story_id": story_id,
+                    "story_name": story_name,
+                    "output_basename": output_basename,
                     # Nested metadata for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
@@ -230,6 +237,8 @@ class RunPodClient:
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
                         "callback_url": callback_url,
+                        "story_name": story_name,
+                        "output_basename": output_basename,
                     },
                 }
             }
