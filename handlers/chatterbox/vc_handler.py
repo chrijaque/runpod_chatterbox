@@ -369,51 +369,7 @@ def handle_voice_clone_request(input, responseFormat):
             pass
         logger.info(f"📤 Voice clone completed successfully")
 
-        # Post-process: rename uploaded files to standardized names if needed
-        try:
-            # Build common pieces
-            import re
-            safe_name = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_') or 'voice'
-            kids_prefix = 'kids/' if is_kids_voice else ''
-            # Defaults used by model
-            old_profile = f"audio/voices/{language}/{kids_prefix}profiles/voice_{safe_name}.npy"
-            old_sample = f"audio/voices/{language}/{kids_prefix}samples/voice_{safe_name}_sample.mp3"
-            old_recorded = f"audio/voices/{language}/recorded/voice_{safe_name}_recorded.wav"
-
-            # Desired names (use hints when provided)
-            target_profile_name = profile_filename_hint or f"voice_{safe_name}_{user_id or 'user'}.npy"
-            target_sample_name = sample_filename_hint or f"sample_{safe_name}_{user_id or 'user'}.mp3"
-            target_recorded_name = f"recording_{safe_name}_{user_id or 'user'}.wav"
-
-            new_profile = f"audio/voices/{language}/{kids_prefix}profiles/{target_profile_name}"
-            new_sample = f"audio/voices/{language}/{kids_prefix}samples/{target_sample_name}"
-            new_recorded = f"audio/voices/{language}/recorded/{target_recorded_name}"
-
-            common_metadata = {
-                'user_id': user_id or '',
-                'voice_id': voice_id,
-                'voice_name': name,
-                'language': language,
-                'is_kids_voice': str(bool(is_kids_voice)).lower(),
-            }
-
-            # Rename profile
-            rename_in_firebase(old_profile, new_profile, metadata=common_metadata, content_type='application/octet-stream')
-            # Rename sample
-            rename_in_firebase(old_sample, new_sample, metadata=common_metadata, content_type='audio/mpeg')
-            # If model uploaded cleaned recorded under default name, rename it too
-            rename_in_firebase(old_recorded, new_recorded, metadata=common_metadata, content_type='audio/wav')
-
-            # Attach new paths into result for callers
-            if isinstance(result, dict):
-                result.setdefault('metadata', {})
-                result['profile_path'] = new_profile
-                result['sample_audio_path'] = new_sample
-                # recorded_audio_path may have been set earlier from audio_path; keep pointer if provided
-                if not audio_path:
-                    result['recorded_audio_path'] = new_recorded
-        except Exception as post_e:
-            logger.warning(f"⚠️ Post-process rename failed: {post_e}")
+        # No post-process renaming: model now uploads with standardized names directly
 
         return result
 
