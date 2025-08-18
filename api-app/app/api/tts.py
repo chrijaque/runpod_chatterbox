@@ -89,51 +89,17 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
             logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
             logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
         
-        # Wait for job completion like voice cloning does
-        if result.get("status") in ["IN_QUEUE", "IN_PROGRESS"]:
+        # Return immediately when job is queued (like voice cloning)
+        if result.get("status") in ["IN_QUEUE", "IN_PROGRESS"] and result.get("id"):
             job_id = result.get("id")
-            logger.info(f"⏳ TTS job queued with ID: {job_id}, waiting for completion...")
+            logger.info(f"⏳ TTS job queued with ID: {job_id}, returning immediately...")
             
-            # Wait for job completion (like voice cloning)
-            import time
-            max_wait_time = 60  # 60 seconds timeout
-            wait_time = 0
-            
-            while wait_time < max_wait_time:
-                try:
-                    job_status = runpod_client.get_job_status(runpod_client.tts_endpoint_id, job_id)
-                    logger.info(f"📊 Job status check: {job_status.get('status')}")
-                    
-                    if job_status.get("status") == "COMPLETED":
-                        # Job completed successfully
-                        output = job_status.get("output", {})
-                        audio_path = output.get("audio_path")
-                        metadata = output.get("metadata", {})
-                        
-                        logger.info(f"✅ TTS generation completed successfully")
-                        logger.info(f"🎵 Audio path: {audio_path}")
-                        
-                        return TTSGenerateResponse(
-                            status="success",
-                            audio_path=audio_path,
-                            metadata=metadata
-                        )
-                    elif job_status.get("status") == "FAILED":
-                        error = job_status.get("error", "Unknown error")
-                        logger.error(f"❌ TTS job failed: {error}")
-                        raise HTTPException(status_code=500, detail=f"TTS generation failed: {error}")
-                    
-                    # Wait 2 seconds before checking again
-                    time.sleep(2)
-                    wait_time += 2
-                    
-                except Exception as e:
-                    logger.error(f"❌ Error checking job status: {str(e)}")
-                    raise HTTPException(status_code=500, detail=f"Failed to check job status: {str(e)}")
-            
-            # Timeout reached
-            logger.error(f"❌ TTS generation timeout after {max_wait_time} seconds")
-            raise HTTPException(status_code=500, detail="TTS generation timeout")
+            # Return quickly after dispatching job; UI will listen to Firestore updates via callback
+            return TTSGenerateResponse(
+                status="queued",
+                job_id=job_id,
+                metadata={"message": "TTS generation job queued successfully"}
+            )
         elif result.get("status") == "success":
             logger.info("✅ TTS generation completed successfully")
             

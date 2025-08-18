@@ -41,6 +41,7 @@ class TTSGenerateRequest(BaseModel):
 
 class TTSGenerateResponse(BaseModel):
     status: str
+    job_id: Optional[str] = None
     audio_path: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
