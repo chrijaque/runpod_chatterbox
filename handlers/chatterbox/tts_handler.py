@@ -683,12 +683,15 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
             return None
         # Perform copy
         new_blob = bucket.copy_blob(src_blob, bucket, dest_path)
-        # Set metadata if provided
+        # Set metadata/content type and persist
         if metadata:
             new_blob.metadata = metadata
-        # Set content type if provided
         if content_type:
             new_blob.content_type = content_type
+        try:
+            new_blob.patch()
+        except Exception as patch_e:
+            logger.warning(f"⚠️ Could not patch metadata for {dest_path}: {patch_e}")
         new_blob.make_public()
         # Delete original
         try:
@@ -903,12 +906,12 @@ def handler(event, responseFormat="base64"):
                             firebase_path,
                             target_path,
                             metadata={
-                                'user_id': user_id or '',
-                                'story_id': story_id or '',
-                                'voice_id': voice_id or '',
-                                'language': language,
-                                'story_type': story_type,
-                                'story_name': safe_story,
+                                'user_id': (user_id or ''),
+                                'story_id': (story_id or ''),
+                                'voice_id': (voice_id or ''),
+                                'language': (language or ''),
+                                'story_type': (story_type or ''),
+                                'story_name': (safe_story or ''),
                             },
                             content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav'
                         )
@@ -916,6 +919,29 @@ def handler(event, responseFormat="base64"):
                             result['firebase_path'] = target_path
                             result['firebase_url'] = new_url
                             result['audio_url'] = new_url
+                        else:
+                            # Persist metadata on the original blob as a fallback
+                            try:
+                                global bucket
+                                if bucket is None:
+                                    initialize_firebase()
+                                if bucket is not None:
+                                    b = bucket.blob(firebase_path)
+                                    if b.exists():
+                                        b.metadata = {
+                                            'user_id': (user_id or ''),
+                                            'story_id': (story_id or ''),
+                                            'voice_id': (voice_id or ''),
+                                            'language': (language or ''),
+                                            'story_type': (story_type or ''),
+                                            'story_name': (safe_story or ''),
+                                        }
+                                        try:
+                                            b.patch()
+                                        except Exception:
+                                            pass
+                            except Exception as meta_e:
+                                logger.warning(f"⚠️ Could not set metadata on original blob: {meta_e}")
         except Exception as post_e:
             logger.warning(f"⚠️ TTS post-process rename failed: {post_e}")
         # If callback_url provided, post completion payload
