@@ -352,8 +352,8 @@ class FirebaseService:
         safe_story = (story_name or generation_id or "story").lower().replace(" ", "_")
         base = output_basename or f"{safe_story}_{voice_id or 'voice'}_{story_type}"
         ext = tts_filename.split('.')[-1].lower() if '.' in tts_filename else 'mp3'
-        # Include user_id segment for access control in main app
-        firebase_path = f"audio/stories/{language}/{(user_id or 'user')}/{story_type}/{base}.{ext}"
+        # Include user_id segment under story_type: audio/stories/{language}/user/{user_id}/{file}
+        firebase_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{base}.{ext}"
 
         url = self.upload_from_runpod_directory(runpod_path, firebase_path)
         if url:

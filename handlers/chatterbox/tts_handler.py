@@ -896,8 +896,8 @@ def handler(event, responseFormat="base64"):
                 # Build target path
                 if firebase_path:
                     ext = firebase_path.split('.')[-1].lower() if '.' in firebase_path else 'mp3'
-                    # Include user_id in the storage path for main app access control
-                    target_path = f"audio/stories/{language}/{(user_id or 'user')}/{story_type}/{base}.{ext}"
+                    # Store under audio/stories/{language}/user/{user_id}/{file}
+                    target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{base}.{ext}"
                     if target_path != firebase_path:
                         new_url = rename_in_firebase(
                             firebase_path,
