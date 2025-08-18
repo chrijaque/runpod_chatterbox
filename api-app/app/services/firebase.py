@@ -335,7 +335,7 @@ class FirebaseService:
                 logger.warning(f"⚠️ Could not set metadata for {firebase_path}: {e}")
         return url
 
-    def upload_runpod_tts_generation(self, generation_id: str, tts_filename: str, language: str = "en", is_kids_voice: bool = False, story_type: str = "user", *, user_id: Optional[str] = None, voice_id: Optional[str] = None, voice_name: Optional[str] = None, story_name: Optional[str] = None, output_basename: Optional[str] = None) -> Optional[str]:
+    def upload_runpod_tts_generation(self, generation_id: str, tts_filename: str, language: str = "en", is_kids_voice: bool = False, story_type: str = "user", *, user_id: Optional[str] = None, voice_id: Optional[str] = None, voice_name: Optional[str] = None, story_name: Optional[str] = None, output_basename: Optional[str] = None, story_id: Optional[str] = None) -> Optional[str]:
         """
         Upload TTS generation from RunPod to Firebase with organized stories structure
         
@@ -352,7 +352,8 @@ class FirebaseService:
         safe_story = (story_name or generation_id or "story").lower().replace(" ", "_")
         base = output_basename or f"{safe_story}_{voice_id or 'voice'}_{story_type}"
         ext = tts_filename.split('.')[-1].lower() if '.' in tts_filename else 'mp3'
-        firebase_path = f"audio/stories/{language}/{story_type}/{base}.{ext}"
+        # Include user_id segment for access control in main app
+        firebase_path = f"audio/stories/{language}/{(user_id or 'user')}/{story_type}/{base}.{ext}"
 
         url = self.upload_from_runpod_directory(runpod_path, firebase_path)
         if url:
@@ -360,6 +361,7 @@ class FirebaseService:
                 blob = self.bucket.blob(firebase_path)
                 blob.metadata = {
                     "user_id": user_id or "",
+                    "story_id": story_id or "",
                     "voice_id": voice_id or "",
                     "voice_name": voice_name or "",
                     "language": language,

@@ -879,6 +879,7 @@ def handler(event, responseFormat="base64"):
                 story_type = event["input"].get("story_type", "user")
                 language = event["input"].get("language", "en")
                 story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                story_id = api_metadata.get("story_id") or event["input"].get("story_id")
                 output_basename = api_metadata.get("output_basename") or event["input"].get("output_basename")
                 if not story_name and output_basename:
                     story_name = output_basename.split("_")[0]
@@ -895,15 +896,22 @@ def handler(event, responseFormat="base64"):
                 # Build target path
                 if firebase_path:
                     ext = firebase_path.split('.')[-1].lower() if '.' in firebase_path else 'mp3'
-                    target_path = f"audio/stories/{language}/{story_type}/{base}.{ext}"
+                    # Include user_id in the storage path for main app access control
+                    target_path = f"audio/stories/{language}/{(user_id or 'user')}/{story_type}/{base}.{ext}"
                     if target_path != firebase_path:
-                        new_url = rename_in_firebase(firebase_path, target_path, metadata={
-                            'user_id': user_id or '',
-                            'voice_id': voice_id or '',
-                            'language': language,
-                            'story_type': story_type,
-                            'story_name': safe_story,
-                        }, content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav')
+                        new_url = rename_in_firebase(
+                            firebase_path,
+                            target_path,
+                            metadata={
+                                'user_id': user_id or '',
+                                'story_id': story_id or '',
+                                'voice_id': voice_id or '',
+                                'language': language,
+                                'story_type': story_type,
+                                'story_name': safe_story,
+                            },
+                            content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav'
+                        )
                         if new_url:
                             result['firebase_path'] = target_path
                             result['firebase_url'] = new_url
@@ -915,8 +923,8 @@ def handler(event, responseFormat="base64"):
             if callback_url and isinstance(result, dict) and result.get("status") == "success":
                 import requests
                 payload = {
-                    "story_id": api_metadata.get("story_id") or event["input"].get("story_id"),
-                    "user_id": api_metadata.get("user_id") or event["input"].get("user_id"),
+                    "story_id": story_id,
+                    "user_id": user_id,
                     "voice_id": voice_id,
                     "audio_url": result.get("firebase_url") or result.get("audio_url") or result.get("audio_path"),
                     "storage_path": result.get("firebase_path"),
