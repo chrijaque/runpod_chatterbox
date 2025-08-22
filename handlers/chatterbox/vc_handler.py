@@ -4,10 +4,6 @@ import os
 import tempfile
 import base64
 import logging
-import sys
-import glob
-import pathlib
-import shutil
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -18,34 +14,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 """Minimal, production-focused VC handler for RunPod runtime."""
-
-def clear_python_cache():
-    """Clear all Python cache files to force fresh loading."""
-    logger.info("🧹 Clearing Python cache...")
-    
-    # Remove .pyc files
-    pyc_files = glob.glob("/workspace/**/*.pyc", recursive=True)
-    for pyc_file in pyc_files:
-        try:
-            os.remove(pyc_file)
-        except Exception as e:
-            logger.warning(f"  - Failed to remove {pyc_file}: {e}")
-    
-    # Remove __pycache__ directories
-    pycache_dirs = list(pathlib.Path("/workspace").rglob("__pycache__"))
-    for pycache_dir in pycache_dirs:
-        try:
-            shutil.rmtree(pycache_dir)
-        except Exception as e:
-            logger.warning(f"  - Failed to remove {pycache_dir}: {e}")
-    
-    # Clear sys.modules for chatterbox
-    modules_to_clear = [name for name in sys.modules.keys() if 'chatterbox' in name]
-    for module_name in modules_to_clear:
-        del sys.modules[module_name]
-
-# Clear cache BEFORE importing any chatterbox modules
-clear_python_cache()
 
 # Import the models from the forked repository
 try:
@@ -80,146 +48,7 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
-# Update repository to latest commit BEFORE initializing models
-logger.info("🔧 Updating repository to latest commit...")
-try:
-    import subprocess
-    import os
-    
-    # Find the chatterbox_embed directory
-    chatterbox_embed_path = None
-    for root, dirs, files in os.walk("/workspace"):
-        if "chatterbox_embed" in dirs:
-            chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
-            break
-    
-    if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
-        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
-        
-        # Check if it's a git repository
-        git_dir = os.path.join(chatterbox_embed_path, ".git")
-        if os.path.exists(git_dir):
-            logger.info("✅ Found .git directory - updating to latest commit...")
-            
-            # Get current commit hash
-            try:
-                result = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=chatterbox_embed_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=10
-                )
-                if result.returncode == 0:
-                    old_commit_hash = result.stdout.strip()
-                    logger.info(f"🔍 Current commit: {old_commit_hash}")
-                else:
-                    logger.warning(f"⚠️ Could not get current commit: {result.stderr}")
-                    old_commit_hash = "unknown"
-            except Exception as e:
-                logger.warning(f"⚠️ Error getting current commit: {e}")
-                old_commit_hash = "error"
-            
-            # Fetch latest changes
-            try:
-                logger.info("🔄 Fetching latest changes...")
-                result = subprocess.run(
-                    ["git", "fetch", "origin"],
-                    cwd=chatterbox_embed_path,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                if result.returncode == 0:
-                    logger.info("✅ Successfully fetched latest changes")
-                    
-                    # Get the default branch
-                    result = subprocess.run(
-                        ["git", "remote", "show", "origin"],
-                        cwd=chatterbox_embed_path,
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                    if result.returncode == 0:
-                        for line in result.stdout.split('\n'):
-                            if 'HEAD branch' in line:
-                                default_branch = line.split()[-1]
-                                logger.info(f"🔍 Default branch: {default_branch}")
-                                
-                                # Check what's in the remote branch
-                                result = subprocess.run(
-                                    ["git", "rev-parse", f"origin/{default_branch}"],
-                                    cwd=chatterbox_embed_path,
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=10
-                                )
-                                if result.returncode == 0:
-                                    remote_commit = result.stdout.strip()
-                                    logger.info(f"🔍 Remote {default_branch} commit: {remote_commit}")
-                                    
-                                    # Reset to latest commit
-                                    logger.info(f"🔍 Resetting to origin/{default_branch}...")
-                                    result = subprocess.run(
-                                        ["git", "reset", "--hard", f"origin/{default_branch}"],
-                                        cwd=chatterbox_embed_path,
-                                        capture_output=True,
-                                        text=True,
-                                        timeout=30
-                                    )
-                                    if result.returncode == 0:
-                                        logger.info(f"✅ Successfully reset to latest {default_branch}")
-                                        
-                                        # Get new commit hash
-                                        result = subprocess.run(
-                                            ["git", "rev-parse", "HEAD"],
-                                            cwd=chatterbox_embed_path,
-                                            capture_output=True,
-                                            text=True,
-                                            timeout=10
-                                        )
-                                        if result.returncode == 0:
-                                            new_commit_hash = result.stdout.strip()
-                                            logger.info(f"🆕 New commit hash: {new_commit_hash}")
-                                            
-                                            if new_commit_hash != old_commit_hash:
-                                                logger.info("🔄 Repository updated to latest commit!")
-                                                
-                                                # Reload the chatterbox modules to use the updated code
-                                                logger.info("🔄 Reloading chatterbox modules...")
-                                                modules_to_reload = [name for name in sys.modules.keys() if 'chatterbox' in name]
-                                                for module_name in modules_to_reload:
-                                                    del sys.modules[module_name]
-                                                
-                                                # Re-import the models
-                                                try:
-                                                    from chatterbox.vc import ChatterboxVC
-                                                    from chatterbox.tts import ChatterboxTTS
-                                                    logger.info("✅ Successfully re-imported models after update")
-                                                except ImportError as e:
-                                                    logger.warning(f"⚠️ Failed to re-import models: {e}")
-                                            else:
-                                                logger.info("✅ Already at latest commit")
-                                        else:
-                                            logger.warning(f"⚠️ Failed to get new commit hash: {result.stderr}")
-                                    else:
-                                        logger.warning(f"⚠️ Failed to reset to latest: {result.stderr}")
-                                else:
-                                    logger.warning(f"⚠️ Could not get remote commit: {result.stderr}")
-                                break
-                        else:
-                            logger.warning(f"⚠️ Could not determine default branch: {result.stderr}")
-                    else:
-                        logger.warning(f"⚠️ Failed to fetch latest changes: {result.stderr}")
-            except Exception as e:
-                logger.warning(f"⚠️ Error updating repository: {e}")
-        else:
-            logger.warning("⚠️ No .git directory found - not a git repository")
-    else:
-        logger.warning("⚠️ Could not find chatterbox_embed directory")
-except Exception as e:
-    logger.error(f"❌ Error during repository update: {e}")
+ 
 
 # Initialize models AFTER repository update
 logger.info("🔧 Initializing models...")
@@ -232,24 +61,6 @@ try:
         # Initialize VC model using the correct method
         vc_model = ChatterboxVC.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxVC ready")
-
-        # Final Git status check
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd="/workspace/chatterbox_embed",
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode == 0:
-                final_commit = result.stdout.strip()
-                logger.info(f"🎯 Final commit hash: {final_commit}")
-            else:
-                logger.warning(f"⚠️ Could not get final commit: {result.stderr}")
-        except Exception as e:
-            logger.warning(f"⚠️ Error getting final commit: {e}")
 
         
         
