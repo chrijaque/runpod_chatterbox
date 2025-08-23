@@ -4,6 +4,11 @@ import os
 import tempfile
 import base64
 import logging
+import hmac
+import hashlib
+import json
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -290,6 +295,7 @@ def handle_voice_clone_request(input, responseFormat):
     sample_filename_hint = input.get('sample_filename') or meta_top.get('sample_filename')
     output_basename_hint = input.get('output_basename') or meta_top.get('output_basename')
     user_id = input.get('user_id') or meta_top.get('user_id')
+    callback_url = input.get('callback_url') or meta_top.get('callback_url')
 
     if not name or (not audio_data and not audio_path):
         return {"status": "error", "message": "name and either audio_data or audio_path are required"}
@@ -299,21 +305,26 @@ def handle_voice_clone_request(input, responseFormat):
     logger.info(f"Language: {language}, Kids voice: {is_kids_voice}")
     
     try:
-        # Generate a unique voice ID based on the name
-        voice_id = get_voice_id(name)
-        logger.info(f"Generated voice ID: {voice_id}")
+        # Honor server-provided voice_id; fallback to legacy generation only if missing
+        voice_id = input.get('voice_id') or meta_top.get('voice_id')
+        if not voice_id:
+            voice_id = get_voice_id(name)
+            logger.info(f"No voice_id provided; generated legacy id: {voice_id}")
+        else:
+            logger.info(f"Using provided voice_id: {voice_id}")
 
-        # Build standardized filenames from name + user_id (unless caller provided explicit hints)
+        # Enforce deterministic filenames: {voiceId}.npy|.mp3; recorded filename is only a local temp hint
         try:
+            target_profile_name = profile_filename_hint or f"{voice_id}.npy"
+            target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
+            # Local recorded filename hint (if needed when pointer not provided)
             import re
             safe_name = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_') or 'voice'
             safe_user = re.sub(r'[^a-z0-9]+', '', (user_id or 'user').lower()) or 'user'
-            target_profile_name = profile_filename_hint or f"voice_{safe_name}_{safe_user}.npy"
-            target_sample_name = sample_filename_hint or f"sample_{safe_name}_{safe_user}.mp3"
             target_recorded_name = f"recording_{safe_name}_{safe_user}.wav"
         except Exception:
-            target_profile_name = profile_filename_hint or None
-            target_sample_name = sample_filename_hint or None
+            target_profile_name = profile_filename_hint or f"{voice_id}.npy"
+            target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
             target_recorded_name = None
         
         # Prepare a local temp file from either base64 data or Firebase path
@@ -360,6 +371,14 @@ def handle_voice_clone_request(input, responseFormat):
             'profile_filename': target_profile_name,
             'sample_filename': target_sample_name,
             'recorded_filename': target_recorded_name,
+            # Strong metadata contract for Storage uploads downstream
+            'metadata': {
+                'user_id': input.get('user_id') or '',
+                'voice_id': voice_id,
+                'voice_name': name,
+                'language': language,
+                'is_kids_voice': str(is_kids_voice).lower(),
+            }
         }
         
         # Call the VC model - it handles everything!
@@ -388,6 +407,29 @@ def handle_voice_clone_request(input, responseFormat):
 
         # No post-process renaming: model now uploads with standardized names directly
 
+        # Attempt callback on success
+        try:
+            if callback_url:
+                try:
+                    # Build storage paths per contract
+                    kids_segment = 'kids/' if is_kids_voice else ''
+                    profile_path = f"audio/voices/{language}/{kids_segment}profiles/{voice_id}.npy"
+                    sample_path = f"audio/voices/{language}/{kids_segment}samples/{voice_id}.mp3"
+                    payload = {
+                        'status': 'success',
+                        'user_id': user_id,
+                        'voice_id': voice_id,
+                        'voice_name': name,
+                        'language': language,
+                        'profile_path': profile_path,
+                        'sample_path': sample_path,
+                    }
+                    _post_signed_callback(callback_url, payload)
+                except Exception as cb_e:
+                    logger.warning(f"⚠️ Success callback failed: {cb_e}")
+        except Exception:
+            pass
+
         return result
 
     except Exception as e:
@@ -397,7 +439,47 @@ def handle_voice_clone_request(input, responseFormat):
                 os.unlink(temp_voice_file)
             except:
                 pass
+        # Attempt error callback
+        try:
+            if 'callback_url' in locals() and callback_url:
+                try:
+                    payload = {
+                        'status': 'error',
+                        'user_id': user_id,
+                        'voice_id': input.get('voice_id') or meta_top.get('voice_id') or '',
+                        'voice_name': name,
+                        'language': language,
+                        'error': str(e),
+                    }
+                    _post_signed_callback(callback_url, payload)
+                except Exception as cb_e:
+                    logger.warning(f"⚠️ Error callback failed: {cb_e}")
+        except Exception:
+            pass
         return {"status": "error", "message": str(e)}
+
+
+def _post_signed_callback(callback_url: str, payload: dict):
+    """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+    secret = os.getenv('DAEZEND_API_SHARED_SECRET')
+    if not secret:
+        raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+
+    parsed = urlparse(callback_url)
+    path_for_signing = parsed.path or '/api/voice-clone/callback'
+    ts = str(int(time.time() * 1000))
+    body_bytes = json.dumps(payload).encode('utf-8')
+    prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
+    message = prefix + body_bytes
+    sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+
+    req = Request(callback_url, data=body_bytes, headers={
+        'Content-Type': 'application/json',
+        'X-Daezend-Timestamp': ts,
+        'X-Daezend-Signature': sig,
+    }, method='POST')
+    with urlopen(req, timeout=15) as resp:
+        _ = resp.read()
 
 if __name__ == '__main__':
     logger.info("🚀 Voice Clone Handler starting...")
