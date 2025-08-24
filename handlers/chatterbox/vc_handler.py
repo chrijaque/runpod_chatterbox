@@ -153,12 +153,63 @@ except Exception as e:
 # 🐞  Firebase / GCS credential debug helper
 # -------------------------------------------------------------------
 def _debug_gcs_creds():
-    """Minimal Firebase credential check (kept for quick diagnostics)."""
+    """Comprehensive Firebase credential check and validation."""
+    logger.info("🔍 ===== FIREBASE CREDENTIAL VALIDATION =====")
     try:
         firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        logger.info("Firebase secret present: %s", bool(firebase_secret_path))
-    except Exception:
-        pass
+        logger.info(f"🔑 Firebase secret present: {bool(firebase_secret_path)}")
+        logger.info(f"🔑 Firebase secret length: {len(firebase_secret_path) if firebase_secret_path else 0}")
+        
+        if firebase_secret_path:
+            # Check if it's JSON content
+            if firebase_secret_path.startswith('{'):
+                logger.info("🔑 Firebase secret appears to be JSON content")
+                try:
+                    import json
+                    cred_data = json.loads(firebase_secret_path)
+                    logger.info(f"🔑 JSON validation: SUCCESS")
+                    logger.info(f"🔑 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
+                    logger.info(f"🔑 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
+                    logger.info(f"🔑 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
+                    logger.info(f"🔑 Type: {cred_data.get('type', 'NOT FOUND')}")
+                    
+                    # Check for required fields
+                    required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+                    missing_fields = [field for field in required_fields if field not in cred_data]
+                    if missing_fields:
+                        logger.error(f"❌ Missing required credential fields: {missing_fields}")
+                    else:
+                        logger.info("✅ All required credential fields present")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Firebase secret JSON is invalid: {e}")
+                except Exception as e:
+                    logger.error(f"❌ Error parsing Firebase secret: {e}")
+            else:
+                logger.info("🔑 Firebase secret appears to be a file path")
+                if os.path.exists(firebase_secret_path):
+                    logger.info(f"✅ Firebase secret file exists: {firebase_secret_path}")
+                    try:
+                        with open(firebase_secret_path, 'r') as f:
+                            content = f.read()
+                            logger.info(f"🔑 File content length: {len(content)}")
+                            logger.info(f"🔑 File content preview: {content[:100]}...")
+                    except Exception as e:
+                        logger.error(f"❌ Error reading Firebase secret file: {e}")
+                else:
+                    logger.error(f"❌ Firebase secret file does not exist: {firebase_secret_path}")
+        else:
+            logger.error("❌ RUNPOD_SECRET_Firebase environment variable not set")
+            
+        # Check bucket identifier
+        bucket_name = "godnathistorie-a25fa.firebasestorage.app"
+        logger.info(f"🔑 Bucket identifier: {bucket_name}")
+        logger.info(f"🔑 Bucket project ID: {bucket_name.replace('.firebasestorage.app', '')}")
+        
+    except Exception as e:
+        logger.error(f"❌ Firebase credential validation failed: {e}")
+    
+    logger.info("🔍 ===== END FIREBASE CREDENTIAL VALIDATION =====")
 
 def initialize_firebase():
     """Initialize Firebase storage client"""
@@ -223,6 +274,14 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         # Make the blob publicly accessible
         blob.make_public()
         
+        # CRITICAL: Patch metadata to ensure persistence
+        if metadata:
+            try:
+                blob.patch()
+                logger.info(f"✅ Metadata patched successfully for: {destination_blob_name}")
+            except Exception as patch_e:
+                logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
+        
         public_url = blob.public_url
         logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
         return public_url
@@ -250,10 +309,20 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
         # Set metadata if provided
         if metadata:
             new_blob.metadata = metadata
+            logger.info(f"🔍 Set metadata on renamed blob: {metadata}")
         # Set content type if provided
         if content_type:
             new_blob.content_type = content_type
         new_blob.make_public()
+        
+        # CRITICAL: Patch metadata to ensure persistence
+        if metadata:
+            try:
+                new_blob.patch()
+                logger.info(f"✅ Metadata patched successfully for renamed blob: {dest_path}")
+            except Exception as patch_e:
+                logger.error(f"❌ Failed to patch metadata for renamed blob {dest_path}: {patch_e}")
+        
         # Delete original
         try:
             src_blob.delete()
@@ -339,6 +408,23 @@ def handle_voice_clone_request(input, responseFormat):
     """Pure API orchestration: Handle voice cloning requests"""
     global vc_model
     
+    # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
+    logger.info("🔍 ===== VC HANDLER INPUT PARAMETERS =====")
+    logger.info(f"📥 Raw input keys: {list(input.keys())}")
+    logger.info(f"📥 Input type: {type(input)}")
+    
+    # Log all input parameters
+    for key, value in input.items():
+        if key == 'audio_data' and value:
+            logger.info(f"📥 {key}: [BASE64 DATA] Length: {len(value)} chars")
+        elif isinstance(value, dict):
+            logger.info(f"📥 {key}: {type(value)} with keys: {list(value.keys())}")
+        else:
+            logger.info(f"📥 {key}: {value}")
+    
+    # ===== FIREBASE CREDENTIAL VALIDATION =====
+    _debug_gcs_creds()
+    
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
@@ -366,6 +452,24 @@ def handle_voice_clone_request(input, responseFormat):
     output_basename_hint = input.get('output_basename') or meta_top.get('output_basename')
     user_id = input.get('user_id') or meta_top.get('user_id')
     callback_url = input.get('callback_url') or meta_top.get('callback_url')
+    
+    # ===== METADATA BREAKDOWN LOGGING =====
+    logger.info("🔍 ===== METADATA BREAKDOWN =====")
+    logger.info(f"📋 Top-level metadata: {meta_top}")
+    logger.info(f"📋 Top-level metadata type: {type(meta_top)}")
+    logger.info(f"📋 Top-level metadata keys: {list(meta_top.keys()) if isinstance(meta_top, dict) else 'Not a dict'}")
+    
+    # Log nested metadata if it exists
+    nested_metadata = input.get('metadata', {})
+    if isinstance(nested_metadata, dict):
+        logger.info(f"📋 Nested metadata: {nested_metadata}")
+        logger.info(f"📋 Nested metadata keys: {list(nested_metadata.keys())}")
+        for key, value in nested_metadata.items():
+            logger.info(f"📋   {key}: {value} (type: {type(value)})")
+    else:
+        logger.info(f"📋 Nested metadata: {nested_metadata} (type: {type(nested_metadata)})")
+    
+    logger.info("🔍 ===== END METADATA BREAKDOWN =====")
 
     if not name or (not audio_data and not audio_path):
         return {"status": "error", "message": "name and either audio_data or audio_path are required"}
@@ -427,6 +531,9 @@ def handle_voice_clone_request(input, responseFormat):
         # Call the VC model's create_voice_clone method
         logger.info("🔄 Calling VC model's create_voice_clone method...")
         
+        # ===== API METADATA PREPARATION LOGGING =====
+        logger.info("🔍 ===== API METADATA PREPARATION =====")
+        
         # Prepare API metadata including language and kids voice flag
         api_metadata = {
             'user_id': input.get('user_id'),
@@ -450,6 +557,22 @@ def handle_voice_clone_request(input, responseFormat):
                 'is_kids_voice': str(is_kids_voice).lower(),
             }
         }
+        
+        logger.info(f"📋 API metadata prepared: {api_metadata}")
+        logger.info(f"📋 API metadata type: {type(api_metadata)}")
+        logger.info(f"📋 API metadata keys: {list(api_metadata.keys())}")
+        
+        # Log nested metadata structure
+        nested_metadata = api_metadata.get('metadata', {})
+        logger.info(f"📋 Nested storage metadata: {nested_metadata}")
+        logger.info(f"📋 Nested storage metadata type: {type(nested_metadata)}")
+        logger.info(f"📋 Nested storage metadata keys: {list(nested_metadata.keys())}")
+        
+        # Log each metadata field with type information
+        for key, value in nested_metadata.items():
+            logger.info(f"📋   Storage metadata {key}: {value} (type: {type(value)})")
+        
+        logger.info("🔍 ===== END API METADATA PREPARATION =====")
         
         # Call the VC model - it handles everything!
         result = call_vc_model_create_voice_clone(
@@ -475,8 +598,85 @@ def handle_voice_clone_request(input, responseFormat):
             pass
         logger.info(f"📤 Voice clone completed successfully")
 
+        # ===== POST-GENERATION METADATA VERIFICATION =====
+        logger.info("🔍 ===== POST-GENERATION METADATA VERIFICATION =====")
+        
+        # Verify metadata was set on uploaded files
+        try:
+            if isinstance(result, dict) and result.get("status") == "success":
+                # Check profile file metadata
+                profile_path = result.get("profile_path")
+                if profile_path:
+                    logger.info(f"🔍 Verifying metadata on profile: {profile_path}")
+                    try:
+                        blob = bucket.blob(profile_path)
+                        if blob.exists():
+                            blob.reload()
+                            actual_metadata = blob.metadata or {}
+                            logger.info(f"📋 Profile metadata found: {actual_metadata}")
+                            expected_metadata = {
+                                'user_id': user_id or '',
+                                'voice_id': voice_id,
+                                'voice_name': name,
+                                'language': language,
+                                'is_kids_voice': str(is_kids_voice).lower(),
+                            }
+                            logger.info(f"📋 Expected profile metadata: {expected_metadata}")
+                            
+                            # Check if metadata matches
+                            if actual_metadata == expected_metadata:
+                                logger.info("✅ Profile metadata matches expected")
+                            else:
+                                logger.warning("⚠️ Profile metadata mismatch, attempting to fix...")
+                                blob.metadata = expected_metadata
+                                blob.patch()
+                                logger.info("✅ Profile metadata fixed")
+                        else:
+                            logger.warning(f"⚠️ Profile blob does not exist: {profile_path}")
+                    except Exception as profile_e:
+                        logger.warning(f"⚠️ Could not verify profile metadata: {profile_e}")
+                
+                # Check sample file metadata
+                sample_path = result.get("sample_path")
+                if sample_path:
+                    logger.info(f"🔍 Verifying metadata on sample: {sample_path}")
+                    try:
+                        blob = bucket.blob(sample_path)
+                        if blob.exists():
+                            blob.reload()
+                            actual_metadata = blob.metadata or {}
+                            logger.info(f"📋 Sample metadata found: {actual_metadata}")
+                            expected_metadata = {
+                                'user_id': user_id or '',
+                                'voice_id': voice_id,
+                                'voice_name': name,
+                                'language': language,
+                                'is_kids_voice': str(is_kids_voice).lower(),
+                            }
+                            logger.info(f"📋 Expected sample metadata: {expected_metadata}")
+                            
+                            # Check if metadata matches
+                            if actual_metadata == expected_metadata:
+                                logger.info("✅ Sample metadata matches expected")
+                            else:
+                                logger.warning("⚠️ Sample metadata mismatch, attempting to fix...")
+                                blob.metadata = expected_metadata
+                                blob.patch()
+                                logger.info("✅ Sample metadata fixed")
+                        else:
+                            logger.warning(f"⚠️ Sample blob does not exist: {sample_path}")
+                    except Exception as sample_e:
+                        logger.warning(f"⚠️ Could not verify sample metadata: {sample_e}")
+        except Exception as verify_e:
+            logger.warning(f"⚠️ Metadata verification failed: {verify_e}")
+        
+        logger.info("🔍 ===== END POST-GENERATION METADATA VERIFICATION =====")
+        
         # No post-process renaming: model now uploads with standardized names directly
 
+        # ===== SUCCESS CALLBACK LOGGING =====
+        logger.info("🔍 ===== SUCCESS CALLBACK PAYLOAD =====")
+        
         # Attempt callback on success
         try:
             if callback_url:
@@ -494,11 +694,21 @@ def handle_voice_clone_request(input, responseFormat):
                         'profile_path': profile_path,
                         'sample_path': sample_path,
                     }
+                    
+                    logger.info(f"📤 Success callback URL: {callback_url}")
+                    logger.info(f"📤 Success callback payload: {payload}")
+                    logger.info(f"📤 Success callback payload type: {type(payload)}")
+                    logger.info(f"📤 Success callback payload keys: {list(payload.keys())}")
+                    
                     _post_signed_callback(callback_url, payload)
+                    logger.info("✅ Success callback sent successfully")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ Success callback failed: {cb_e}")
-        except Exception:
-            pass
+                    logger.warning(f"⚠️ Success callback exception type: {type(cb_e)}")
+        except Exception as e:
+            logger.warning(f"⚠️ Success callback preparation failed: {e}")
+        
+        logger.info("🔍 ===== END SUCCESS CALLBACK PAYLOAD =====")
 
         return result
 
@@ -509,6 +719,9 @@ def handle_voice_clone_request(input, responseFormat):
                 os.unlink(temp_voice_file)
             except:
                 pass
+        # ===== ERROR CALLBACK LOGGING =====
+        logger.info("🔍 ===== ERROR CALLBACK PAYLOAD =====")
+        
         # Attempt error callback
         try:
             if 'callback_url' in locals() and callback_url:
@@ -521,11 +734,21 @@ def handle_voice_clone_request(input, responseFormat):
                         'language': language,
                         'error': str(e),
                     }
+                    
+                    logger.info(f"📤 Error callback URL: {callback_url}")
+                    logger.info(f"📤 Error callback payload: {payload}")
+                    logger.info(f"📤 Error callback payload type: {type(payload)}")
+                    logger.info(f"📤 Error callback payload keys: {list(payload.keys())}")
+                    
                     _post_signed_callback(callback_url, payload)
+                    logger.info("✅ Error callback sent successfully")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ Error callback failed: {cb_e}")
-        except Exception:
-            pass
+                    logger.warning(f"⚠️ Error callback exception type: {type(cb_e)}")
+        except Exception as callback_prep_e:
+            logger.warning(f"⚠️ Error callback preparation failed: {callback_prep_e}")
+        
+        logger.info("🔍 ===== END ERROR CALLBACK PAYLOAD =====")
         return {"status": "error", "message": str(e)}
 
 

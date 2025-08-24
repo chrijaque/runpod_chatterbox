@@ -139,19 +139,63 @@ except Exception as e:
 # 🐞  Firebase / GCS credential debug helper
 # -------------------------------------------------------------------
 def _debug_gcs_creds():
-    """Minimal Firebase credential check"""
-    import os
-    logger.info("🔍 Firebase credentials check")
-    
-    # Check if RunPod secret is available
-    firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-    if firebase_secret_path:
-        if firebase_secret_path.startswith('{'):
-            logger.info("✅ Using RunPod Firebase secret (JSON content)")
+    """Comprehensive Firebase credential check and validation."""
+    logger.info("🔍 ===== TTS FIREBASE CREDENTIAL VALIDATION =====")
+    try:
+        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
+        logger.info(f"🔑 Firebase secret present: {bool(firebase_secret_path)}")
+        logger.info(f"🔑 Firebase secret length: {len(firebase_secret_path) if firebase_secret_path else 0}")
+        
+        if firebase_secret_path:
+            # Check if it's JSON content
+            if firebase_secret_path.startswith('{'):
+                logger.info("🔑 Firebase secret appears to be JSON content")
+                try:
+                    import json
+                    cred_data = json.loads(firebase_secret_path)
+                    logger.info(f"🔑 JSON validation: SUCCESS")
+                    logger.info(f"🔑 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
+                    logger.info(f"🔑 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
+                    logger.info(f"🔑 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
+                    logger.info(f"🔑 Type: {cred_data.get('type', 'NOT FOUND')}")
+                    
+                    # Check for required fields
+                    required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+                    missing_fields = [field for field in required_fields if field not in cred_data]
+                    if missing_fields:
+                        logger.error(f"❌ Missing required credential fields: {missing_fields}")
+                    else:
+                        logger.info("✅ All required credential fields present")
+                        
+                except json.JSONDecodeError as e:
+                    logger.error(f"❌ Firebase secret JSON is invalid: {e}")
+                except Exception as e:
+                    logger.error(f"❌ Error parsing Firebase secret: {e}")
+            else:
+                logger.info("🔑 Firebase secret appears to be a file path")
+                if os.path.exists(firebase_secret_path):
+                    logger.info(f"✅ Firebase secret file exists: {firebase_secret_path}")
+                    try:
+                        with open(firebase_secret_path, 'r') as f:
+                            content = f.read()
+                            logger.info(f"🔑 File content length: {len(content)}")
+                            logger.info(f"🔑 File content preview: {content[:100]}...")
+                    except Exception as e:
+                        logger.error(f"❌ Error reading Firebase secret file: {e}")
+                else:
+                    logger.error(f"❌ Firebase secret file does not exist: {firebase_secret_path}")
         else:
-            logger.info("✅ Using RunPod Firebase secret (file path)")
-    else:
-        logger.warning("⚠️ No RunPod Firebase secret found")
+            logger.error("❌ RUNPOD_SECRET_Firebase environment variable not set")
+            
+        # Check bucket identifier
+        bucket_name = "godnathistorie-a25fa.firebasestorage.app"
+        logger.info(f"🔑 Bucket identifier: {bucket_name}")
+        logger.info(f"🔑 Bucket project ID: {bucket_name.replace('.firebasestorage.app', '')}")
+        
+    except Exception as e:
+        logger.error(f"❌ Firebase credential validation failed: {e}")
+    
+    logger.info("🔍 ===== END TTS FIREBASE CREDENTIAL VALIDATION =====")
 
 def initialize_firebase():
     """Initialize Firebase storage client"""
@@ -273,6 +317,14 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         
         # Make the blob publicly accessible
         blob.make_public()
+        
+        # CRITICAL: Patch metadata to ensure persistence
+        if metadata:
+            try:
+                blob.patch()
+                logger.info(f"✅ Metadata patched successfully for: {destination_blob_name}")
+            except Exception as patch_e:
+                logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
         
         public_url = blob.public_url
         logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
@@ -401,6 +453,26 @@ def handler(event, responseFormat="base64"):
     """Pure API orchestration: Handle TTS generation requests"""
     global tts_model
     
+    # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
+    logger.info("🔍 ===== TTS HANDLER INPUT PARAMETERS =====")
+    logger.info(f"📥 Raw event keys: {list(event.keys())}")
+    logger.info(f"📥 Event type: {type(event)}")
+    
+    # Log event structure
+    if "input" in event:
+        logger.info(f"📥 Input keys: {list(event['input'].keys())}")
+        for key, value in event["input"].items():
+            if key == 'profile_base64' and value:
+                logger.info(f"📥 {key}: [BASE64 DATA] Length: {len(value)} chars")
+            elif isinstance(value, dict):
+                logger.info(f"📥 {key}: {type(value)} with keys: {list(value.keys())}")
+            else:
+                logger.info(f"📥 {key}: {value}")
+    
+    if "metadata" in event:
+        logger.info(f"📥 Top-level metadata keys: {list(event['metadata'].keys()) if isinstance(event['metadata'], dict) else 'Not a dict'}")
+        logger.info(f"📥 Top-level metadata: {event['metadata']}")
+    
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
@@ -422,6 +494,31 @@ def handler(event, responseFormat="base64"):
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
     callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
+    
+    # ===== METADATA BREAKDOWN LOGGING =====
+    logger.info("🔍 ===== TTS METADATA BREAKDOWN =====")
+    logger.info(f"📋 API metadata: {api_metadata}")
+    logger.info(f"📋 API metadata type: {type(api_metadata)}")
+    logger.info(f"📋 API metadata keys: {list(api_metadata.keys()) if isinstance(api_metadata, dict) else 'Not a dict'}")
+    
+    # Log each metadata field with type information
+    if isinstance(api_metadata, dict):
+        for key, value in api_metadata.items():
+            logger.info(f"📋   API metadata {key}: {value} (type: {type(value)})")
+    
+    # Log top-level metadata
+    top_metadata = event.get("metadata", {})
+    logger.info(f"📋 Top-level metadata: {top_metadata}")
+    logger.info(f"📋 Top-level metadata type: {type(top_metadata)}")
+    if isinstance(top_metadata, dict):
+        logger.info(f"📋 Top-level metadata keys: {list(top_metadata.keys())}")
+        for key, value in top_metadata.items():
+            logger.info(f"📋   Top-level metadata {key}: {value} (type: {type(value)})")
+    
+    logger.info("🔍 ===== END TTS METADATA BREAKDOWN =====")
+    
+    # ===== FIREBASE CREDENTIAL VALIDATION =====
+    _debug_gcs_creds()
     
     if not text or not voice_id:
         return {"status": "error", "message": "Both text and voice_id are required"}
@@ -447,6 +544,50 @@ def handler(event, responseFormat="base64"):
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
+        
+        # ===== POST-GENERATION METADATA VERIFICATION =====
+        logger.info("🔍 ===== TTS POST-GENERATION METADATA VERIFICATION =====")
+        
+        # Verify metadata was set on uploaded files
+        try:
+            if isinstance(result, dict) and result.get("status") == "success":
+                # Check audio file metadata
+                firebase_path = result.get("firebase_path")
+                if firebase_path:
+                    logger.info(f"🔍 Verifying metadata on TTS audio: {firebase_path}")
+                    try:
+                        blob = bucket.blob(firebase_path)
+                        if blob.exists():
+                            blob.reload()
+                            actual_metadata = blob.metadata or {}
+                            logger.info(f"📋 TTS audio metadata found: {actual_metadata}")
+                            expected_metadata = {
+                                'user_id': user_id or '',
+                                'story_id': story_id or '',
+                                'voice_id': voice_id,
+                                'language': language,
+                                'story_type': story_type,
+                                'story_name': story_name or '',
+                            }
+                            logger.info(f"📋 Expected TTS audio metadata: {expected_metadata}")
+                            
+                            # Check if metadata matches
+                            if actual_metadata == expected_metadata:
+                                logger.info("✅ TTS audio metadata matches expected")
+                            else:
+                                logger.warning("⚠️ TTS audio metadata mismatch, attempting to fix...")
+                                blob.metadata = expected_metadata
+                                blob.patch()
+                                logger.info("✅ TTS audio metadata fixed")
+                        else:
+                            logger.warning(f"⚠️ TTS audio blob does not exist: {firebase_path}")
+                    except Exception as audio_e:
+                        logger.warning(f"⚠️ Could not verify TTS audio metadata: {audio_e}")
+        except Exception as verify_e:
+            logger.warning(f"⚠️ TTS metadata verification failed: {verify_e}")
+        
+        logger.info("🔍 ===== END TTS POST-GENERATION METADATA VERIFICATION =====")
+        
         # Post-process: rename output file to requested naming if model saved with default name.
         try:
             if isinstance(result, dict) and result.get("status") == "success":
@@ -519,6 +660,9 @@ def handler(event, responseFormat="base64"):
                                 logger.warning(f"⚠️ Could not set metadata on original blob: {meta_e}")
         except Exception as post_e:
             logger.warning(f"⚠️ TTS post-process rename failed: {post_e}")
+        # ===== TTS SUCCESS CALLBACK LOGGING =====
+        logger.info("🔍 ===== TTS SUCCESS CALLBACK PAYLOAD =====")
+        
         # If callback_url provided, post completion payload
         try:
             if callback_url and isinstance(result, dict) and result.get("status") == "success":
@@ -535,13 +679,32 @@ def handler(event, responseFormat="base64"):
                         "generation_time": result.get("generation_time"),
                     },
                 }
+                
+                logger.info(f"📤 TTS callback URL: {callback_url}")
+                logger.info(f"📤 TTS callback payload: {payload}")
+                logger.info(f"📤 TTS callback payload type: {type(payload)}")
+                logger.info(f"📤 TTS callback payload keys: {list(payload.keys())}")
+                
+                # Log nested metadata in callback
+                callback_metadata = payload.get("metadata", {})
+                logger.info(f"📤 TTS callback metadata: {callback_metadata}")
+                logger.info(f"📤 TTS callback metadata type: {type(callback_metadata)}")
+                if isinstance(callback_metadata, dict):
+                    logger.info(f"📤 TTS callback metadata keys: {list(callback_metadata.keys())}")
+                    for key, value in callback_metadata.items():
+                        logger.info(f"📤   TTS callback metadata {key}: {value} (type: {type(value)})")
+                
                 try:
                     resp = requests.post(callback_url, json=payload, timeout=10)
-                    logger.info(f"🔔 Callback POST {callback_url} -> {resp.status_code}")
+                    logger.info(f"✅ TTS callback POST {callback_url} -> {resp.status_code}")
                 except Exception as cb_e:
-                    logger.warning(f"⚠️ Callback POST failed: {cb_e}")
+                    logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
+                    logger.warning(f"⚠️ TTS callback exception type: {type(cb_e)}")
         except Exception as e:
-            logger.warning(f"⚠️ Error preparing callback: {e}")
+            logger.warning(f"⚠️ Error preparing TTS callback: {e}")
+            logger.warning(f"⚠️ TTS callback preparation exception type: {type(e)}")
+        
+        logger.info("🔍 ===== END TTS SUCCESS CALLBACK PAYLOAD =====")
         return result
 
     except Exception as e:

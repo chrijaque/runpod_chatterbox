@@ -1061,6 +1061,20 @@ class FirebaseService:
             return None
         
         try:
+            # ===== FIREBASE SERVICE UPLOAD LOGGING =====
+            logger.info("🔍 ===== FIREBASE SERVICE UPLOAD =====")
+            logger.info(f"📁 Destination: {destination_blob_name}")
+            logger.info(f"📁 Content type: {content_type}")
+            logger.info(f"📁 Data size: {len(data)} bytes")
+            logger.info(f"📁 Metadata provided: {bool(metadata)}")
+            
+            if metadata:
+                logger.info(f"📋 Metadata: {metadata}")
+                logger.info(f"📋 Metadata type: {type(metadata)}")
+                logger.info(f"📋 Metadata keys: {list(metadata.keys())}")
+                for key, value in metadata.items():
+                    logger.info(f"📋   {key}: {value} (type: {type(value)})")
+            
             # Ensure the directory structure exists
             self._ensure_directory_structure(destination_blob_name)
             
@@ -1069,20 +1083,32 @@ class FirebaseService:
             # Set metadata if provided
             if metadata:
                 blob.metadata = metadata
+                logger.info(f"🔍 Set metadata on blob: {metadata}")
             
             # Set content type and CORS headers
             blob.content_type = content_type
             
             # Upload the data
             blob.upload_from_string(data, content_type=content_type)
+            logger.info("🔍 Data uploaded to blob")
+            
+            # CRITICAL: Patch metadata to ensure persistence
+            if metadata:
+                try:
+                    blob.patch()
+                    logger.info(f"✅ Metadata patched successfully for: {destination_blob_name}")
+                except Exception as patch_e:
+                    logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
             
             # Make the blob publicly accessible
             blob.make_public()
             
             public_url = blob.public_url
             logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+            logger.info("🔍 ===== END FIREBASE SERVICE UPLOAD =====")
             return public_url
             
         except Exception as e:
             logger.error(f"❌ Firebase upload failed: {e}")
+            logger.error(f"❌ Firebase upload exception type: {type(e)}")
             return None 
