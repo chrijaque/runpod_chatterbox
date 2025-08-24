@@ -493,9 +493,8 @@ def handle_voice_clone_request(input, responseFormat):
             target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
             # Local recorded filename hint (if needed when pointer not provided)
             import re
-            safe_name = re.sub(r'[^a-z0-9]+', '_', (name or '').lower()).strip('_') or 'voice'
-            safe_user = re.sub(r'[^a-z0-9]+', '', (user_id or 'user').lower()) or 'user'
-            target_recorded_name = f"recording_{safe_name}_{safe_user}.wav"
+            # Use deterministic recorded filename without extra suffixes
+            target_recorded_name = f"{voice_id}.wav"
         except Exception:
             target_profile_name = profile_filename_hint or f"{voice_id}.npy"
             target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
