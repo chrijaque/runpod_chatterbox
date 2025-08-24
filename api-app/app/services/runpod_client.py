@@ -40,7 +40,7 @@ class RunPodClient:
                           language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox",
                           user_id: Optional[str] = None, audio_path: Optional[str] = None,
                           profile_filename: Optional[str] = None, sample_filename: Optional[str] = None,
-                          output_basename: Optional[str] = None) -> Dict[str, Any]:
+                          output_basename: Optional[str] = None, voice_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -94,6 +94,7 @@ class RunPodClient:
                 # Some handlers read top-level metadata
                 "metadata": {
                     "user_id": user_id,
+                    "voice_id": voice_id,
                     "language": language,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
@@ -113,6 +114,7 @@ class RunPodClient:
                     "model_type": model_type,
                     # Duplicate critical identifiers at the top level for handlers that don't read nested metadata
                     "user_id": user_id,
+                    "voice_id": voice_id,
                     # Strongly pass explicit filenames so handler uses them verbatim
                     "profile_filename": profile_filename,
                     "sample_filename": sample_filename,
@@ -120,6 +122,7 @@ class RunPodClient:
                     # Also include a nested metadata object for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
+                        "voice_id": voice_id,
                         "language": language,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
