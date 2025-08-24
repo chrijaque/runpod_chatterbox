@@ -128,6 +128,7 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             profile_filename=request.profile_filename or (f"{request.voice_id}.npy" if request.voice_id else None),
             sample_filename=request.sample_filename or (f"{request.voice_id}.mp3" if request.voice_id else None),
             output_basename=request.output_basename or request.voice_id,
+            voice_id=request.voice_id,
         )
         
         logger.info(f"🔍 RunPod result type: {type(result)}")
