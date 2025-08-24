@@ -92,18 +92,23 @@ try:
             chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
             break
     if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
         git_dir = os.path.join(chatterbox_embed_path, ".git")
         if os.path.exists(git_dir):
+            logger.info("✅ Found .git directory - updating to latest commit...")
             # Current commit
             try:
                 old_commit = subprocess.run([
                     "git", "rev-parse", "HEAD"
                 ], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                 old_commit_hash = old_commit.stdout.strip() if old_commit.returncode == 0 else "unknown"
+                logger.info(f"🔍 Current commit: {old_commit_hash}")
             except Exception:
                 old_commit_hash = "unknown"
+                logger.warning("⚠️ Could not get current commit")
             # Fetch + reset to default branch head
             try:
+                logger.info("🔄 Fetching latest changes...")
                 subprocess.run(["git", "fetch", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
                 remote_show = subprocess.run(["git", "remote", "show", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                 default_branch = None
@@ -111,19 +116,38 @@ try:
                     for line in remote_show.stdout.split('\n'):
                         if 'HEAD branch' in line:
                             default_branch = line.split()[-1]
+                            logger.info(f"🔍 Default branch: {default_branch}")
                             break
                 if default_branch:
+                    logger.info(f"🔄 Resetting to origin/{default_branch}...")
                     subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
                     new_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                     new_commit_hash = new_commit.stdout.strip() if new_commit.returncode == 0 else old_commit_hash
+                    logger.info(f"🆕 New commit: {new_commit_hash}")
                     if new_commit_hash != old_commit_hash:
+                        logger.info("🔄 Repository updated! Clearing modules to reload...")
                         # If updated, clear chatterbox modules to reload code
                         for name in [n for n in list(sys.modules.keys()) if 'chatterbox' in n]:
                             del sys.modules[name]
+                        # Re-import models after update
+                        try:
+                            from chatterbox.vc import ChatterboxVC
+                            from chatterbox.tts import ChatterboxTTS
+                            logger.info("✅ Successfully re-imported models after update")
+                        except ImportError as e:
+                            logger.warning(f"⚠️ Failed to re-import models: {e}")
+                    else:
+                        logger.info("✅ Already at latest commit")
+                else:
+                    logger.warning("⚠️ Could not determine default branch")
             except Exception:
-                pass
+                logger.warning("⚠️ Error during git update")
+        else:
+            logger.warning("⚠️ No .git directory found")
+    else:
+        logger.warning("⚠️ Could not find chatterbox_embed directory")
 except Exception:
-    pass
+    logger.error("❌ Error during repository update")
 
 # Initialize models AFTER repository update
 logger.info("🔧 Initializing models...")
@@ -491,14 +515,9 @@ def handle_voice_clone_request(input, responseFormat):
         try:
             target_profile_name = profile_filename_hint or f"{voice_id}.npy"
             target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
-            # Local recorded filename hint (if needed when pointer not provided)
-            import re
-            # Use deterministic recorded filename without extra suffixes
-            target_recorded_name = f"{voice_id}.wav"
         except Exception:
             target_profile_name = profile_filename_hint or f"{voice_id}.npy"
             target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
-            target_recorded_name = None
         
         # Prepare a local temp file from either base64 data or Firebase path
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -546,14 +565,14 @@ def handle_voice_clone_request(input, responseFormat):
             # Explicit filenames (if provided/derived) so model uploads with the exact names
             'profile_filename': target_profile_name,
             'sample_filename': target_sample_name,
-            'recorded_filename': target_recorded_name,
             # Strong metadata contract for Storage uploads downstream
-            'metadata': {
+            'storage_metadata': {
                 'user_id': input.get('user_id') or '',
                 'voice_id': voice_id,
                 'voice_name': name,
                 'language': language,
                 'is_kids_voice': str(is_kids_voice).lower(),
+                'model_type': input.get('model_type') or 'chatterbox',
             }
         }
         
@@ -562,7 +581,7 @@ def handle_voice_clone_request(input, responseFormat):
         logger.info(f"📋 API metadata keys: {list(api_metadata.keys())}")
         
         # Log nested metadata structure
-        nested_metadata = api_metadata.get('metadata', {})
+        nested_metadata = api_metadata.get('storage_metadata', {})
         logger.info(f"📋 Nested storage metadata: {nested_metadata}")
         logger.info(f"📋 Nested storage metadata type: {type(nested_metadata)}")
         logger.info(f"📋 Nested storage metadata keys: {list(nested_metadata.keys())}")
@@ -722,10 +741,10 @@ def handle_voice_clone_request(input, responseFormat):
         try:
             if callback_url:
                 try:
-                    # Build storage paths per contract
+                    # Build storage paths using the exact filenames
                     kids_segment = 'kids/' if is_kids_voice else ''
-                    profile_path = f"audio/voices/{language}/{kids_segment}profiles/{voice_id}.npy"
-                    sample_path = f"audio/voices/{language}/{kids_segment}samples/{voice_id}.mp3"
+                    profile_path = f"audio/voices/{language}/{kids_segment}profiles/{target_profile_name}"
+                    sample_path = f"audio/voices/{language}/{kids_segment}samples/{target_sample_name}"
                     payload = {
                         'status': 'success',
                         'user_id': user_id,

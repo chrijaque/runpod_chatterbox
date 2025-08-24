@@ -81,18 +81,23 @@ try:
             chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
             break
     if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
         git_dir = os.path.join(chatterbox_embed_path, ".git")
         if os.path.exists(git_dir):
+            logger.info("✅ Found .git directory - updating to latest commit...")
             # Current commit
             try:
                 old_commit = subprocess.run([
                     "git", "rev-parse", "HEAD"
                 ], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                 old_commit_hash = old_commit.stdout.strip() if old_commit.returncode == 0 else "unknown"
+                logger.info(f"🔍 Current commit: {old_commit_hash}")
             except Exception:
                 old_commit_hash = "unknown"
+                logger.warning("⚠️ Could not get current commit")
             # Fetch + reset to default branch head
             try:
+                logger.info("🔄 Fetching latest changes...")
                 subprocess.run(["git", "fetch", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
                 remote_show = subprocess.run(["git", "remote", "show", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                 default_branch = None
@@ -100,18 +105,37 @@ try:
                     for line in remote_show.stdout.split('\n'):
                         if 'HEAD branch' in line:
                             default_branch = line.split()[-1]
+                            logger.info(f"🔍 Default branch: {default_branch}")
                             break
                 if default_branch:
+                    logger.info(f"🔄 Resetting to origin/{default_branch}...")
                     subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
                     new_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
                     new_commit_hash = new_commit.stdout.strip() if new_commit.returncode == 0 else old_commit_hash
+                    logger.info(f"🆕 New commit: {new_commit_hash}")
                     if new_commit_hash != old_commit_hash:
+                        logger.info("🔄 Repository updated! Clearing modules to reload...")
                         for name in [n for n in list(sys.modules.keys()) if 'chatterbox' in n]:
                             del sys.modules[name]
+                        # Re-import models after update
+                        try:
+                            from chatterbox.vc import ChatterboxVC
+                            from chatterbox.tts import ChatterboxTTS
+                            logger.info("✅ Successfully re-imported models after update")
+                        except ImportError as e:
+                            logger.warning(f"⚠️ Failed to re-import models: {e}")
+                    else:
+                        logger.info("✅ Already at latest commit")
+                else:
+                    logger.warning("⚠️ Could not determine default branch")
             except Exception:
-                pass
+                logger.warning("⚠️ Error during git update")
+        else:
+            logger.warning("⚠️ No .git directory found")
+    else:
+        logger.warning("⚠️ Could not find chatterbox_embed directory")
 except Exception:
-    pass
+    logger.error("❌ Error during repository update")
 
 # Initialize models AFTER repository update
 logger.info("🔧 Initializing models...")
