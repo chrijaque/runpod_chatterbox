@@ -393,14 +393,14 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
             logger.error("❌ Models not available")
             return {
                 "status": "error",
-                "message": "Models not available",
+                "error": "Models not available",
                 "generation_time": time.time() - start_time
             }
         
         if not hasattr(vc_model, 'create_voice_clone'):
             return {
                 "status": "error",
-                "message": "VC model missing create_voice_clone",
+                "error": "VC model missing create_voice_clone",
                 "generation_time": time.time() - start_time
             }
         result = vc_model.create_voice_clone(
@@ -418,7 +418,7 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
         logger.error(f"❌ Voice clone failed after {generation_time:.2f}s: {e}")
         return {
             "status": "error",
-            "message": str(e),
+            "error": str(e),
             "generation_time": generation_time
         }
 
@@ -452,12 +452,12 @@ def handle_voice_clone_request(input, responseFormat):
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
-        return {"status": "error", "message": "Failed to initialize Firebase storage"}
+        return {"status": "error", "error": "Failed to initialize Firebase storage"}
     
     # Check if VC model is available
     if vc_model is None:
         logger.error("❌ VC model not available")
-        return {"status": "error", "message": "VC model not available"}
+        return {"status": "error", "error": "VC model not available"}
     
     logger.info("✅ Using pre-initialized VC model")
     
@@ -496,7 +496,7 @@ def handle_voice_clone_request(input, responseFormat):
     logger.info("🔍 ===== END METADATA BREAKDOWN =====")
 
     if not name or (not audio_data and not audio_path):
-        return {"status": "error", "message": "name and either audio_data or audio_path are required"}
+        return {"status": "error", "error": "name and either audio_data or audio_path are required"}
 
     logger.info(f"New request. Voice clone name: {name}")
     logger.info(f"Response format requested: {responseFormat}")
@@ -532,13 +532,13 @@ def handle_voice_clone_request(input, responseFormat):
             temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}{ext}"
             try:
                 if bucket is None and not initialize_firebase():
-                    return {"status": "error", "message": "Failed to initialize Firebase storage"}
+                    return {"status": "error", "error": "Failed to initialize Firebase storage"}
                 blob = bucket.blob(audio_path)
                 blob.download_to_filename(str(temp_voice_file))
                 logger.info(f"Downloaded audio from Firebase {audio_path} to {temp_voice_file}")
             except Exception as dl_e:
                 logger.error(f"❌ Failed to download audio_path {audio_path}: {dl_e}")
-                return {"status": "error", "message": f"Failed to download audio_path: {dl_e}"}
+                return {"status": "error", "error": f"Failed to download audio_path: {dl_e}"}
         else:
             temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
             audio_bytes = base64.b64decode(audio_data)
@@ -809,7 +809,7 @@ def handle_voice_clone_request(input, responseFormat):
             logger.warning(f"⚠️ Error callback preparation failed: {callback_prep_e}")
         
         logger.info("🔍 ===== END ERROR CALLBACK PAYLOAD =====")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "error": str(e)}
 
 
 def _post_signed_callback(callback_url: str, payload: dict):

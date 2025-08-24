@@ -115,7 +115,7 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
                 metadata=metadata
             )
         else:
-            error_message = result.get("message", "Unknown error occurred")
+            error_message = result.get("error", result.get("message", "Unknown error occurred"))
             logger.error(f"❌ TTS generation failed: {error_message}")
             raise HTTPException(status_code=500, detail=error_message)
             

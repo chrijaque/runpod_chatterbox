@@ -500,12 +500,12 @@ def handler(event, responseFormat="base64"):
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
-        return {"status": "error", "message": "Failed to initialize Firebase storage"}
+        return {"status": "error", "error": "Failed to initialize Firebase storage"}
     
     # Check if TTS model is available
     if tts_model is None:
         logger.error("❌ TTS model not available")
-        return {"status": "error", "message": "TTS model not available"}
+        return {"status": "error", "error": "TTS model not available"}
     
     logger.info("✅ Using pre-initialized TTS model")
     
@@ -545,7 +545,7 @@ def handler(event, responseFormat="base64"):
     _debug_gcs_creds()
     
     if not text or not voice_id:
-        return {"status": "error", "message": "Both text and voice_id are required"}
+        return {"status": "error", "error": "Both text and voice_id are required"}
 
     logger.info(f"🎵 TTS request. Voice ID: {voice_id}")
     logger.info(f"📝 Text length: {len(text)} characters")
@@ -767,13 +767,13 @@ def handler(event, responseFormat="base64"):
 
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "error": str(e)}
 
 def handle_file_download(input):
     """Handle file download requests"""
     file_path = input.get("file_path")
     if not file_path:
-        return {"status": "error", "message": "file_path is required"}
+        return {"status": "error", "error": "file_path is required"}
     
     try:
         with open(file_path, 'rb') as f:
@@ -785,7 +785,7 @@ def handle_file_download(input):
             "file_size": len(file_data)
         }
     except Exception as e:
-        return {"status": "error", "message": f"Failed to read file: {e}"}
+        return {"status": "error", "error": f"Failed to read file: {e}"}
 
 def list_available_files():
     """List all available files in the directories"""
