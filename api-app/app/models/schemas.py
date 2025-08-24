@@ -11,6 +11,12 @@ class VoiceCloneRequest(BaseModel):
     is_kids_voice: bool = False
     model_type: str = "chatterbox"  # Model selection (chatterbox only)
     profile_id: Optional[str] = None
+    # NEW: Pass-through identifiers and naming hints from the app
+    voice_id: Optional[str] = None
+    profile_filename: Optional[str] = None
+    sample_filename: Optional[str] = None
+    output_basename: Optional[str] = None
+    callback_url: Optional[str] = None
 
 class VoiceCloneResponse(BaseModel):
     status: str

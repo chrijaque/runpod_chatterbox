@@ -113,6 +113,10 @@ class RunPodClient:
                     "model_type": model_type,
                     # Duplicate critical identifiers at the top level for handlers that don't read nested metadata
                     "user_id": user_id,
+                    # Strongly pass explicit filenames so handler uses them verbatim
+                    "profile_filename": profile_filename,
+                    "sample_filename": sample_filename,
+                    "output_basename": output_basename,
                     # Also include a nested metadata object for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
