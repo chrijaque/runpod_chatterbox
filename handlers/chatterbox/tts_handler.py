@@ -4,6 +4,10 @@ import os
 import tempfile
 import base64
 import logging
+import sys
+import glob
+import pathlib
+import shutil
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -14,6 +18,28 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 """Minimal, production-focused TTS handler for RunPod runtime."""
+
+def clear_python_cache():
+    """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
+    try:
+        for pyc_file in glob.glob("/workspace/**/*.pyc", recursive=True):
+            try:
+                os.remove(pyc_file)
+            except Exception:
+                pass
+        for pycache_dir in pathlib.Path("/workspace").rglob("__pycache__"):
+            try:
+                shutil.rmtree(pycache_dir)
+            except Exception:
+                pass
+        to_clear = [name for name in list(sys.modules.keys()) if 'chatterbox' in name]
+        for name in to_clear:
+            del sys.modules[name]
+    except Exception:
+        pass
+
+# Clear cache BEFORE importing any chatterbox modules
+clear_python_cache()
 
 # Import the models from the forked repository
 try:
@@ -45,7 +71,47 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
-# No repository mutation or cache clearing at runtime – the runtime uses a fixed image
+# Update repository to latest commit BEFORE initializing models
+logger.info("🔧 Updating repository to latest commit...")
+try:
+    import subprocess
+    chatterbox_embed_path = None
+    for root, dirs, files in os.walk("/workspace"):
+        if "chatterbox_embed" in dirs:
+            chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
+            break
+    if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
+        git_dir = os.path.join(chatterbox_embed_path, ".git")
+        if os.path.exists(git_dir):
+            # Current commit
+            try:
+                old_commit = subprocess.run([
+                    "git", "rev-parse", "HEAD"
+                ], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
+                old_commit_hash = old_commit.stdout.strip() if old_commit.returncode == 0 else "unknown"
+            except Exception:
+                old_commit_hash = "unknown"
+            # Fetch + reset to default branch head
+            try:
+                subprocess.run(["git", "fetch", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
+                remote_show = subprocess.run(["git", "remote", "show", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
+                default_branch = None
+                if remote_show.returncode == 0:
+                    for line in remote_show.stdout.split('\n'):
+                        if 'HEAD branch' in line:
+                            default_branch = line.split()[-1]
+                            break
+                if default_branch:
+                    subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
+                    new_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
+                    new_commit_hash = new_commit.stdout.strip() if new_commit.returncode == 0 else old_commit_hash
+                    if new_commit_hash != old_commit_hash:
+                        for name in [n for n in list(sys.modules.keys()) if 'chatterbox' in n]:
+                            del sys.modules[name]
+            except Exception:
+                pass
+except Exception:
+    pass
 
 # Initialize models AFTER repository update
 logger.info("🔧 Initializing models...")
