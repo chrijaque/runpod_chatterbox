@@ -604,12 +604,18 @@ def handle_voice_clone_request(input, responseFormat):
         # Verify metadata was set on uploaded files
         try:
             if isinstance(result, dict) and result.get("status") == "success":
+                # Build Firebase paths based on language and kids voice
+                kids_segment = 'kids/' if is_kids_voice else ''
+                base_firebase_path = f"audio/voices/{language}/{kids_segment}"
+                
                 # Check profile file metadata
-                profile_path = result.get("profile_path")
-                if profile_path:
-                    logger.info(f"🔍 Verifying metadata on profile: {profile_path}")
+                profile_filename = result.get("profile_path")
+                if profile_filename:
+                    # Construct full Firebase path
+                    profile_firebase_path = f"{base_firebase_path}profiles/{profile_filename}"
+                    logger.info(f"🔍 Verifying metadata on profile: {profile_firebase_path}")
                     try:
-                        blob = bucket.blob(profile_path)
+                        blob = bucket.blob(profile_firebase_path)
                         if blob.exists():
                             blob.reload()
                             actual_metadata = blob.metadata or {}
@@ -632,16 +638,18 @@ def handle_voice_clone_request(input, responseFormat):
                                 blob.patch()
                                 logger.info("✅ Profile metadata fixed")
                         else:
-                            logger.warning(f"⚠️ Profile blob does not exist: {profile_path}")
+                            logger.warning(f"⚠️ Profile blob does not exist: {profile_firebase_path}")
                     except Exception as profile_e:
                         logger.warning(f"⚠️ Could not verify profile metadata: {profile_e}")
                 
                 # Check sample file metadata
-                sample_path = result.get("sample_path")
-                if sample_path:
-                    logger.info(f"🔍 Verifying metadata on sample: {sample_path}")
+                sample_filename = result.get("sample_path")
+                if sample_filename:
+                    # Construct full Firebase path
+                    sample_firebase_path = f"{base_firebase_path}samples/{sample_filename}"
+                    logger.info(f"🔍 Verifying metadata on sample: {sample_firebase_path}")
                     try:
-                        blob = bucket.blob(sample_path)
+                        blob = bucket.blob(sample_firebase_path)
                         if blob.exists():
                             blob.reload()
                             actual_metadata = blob.metadata or {}
@@ -664,9 +672,43 @@ def handle_voice_clone_request(input, responseFormat):
                                 blob.patch()
                                 logger.info("✅ Sample metadata fixed")
                         else:
-                            logger.warning(f"⚠️ Sample blob does not exist: {sample_path}")
+                            logger.warning(f"⚠️ Sample blob does not exist: {sample_firebase_path}")
                     except Exception as sample_e:
                         logger.warning(f"⚠️ Could not verify sample metadata: {sample_e}")
+                
+                # Check recorded file metadata (if available)
+                recorded_filename = result.get("recorded_audio_path")
+                if recorded_filename:
+                    # Construct full Firebase path
+                    recorded_firebase_path = f"{base_firebase_path}recorded/{recorded_filename}"
+                    logger.info(f"🔍 Verifying metadata on recorded: {recorded_firebase_path}")
+                    try:
+                        blob = bucket.blob(recorded_firebase_path)
+                        if blob.exists():
+                            blob.reload()
+                            actual_metadata = blob.metadata or {}
+                            logger.info(f"📋 Recorded metadata found: {actual_metadata}")
+                            expected_metadata = {
+                                'user_id': user_id or '',
+                                'voice_id': voice_id,
+                                'voice_name': name,
+                                'language': language,
+                                'is_kids_voice': str(is_kids_voice).lower(),
+                            }
+                            logger.info(f"📋 Expected recorded metadata: {expected_metadata}")
+                            
+                            # Check if metadata matches
+                            if actual_metadata == expected_metadata:
+                                logger.info("✅ Recorded metadata matches expected")
+                            else:
+                                logger.warning("⚠️ Recorded metadata mismatch, attempting to fix...")
+                                blob.metadata = expected_metadata
+                                blob.patch()
+                                logger.info("✅ Recorded metadata fixed")
+                        else:
+                            logger.warning(f"⚠️ Recorded blob does not exist: {recorded_firebase_path}")
+                    except Exception as recorded_e:
+                        logger.warning(f"⚠️ Could not verify recorded metadata: {recorded_e}")
         except Exception as verify_e:
             logger.warning(f"⚠️ Metadata verification failed: {verify_e}")
         

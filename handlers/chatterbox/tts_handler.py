@@ -581,6 +581,40 @@ def handler(event, responseFormat="base64"):
                                 logger.info("✅ TTS audio metadata fixed")
                         else:
                             logger.warning(f"⚠️ TTS audio blob does not exist: {firebase_path}")
+                            
+                            # Try to construct the path if it's just a filename
+                            if not firebase_path.startswith('audio/'):
+                                # Build Firebase path based on language and story type
+                                constructed_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{firebase_path}"
+                                logger.info(f"🔍 Trying constructed path: {constructed_path}")
+                                try:
+                                    blob = bucket.blob(constructed_path)
+                                    if blob.exists():
+                                        blob.reload()
+                                        actual_metadata = blob.metadata or {}
+                                        logger.info(f"📋 TTS audio metadata found (constructed path): {actual_metadata}")
+                                        expected_metadata = {
+                                            'user_id': user_id or '',
+                                            'story_id': story_id or '',
+                                            'voice_id': voice_id,
+                                            'language': language,
+                                            'story_type': story_type,
+                                            'story_name': story_name or '',
+                                        }
+                                        logger.info(f"📋 Expected TTS audio metadata: {expected_metadata}")
+                                        
+                                        # Check if metadata matches
+                                        if actual_metadata == expected_metadata:
+                                            logger.info("✅ TTS audio metadata matches expected (constructed path)")
+                                        else:
+                                            logger.warning("⚠️ TTS audio metadata mismatch, attempting to fix...")
+                                            blob.metadata = expected_metadata
+                                            blob.patch()
+                                            logger.info("✅ TTS audio metadata fixed (constructed path)")
+                                    else:
+                                        logger.warning(f"⚠️ TTS audio blob does not exist (constructed path): {constructed_path}")
+                                except Exception as constructed_e:
+                                    logger.warning(f"⚠️ Could not verify TTS audio metadata (constructed path): {constructed_e}")
                     except Exception as audio_e:
                         logger.warning(f"⚠️ Could not verify TTS audio metadata: {audio_e}")
         except Exception as verify_e:
