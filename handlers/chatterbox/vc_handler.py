@@ -661,7 +661,7 @@ def handle_voice_clone_request(input, responseFormat):
                         logger.warning(f"⚠️ Could not verify profile metadata: {profile_e}")
                 
                 # Check sample file metadata
-                sample_filename = result.get("sample_path")
+                sample_filename = result.get("sample_audio_path")
                 if sample_filename:
                     # Construct full Firebase path
                     sample_firebase_path = f"{base_firebase_path}samples/{sample_filename}"
@@ -697,8 +697,12 @@ def handle_voice_clone_request(input, responseFormat):
                 # Check recorded file metadata (if available)
                 recorded_filename = result.get("recorded_audio_path")
                 if recorded_filename:
-                    # Construct full Firebase path
-                    recorded_firebase_path = f"{base_firebase_path}recorded/{recorded_filename}"
+                    # Check if recorded_filename is already a full Firebase path
+                    if recorded_filename.startswith("audio/voices/"):
+                        recorded_firebase_path = recorded_filename
+                    else:
+                        # Construct full Firebase path if it's just a filename
+                        recorded_firebase_path = f"{base_firebase_path}recorded/{recorded_filename}"
                     logger.info(f"🔍 Verifying metadata on recorded: {recorded_firebase_path}")
                     try:
                         blob = bucket.blob(recorded_firebase_path)
@@ -724,7 +728,7 @@ def handle_voice_clone_request(input, responseFormat):
                                 blob.patch()
                                 logger.info("✅ Recorded metadata fixed")
                         else:
-                            logger.warning(f"⚠️ Recorded blob does not exist: {recorded_firebase_path}")
+                            logger.info(f"ℹ️ Recorded blob does not exist (expected for pointer-based recordings): {recorded_firebase_path}")
                     except Exception as recorded_e:
                         logger.warning(f"⚠️ Could not verify recorded metadata: {recorded_e}")
         except Exception as verify_e:
