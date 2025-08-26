@@ -475,7 +475,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
 
 def handler(event, responseFormat="base64"):
     """Pure API orchestration: Handle TTS generation requests"""
-    global tts_model
+    global tts_model, bucket
     
     # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
     logger.info("🔍 ===== TTS HANDLER INPUT PARAMETERS =====")
