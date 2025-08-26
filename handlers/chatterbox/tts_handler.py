@@ -696,7 +696,6 @@ def handler(event, responseFormat="base64"):
                         else:
                             # Persist metadata on the original blob as a fallback
                             try:
-                                global bucket
                                 if bucket is None:
                                     initialize_firebase()
                                 if bucket is not None:
