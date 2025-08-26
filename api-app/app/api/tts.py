@@ -3,8 +3,7 @@ from typing import List
 import logging
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
-from ..services.redis_queue import RedisQueueService
-from ..models.schemas import TTSGenerateRequest, TTSGenerateResponse, TTSGeneration
+from ..models.schemas import TTSGenerateRequest, TTSGenerateResponse, TTSGeneration, TTSErrorCallbackRequest, TTSErrorCallbackResponse
 from ..config import settings
 from ..middleware.security import verify_hmac
 
@@ -22,19 +21,64 @@ from .voices import get_firebase_service
 
 # Get Firebase service using the proper initialization
 firebase_service = get_firebase_service()
-redis_queue: RedisQueueService | None = None
 
-def get_queue_service() -> RedisQueueService | None:
-    global redis_queue
-    if redis_queue is not None:
-        return redis_queue
+@router.post("/error-callback", response_model=TTSErrorCallbackResponse)
+async def tts_error_callback(request: TTSErrorCallbackRequest):
+    """
+    Handle TTS generation error callbacks from RunPod service.
+    Updates story status in Firestore and triggers frontend notifications.
+    """
     try:
-        redis_queue = RedisQueueService()
-        logger.info("✅ Redis queue initialized")
-        return redis_queue
+        logger.info(f"❌ TTS Error callback received for story: {request.story_id}")
+        logger.info(f"🔍 Error details: {request.error}")
+        logger.info(f"🔍 User ID: {request.user_id}")
+        logger.info(f"🔍 Voice ID: {request.voice_id}")
+        logger.info(f"🔍 Job ID: {request.job_id}")
+        
+        # Update story status in Firestore
+        try:
+            # Import Firestore client
+            import firebase_admin
+            from firebase_admin import firestore
+            
+            # Get Firestore client
+            db = firestore.client()
+            
+            # Update the story document with error information
+            story_ref = db.collection('stories').document(request.story_id)
+            
+            update_data = {
+                'audioStatus': 'failed',
+                'audioError': request.error,
+                'audioErrorDetails': request.error_details,
+                'audioJobId': request.job_id,
+                'updatedAt': firestore.SERVER_TIMESTAMP
+            }
+            
+            # Add metadata if provided
+            if request.metadata:
+                update_data['audioErrorMetadata'] = request.metadata
+            
+            # Update the document
+            story_ref.update(update_data)
+            
+            logger.info(f"✅ Story {request.story_id} updated with error status in Firestore")
+            
+            return TTSErrorCallbackResponse(success=True)
+            
+        except Exception as firestore_error:
+            logger.error(f"❌ Failed to update Firestore for story {request.story_id}: {firestore_error}")
+            return TTSErrorCallbackResponse(
+                success=False, 
+                error=f"Failed to update Firestore: {str(firestore_error)}"
+            )
+            
     except Exception as e:
-        logger.warning(f"⚠️ Redis not configured: {e}")
-        return None
+        logger.error(f"❌ TTS Error callback processing failed: {str(e)}")
+        return TTSErrorCallbackResponse(
+            success=False, 
+            error=f"Internal server error: {str(e)}"
+        )
 
 @router.post("/generate", response_model=TTSGenerateResponse, dependencies=[Depends(verify_hmac)])
 async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):

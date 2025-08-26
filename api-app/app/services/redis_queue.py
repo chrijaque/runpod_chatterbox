@@ -1,7 +1,12 @@
 import logging
 from typing import Dict, Any, Optional
 
-import redis
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None
 
 from ..config import settings
 
@@ -13,6 +18,9 @@ class RedisQueueService:
     """Lightweight Redis Streams wrapper for job enqueueing and state."""
 
     def __init__(self, redis_url: Optional[str] = None):
+        if not REDIS_AVAILABLE:
+            raise ImportError("Redis is not available. Install redis package to use RedisQueueService.")
+            
         if redis_url is None:
             redis_url = settings.REDIS_URL
         if not redis_url:

@@ -51,6 +51,19 @@ class TTSGenerateResponse(BaseModel):
     audio_path: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+class TTSErrorCallbackRequest(BaseModel):
+    story_id: str
+    error: str
+    user_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    error_details: Optional[str] = None
+    job_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class TTSErrorCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
 class VoiceInfo(BaseModel):
     voice_id: str
     name: str

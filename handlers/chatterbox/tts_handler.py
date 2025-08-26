@@ -8,6 +8,8 @@ import sys
 import glob
 import pathlib
 import shutil
+import requests
+import json
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -18,6 +20,43 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 """Minimal, production-focused TTS handler for RunPod runtime."""
+
+def notify_error_callback(error_callback_url: str, story_id: str, error_message: str, **kwargs):
+    """
+    Send error callback to the main app when TTS generation fails.
+    
+    :param error_callback_url: URL of the error callback endpoint
+    :param story_id: The ID of the story that failed audio generation
+    :param error_message: Human-readable error message
+    :param kwargs: Additional parameters (user_id, voice_id, error_details, job_id, metadata)
+    """
+    payload = {
+        "story_id": story_id,
+        "error": error_message,
+        "error_details": kwargs.get("error_details"),
+        "user_id": kwargs.get("user_id"),
+        "voice_id": kwargs.get("voice_id"),
+        "job_id": kwargs.get("job_id"),
+        "metadata": kwargs.get("metadata", {})
+    }
+    
+    try:
+        logger.info(f"📤 Sending error callback to: {error_callback_url}")
+        logger.info(f"📤 Error callback payload: {payload}")
+        
+        response = requests.post(
+            error_callback_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        response.raise_for_status()
+        logger.info(f"✅ Error callback sent successfully for story {story_id}")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to send error callback: {e}")
+        logger.error(f"❌ Error callback exception type: {type(e)}")
+        return False
 
 def clear_python_cache():
     """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
@@ -426,10 +465,11 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     try:
         # Check if TTS model is available
         if tts_model is None:
-            logger.error("❌ TTS model not available")
+            error_msg = "TTS model not available"
+            logger.error(f"❌ {error_msg}")
             return {
                 "status": "error",
-                "message": "TTS model not available",
+                "message": error_msg,
                 "generation_time": time.time() - start_time
             }
         
@@ -450,26 +490,29 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
                 return result
             except Exception as method_error:
-                logger.error(f"❌ generate_tts_story method failed: {method_error}")
+                error_msg = f"generate_tts_story method failed: {method_error}"
+                logger.error(f"❌ {error_msg}")
                 return {
                     "status": "error",
-                    "message": f"generate_tts_story method failed: {method_error}",
+                    "message": error_msg,
                     "generation_time": time.time() - start_time
                 }
         else:
-            logger.error("❌ TTS model doesn't have generate_tts_story method")
+            error_msg = "TTS model doesn't have generate_tts_story method. Please update the RunPod deployment with the latest forked repository version."
+            logger.error(f"❌ {error_msg}")
             return {
                 "status": "error",
-                "message": "TTS model doesn't have generate_tts_story method. Please update the RunPod deployment with the latest forked repository version.",
+                "message": error_msg,
                 "generation_time": time.time() - start_time
             }
         
     except Exception as e:
         generation_time = time.time() - start_time
-        logger.error(f"❌ TTS generation failed after {generation_time:.2f}s: {e}")
+        error_msg = str(e)
+        logger.error(f"❌ TTS generation failed after {generation_time:.2f}s: {error_msg}")
         return {
             "status": "error",
-            "message": str(e),
+            "message": error_msg,
             "generation_time": generation_time
         }
 
@@ -565,6 +608,56 @@ def handler(event, responseFormat="base64"):
             is_kids_voice=is_kids_voice,
             api_metadata=api_metadata
         )
+        
+        # Check if TTS generation failed
+        if isinstance(result, dict) and result.get("status") == "error":
+            logger.error(f"❌ TTS generation failed: {result.get('message', 'Unknown error')}")
+            
+            # Send error callback if callback_url is available
+            try:
+                if callback_url:
+                    # Construct error callback URL from success callback URL
+                    # Handle different possible callback URL formats
+                    if "/api/tts/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
+                    elif "/api/tts/" in callback_url:
+                        # If it's a different TTS endpoint, replace the last part
+                        error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
+                    else:
+                        # Fallback: append error-callback to the base URL
+                        base_url = callback_url.rstrip("/")
+                        error_callback_url = f"{base_url}/error-callback"
+                    
+                    # Extract metadata for error callback
+                    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+                    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
+                    voice_id = event["input"].get("voice_id")
+                    language = event["input"].get("language", "en")
+                    story_type = event["input"].get("story_type", "user")
+                    story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                    
+                    # Send error callback
+                    notify_error_callback(
+                        error_callback_url=error_callback_url,
+                        story_id=story_id or "unknown",
+                        error_message=result.get("message", "TTS generation failed"),
+                        error_details=f"TTS model returned error status: {result.get('message', 'Unknown error')}",
+                        user_id=user_id,
+                        voice_id=voice_id,
+                        job_id=event.get("id"),  # RunPod job ID
+                        metadata={
+                            "language": language,
+                            "story_type": story_type,
+                            "story_name": story_name,
+                            "text_length": len(text) if text else 0,
+                            "generation_time": result.get("generation_time"),
+                            "error_type": "tts_model_error"
+                        }
+                    )
+            except Exception as callback_error:
+                logger.error(f"❌ Failed to send error callback: {callback_error}")
+            
+            return result
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
@@ -766,6 +859,50 @@ def handler(event, responseFormat="base64"):
 
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
+        
+        # Send error callback if callback_url is available
+        try:
+            if callback_url:
+                # Construct error callback URL from success callback URL
+                # Handle different possible callback URL formats
+                if "/api/tts/callback" in callback_url:
+                    error_callback_url = callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
+                elif "/api/tts/" in callback_url:
+                    # If it's a different TTS endpoint, replace the last part
+                    error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
+                else:
+                    # Fallback: append error-callback to the base URL
+                    base_url = callback_url.rstrip("/")
+                    error_callback_url = f"{base_url}/error-callback"
+                
+                # Extract metadata for error callback
+                user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+                story_id = api_metadata.get("story_id") or event["input"].get("story_id")
+                voice_id = event["input"].get("voice_id")
+                language = event["input"].get("language", "en")
+                story_type = event["input"].get("story_type", "user")
+                story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                
+                # Send error callback
+                notify_error_callback(
+                    error_callback_url=error_callback_url,
+                    story_id=story_id or "unknown",
+                    error_message=str(e),
+                    error_details=f"Unexpected error in TTS handler: {type(e).__name__}",
+                    user_id=user_id,
+                    voice_id=voice_id,
+                    job_id=event.get("id"),  # RunPod job ID
+                    metadata={
+                        "language": language,
+                        "story_type": story_type,
+                        "story_name": story_name,
+                        "text_length": len(text) if text else 0,
+                        "error_type": type(e).__name__
+                    }
+                )
+        except Exception as callback_error:
+            logger.error(f"❌ Failed to send error callback: {callback_error}")
+        
         return {"status": "error", "error": str(e)}
 
 def handle_file_download(input):

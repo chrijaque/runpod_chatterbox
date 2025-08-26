@@ -6,7 +6,12 @@ from typing import Optional
 from fastapi import Request, HTTPException
 
 from ..config import settings
-from ..services.redis_queue import RedisQueueService
+try:
+    from ..services.redis_queue import RedisQueueService
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    RedisQueueService = None
 
 
 def _constant_time_compare(a: str, b: str) -> bool:
@@ -48,16 +53,17 @@ async def verify_hmac(request: Request) -> None:
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     # Idempotency key guard (if Redis configured)
-    try:
-        q = RedisQueueService()
-        key = f"{settings.REDIS_NAMESPACE}:idem:{idem}"
-        # set if not exists; expire
-        already = q.client.set(name=key, value="1", nx=True, ex=settings.IDEMPOTENCY_TTL_SECONDS)
-        if not already:
-            raise HTTPException(status_code=409, detail="Duplicate request")
-    except Exception:
-        # If Redis not configured, proceed without idempotency enforcement
-        pass
+    if REDIS_AVAILABLE and RedisQueueService:
+        try:
+            q = RedisQueueService()
+            key = f"{settings.REDIS_NAMESPACE}:idem:{idem}"
+            # set if not exists; expire
+            already = q.client.set(name=key, value="1", nx=True, ex=settings.IDEMPOTENCY_TTL_SECONDS)
+            if not already:
+                raise HTTPException(status_code=409, detail="Duplicate request")
+        except Exception:
+            # If Redis not configured, proceed without idempotency enforcement
+            pass
 
 
 async def verify_firebase_auth(request: Request) -> Optional[str]:

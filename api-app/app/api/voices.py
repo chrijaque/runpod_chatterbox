@@ -81,8 +81,8 @@ def get_queue_service() -> RedisQueueService | None:
         redis_queue = RedisQueueService()
         logger.info("✅ Redis queue initialized")
         return redis_queue
-    except Exception as e:
-        logger.warning(f"⚠️ Redis not configured: {e}")
+    except (ImportError, ValueError, Exception) as e:
+        logger.warning(f"⚠️ Redis not available: {e}")
         return None
 
 @router.post("/clone", response_model=VoiceCloneResponse, dependencies=[Depends(verify_hmac)])
