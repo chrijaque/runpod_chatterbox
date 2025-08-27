@@ -562,6 +562,11 @@ def handler(event, responseFormat="base64"):
     api_metadata = event["input"].get("metadata", {})
     callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
     
+    # Extract additional metadata variables needed throughout the function
+    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
+    story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+    
     # ===== METADATA BREAKDOWN LOGGING =====
     logger.info("🔍 ===== TTS METADATA BREAKDOWN =====")
     logger.info(f"📋 API metadata: {api_metadata}")
@@ -628,13 +633,7 @@ def handler(event, responseFormat="base64"):
                         base_url = callback_url.rstrip("/")
                         error_callback_url = f"{base_url}/error-callback"
                     
-                    # Extract metadata for error callback
-                    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
-                    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
-                    voice_id = event["input"].get("voice_id")
-                    language = event["input"].get("language", "en")
-                    story_type = event["input"].get("story_type", "user")
-                    story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                    # Use metadata variables already extracted at the top of the function
                     
                     # Send error callback
                     notify_error_callback(
@@ -742,14 +741,8 @@ def handler(event, responseFormat="base64"):
         # Post-process: rename output file to requested naming if model saved with default name.
         try:
             if isinstance(result, dict) and result.get("status") == "success":
-                # Extract hints
+                # Extract additional hints for post-processing
                 import re
-                user_id = api_metadata.get("user_id") or event["input"].get("user_id")
-                voice_id = event["input"].get("voice_id")
-                story_type = event["input"].get("story_type", "user")
-                language = event["input"].get("language", "en")
-                story_name = api_metadata.get("story_name") or event["input"].get("story_name")
-                story_id = api_metadata.get("story_id") or event["input"].get("story_id")
                 output_basename = api_metadata.get("output_basename") or event["input"].get("output_basename")
                 if not story_name and output_basename:
                     story_name = output_basename.split("_")[0]
@@ -875,13 +868,7 @@ def handler(event, responseFormat="base64"):
                     base_url = callback_url.rstrip("/")
                     error_callback_url = f"{base_url}/error-callback"
                 
-                # Extract metadata for error callback
-                user_id = api_metadata.get("user_id") or event["input"].get("user_id")
-                story_id = api_metadata.get("story_id") or event["input"].get("story_id")
-                voice_id = event["input"].get("voice_id")
-                language = event["input"].get("language", "en")
-                story_type = event["input"].get("story_type", "user")
-                story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+                # Use metadata variables already extracted at the top of the function
                 
                 # Send error callback
                 notify_error_callback(
