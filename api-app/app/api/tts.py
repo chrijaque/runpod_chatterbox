@@ -121,6 +121,7 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
                 callback_url=request.callback_url,
                 story_name=getattr(request, 'story_name', None),
                 output_basename=getattr(request, 'output_basename', None),
+                voice_name=getattr(request, 'voice_name', None),
             )
             logger.info(f"✅ RunPod call completed successfully")
         except Exception as e:

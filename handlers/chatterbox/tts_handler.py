@@ -444,7 +444,7 @@ def list_files_for_debug():
         else:
             logger.info(f"  {directory}: [DIRECTORY NOT FOUND]")
 
-def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata):
+def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata, voice_name=None):
     """
     Implement TTS generation using available model methods.
     
@@ -455,6 +455,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
     logger.info(f"  voice_id: {voice_id}")
+    logger.info(f"  voice_name: {voice_name}")
     logger.info(f"  language: {language}")
     logger.info(f"  story_type: {story_type}")
     logger.info(f"  is_kids_voice: {is_kids_voice}")
@@ -484,7 +485,8 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                     language=language,
                     story_type=story_type,
                     is_kids_voice=is_kids_voice,
-                    metadata=api_metadata
+                    metadata=api_metadata,
+                    voice_name=voice_name
                 )
                 generation_time = time.time() - start_time
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
@@ -566,6 +568,7 @@ def handler(event, responseFormat="base64"):
     user_id = api_metadata.get("user_id") or event["input"].get("user_id")
     story_id = api_metadata.get("story_id") or event["input"].get("story_id")
     story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+    voice_name = api_metadata.get("voice_name") or event["input"].get("voice_name")
     
     # ===== METADATA BREAKDOWN LOGGING =====
     logger.info("🔍 ===== TTS METADATA BREAKDOWN =====")
@@ -596,6 +599,7 @@ def handler(event, responseFormat="base64"):
         return {"status": "error", "error": "Both text and voice_id are required"}
 
     logger.info(f"🎵 TTS request. Voice ID: {voice_id}")
+    logger.info(f"🎵 Voice Name: {voice_name}")
     logger.info(f"📝 Text length: {len(text)} characters")
     logger.info(f"🌍 Language: {language}, Story type: {story_type}")
     logger.info(f"👶 Kids voice: {is_kids_voice}")
@@ -611,7 +615,8 @@ def handler(event, responseFormat="base64"):
             language=language,
             story_type=story_type,
             is_kids_voice=is_kids_voice,
-            api_metadata=api_metadata
+            api_metadata=api_metadata,
+            voice_name=voice_name
         )
         
         # Check if TTS generation failed
@@ -648,6 +653,7 @@ def handler(event, responseFormat="base64"):
                             "language": language,
                             "story_type": story_type,
                             "story_name": story_name,
+                            "voice_name": voice_name,
                             "text_length": len(text) if text else 0,
                             "generation_time": result.get("generation_time"),
                             "error_type": "tts_model_error"
@@ -681,6 +687,7 @@ def handler(event, responseFormat="base64"):
                                 'user_id': user_id or '',
                                 'story_id': story_id or '',
                                 'voice_id': voice_id,
+                                'voice_name': voice_name or '',
                                 'language': language,
                                 'story_type': story_type,
                                 'story_name': story_name or '',
@@ -713,6 +720,7 @@ def handler(event, responseFormat="base64"):
                                             'user_id': user_id or '',
                                             'story_id': story_id or '',
                                             'voice_id': voice_id,
+                                            'voice_name': voice_name or '',
                                             'language': language,
                                             'story_type': story_type,
                                             'story_name': story_name or '',
@@ -769,6 +777,7 @@ def handler(event, responseFormat="base64"):
                                 'user_id': (user_id or ''),
                                 'story_id': (story_id or ''),
                                 'voice_id': (voice_id or ''),
+                                'voice_name': (voice_name or ''),
                                 'language': (language or ''),
                                 'story_type': (story_type or ''),
                                 'story_name': (safe_story or ''),
@@ -791,6 +800,7 @@ def handler(event, responseFormat="base64"):
                                             'user_id': (user_id or ''),
                                             'story_id': (story_id or ''),
                                             'voice_id': (voice_id or ''),
+                                            'voice_name': (voice_name or ''),
                                             'language': (language or ''),
                                             'story_type': (story_type or ''),
                                             'story_name': (safe_story or ''),
@@ -814,6 +824,7 @@ def handler(event, responseFormat="base64"):
                     "story_id": story_id,
                     "user_id": user_id,
                     "voice_id": voice_id,
+                    "voice_name": voice_name,
                     "audio_url": result.get("firebase_url") or result.get("audio_url") or result.get("audio_path"),
                     "storage_path": result.get("firebase_path"),
                     "language": language,
@@ -883,6 +894,7 @@ def handler(event, responseFormat="base64"):
                         "language": language,
                         "story_type": story_type,
                         "story_name": story_name,
+                        "voice_name": voice_name,
                         "text_length": len(text) if text else 0,
                         "error_type": type(e).__name__
                     }

@@ -102,6 +102,7 @@ class RunPodClient:
                     "profile_filename": profile_filename,
                     "sample_filename": sample_filename,
                     "output_basename": output_basename,
+                    "voice_name": name,
                 },
                 "input": {
                     "name": name,
@@ -119,6 +120,7 @@ class RunPodClient:
                     "profile_filename": profile_filename,
                     "sample_filename": sample_filename,
                     "output_basename": output_basename,
+                    "voice_name": name,
                     # Also include a nested metadata object for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
@@ -190,7 +192,8 @@ class RunPodClient:
                                  language: str = "en", story_type: str = "user", is_kids_voice: bool = False, 
                                  model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
                                  profile_path: Optional[str] = None, callback_url: Optional[str] = None,
-                                 story_name: Optional[str] = None, output_basename: Optional[str] = None) -> Dict[str, Any]:
+                                 story_name: Optional[str] = None, output_basename: Optional[str] = None,
+                                 voice_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -228,6 +231,7 @@ class RunPodClient:
                     "callback_url": callback_url,
                     "story_name": story_name,
                     "output_basename": output_basename,
+                    "voice_name": voice_name,
                 },
                 "input": {
                     "voice_id": voice_id,
@@ -244,6 +248,7 @@ class RunPodClient:
                     "story_id": story_id,
                     "story_name": story_name,
                     "output_basename": output_basename,
+                    "voice_name": voice_name,
                     # Nested metadata for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
@@ -255,6 +260,7 @@ class RunPodClient:
                         "callback_url": callback_url,
                         "story_name": story_name,
                         "output_basename": output_basename,
+                        "voice_name": voice_name,
                     },
                 }
             }
