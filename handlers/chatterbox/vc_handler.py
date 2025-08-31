@@ -606,6 +606,45 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception as cleanup_error:
             logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
 
+        # Check if the voice clone operation failed
+        if isinstance(result, dict) and result.get("status") == "error":
+            logger.error(f"❌ Voice clone failed: {result.get('error', 'Unknown error')}")
+            
+            # Send error callback if callback_url is available
+            try:
+                if callback_url:
+                    # Construct error callback URL from success callback URL
+                    # Handle different possible callback URL formats
+                    if "/api/voice-clone/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voice-clone/error-callback")
+                    elif "/api/voice-clone/" in callback_url:
+                        # If it's a different voice-clone endpoint, replace the last part
+                        error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
+                    else:
+                        # Fallback: append error-callback to the base URL
+                        base_url = callback_url.rstrip("/")
+                        error_callback_url = f"{base_url}/error-callback"
+                    
+                    # Send error callback
+                    payload = {
+                        'status': 'error',
+                        'user_id': user_id,
+                        'voice_id': voice_id,
+                        'voice_name': name,
+                        'language': language,
+                        'error': result.get('error', 'Unknown error'),
+                    }
+                    
+                    logger.info(f"📤 Error callback URL: {error_callback_url}")
+                    logger.info(f"📤 Error callback payload: {payload}")
+                    
+                    _post_signed_callback(error_callback_url, payload)
+                    logger.info("✅ Error callback sent successfully")
+            except Exception as callback_error:
+                logger.error(f"❌ Failed to send error callback: {callback_error}")
+            
+            return result
+
         # Post-process result: if caller supplied audio_path, avoid duplicate recorded upload
         # and ensure recorded_audio_path reflects the original pointer
         try:
@@ -619,7 +658,7 @@ def handle_voice_clone_request(input, responseFormat):
         # ===== POST-GENERATION METADATA VERIFICATION =====
         logger.info("🔍 ===== POST-GENERATION METADATA VERIFICATION =====")
         
-        # Verify metadata was set on uploaded files
+        # Verify metadata was set on uploaded files (only for successful operations)
         try:
             if isinstance(result, dict) and result.get("status") == "success":
                 # Build Firebase paths based on language and kids voice
@@ -741,9 +780,9 @@ def handle_voice_clone_request(input, responseFormat):
         # ===== SUCCESS CALLBACK LOGGING =====
         logger.info("🔍 ===== SUCCESS CALLBACK PAYLOAD =====")
         
-        # Attempt callback on success
+        # Attempt callback on success (only for successful operations)
         try:
-            if callback_url:
+            if callback_url and isinstance(result, dict) and result.get("status") == "success":
                 try:
                     # Build storage paths using the exact filenames
                     kids_segment = 'kids/' if is_kids_voice else ''
