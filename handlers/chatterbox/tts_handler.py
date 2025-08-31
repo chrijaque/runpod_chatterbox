@@ -556,13 +556,15 @@ def handler(event, responseFormat="base64"):
     
     # Handle TTS generation request according to API contract
     text = event["input"].get("text")
-    voice_id = event["input"].get("voice_id")
     profile_base64 = event["input"].get("profile_base64")
     language = event["input"].get("language", "en")
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
     callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
+    
+    # Extract voice_id with fallback to metadata (like VC handler)
+    voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
     
     # Extract additional metadata variables needed throughout the function
     user_id = api_metadata.get("user_id") or event["input"].get("user_id")
