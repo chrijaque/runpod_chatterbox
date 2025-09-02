@@ -9,6 +9,9 @@ import glob
 import pathlib
 import shutil
 import requests
+import hmac
+import hashlib
+from urllib.parse import urlparse
 import json
 from pathlib import Path
 from datetime import datetime
@@ -43,20 +46,36 @@ def notify_error_callback(error_callback_url: str, story_id: str, error_message:
     try:
         logger.info(f"📤 Sending error callback to: {error_callback_url}")
         logger.info(f"📤 Error callback payload: {payload}")
-        
-        response = requests.post(
-            error_callback_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        response.raise_for_status()
+        _post_signed_callback(error_callback_url, payload)
         logger.info(f"✅ Error callback sent successfully for story {story_id}")
         return True
     except Exception as e:
         logger.error(f"❌ Failed to send error callback: {e}")
         logger.error(f"❌ Error callback exception type: {type(e)}")
         return False
+
+def _post_signed_callback(callback_url: str, payload: dict):
+    """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+    secret = os.getenv('DAEZEND_API_SHARED_SECRET')
+    if not secret:
+        raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+
+    parsed = urlparse(callback_url)
+    path_for_signing = parsed.path or '/api/tts/callback'
+    ts = str(int(time.time() * 1000))
+
+    body_bytes = json.dumps(payload).encode('utf-8')
+    prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
+    message = prefix + body_bytes
+    sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+
+    headers = {
+        'Content-Type': 'application/json',
+        'X-Daezend-Timestamp': ts,
+        'X-Daezend-Signature': sig,
+    }
+    resp = requests.post(callback_url, data=body_bytes, headers=headers, timeout=15)
+    resp.raise_for_status()
 
 def clear_python_cache():
     """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
@@ -851,8 +870,8 @@ def handler(event, responseFormat="base64"):
                         logger.info(f"📤   TTS callback metadata {key}: {value} (type: {type(value)})")
                 
                 try:
-                    resp = requests.post(callback_url, json=payload, timeout=10)
-                    logger.info(f"✅ TTS callback POST {callback_url} -> {resp.status_code}")
+                    _post_signed_callback(callback_url, payload)
+                    logger.info(f"✅ TTS callback POST {callback_url} -> signed and sent")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
                     logger.warning(f"⚠️ TTS callback exception type: {type(cb_e)}")

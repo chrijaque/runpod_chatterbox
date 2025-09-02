@@ -40,7 +40,8 @@ class RunPodClient:
                           language: str = "en", is_kids_voice: bool = False, model_type: str = "chatterbox",
                           user_id: Optional[str] = None, audio_path: Optional[str] = None,
                           profile_filename: Optional[str] = None, sample_filename: Optional[str] = None,
-                          output_basename: Optional[str] = None, voice_id: Optional[str] = None) -> Dict[str, Any]:
+                          output_basename: Optional[str] = None, voice_id: Optional[str] = None,
+                          callback_url: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -98,6 +99,7 @@ class RunPodClient:
                     "language": language,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
+                    "callback_url": callback_url,
                     # Naming hints for downstream handler
                     "profile_filename": profile_filename,
                     "sample_filename": sample_filename,
@@ -128,6 +130,7 @@ class RunPodClient:
                         "language": language,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
+                        "callback_url": callback_url,
                         # New naming hints
                         "voice_name": name,
                         "profile_filename": profile_filename,
