@@ -2,12 +2,12 @@ name = "chatterbox-vc"
 description = "ChatterboxTTS Voice Cloning Handler"
 repository = "https://github.com/chrijaque/runpod_chatterbox"
 docker_image_name = "chatterbox-vc"
-docker_image_tag = "latest"
+docker_image_tag = "prod"
 
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
 FIREBASE_STORAGE_BUCKET = "{{ FIREBASE_STORAGE_BUCKET }}"
-CACHE_BUST = "latest-{{ timestamp }}"
+CACHE_BUST = "prod-{{ timestamp }}"
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
