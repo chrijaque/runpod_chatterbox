@@ -4,7 +4,6 @@ import logging
 import os
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
-from ..services.redis_queue import RedisQueueService
 from ..models.schemas import (
     VoiceCloneRequest,
     VoiceCloneResponse,
@@ -29,7 +28,6 @@ runpod_client = RunPodClient(
 
 # Initialize Firebase service for library display
 firebase_service = None
-redis_queue: RedisQueueService | None = None
 
 def get_firebase_service():
     """Get or initialize Firebase service"""
@@ -81,18 +79,6 @@ def get_firebase_service():
     
     return firebase_service
 
-def get_queue_service() -> RedisQueueService | None:
-    global redis_queue
-    if redis_queue is not None:
-        return redis_queue
-    try:
-        redis_queue = RedisQueueService()
-        logger.info("✅ Redis queue initialized")
-        return redis_queue
-    except (ImportError, ValueError, Exception) as e:
-        logger.warning(f"⚠️ Redis not available: {e}")
-        return None
-
 @router.post("/clone", response_model=VoiceCloneResponse, dependencies=[Depends(verify_hmac)])
 async def clone_voice(request: VoiceCloneRequest, http_req: Request, job_id: str | None = None):
     """
@@ -119,7 +105,7 @@ async def clone_voice(request: VoiceCloneRequest, http_req: Request, job_id: str
         
         # Queue disabled: call RunPod directly (synchronous)
 
-        # Fallback: Call RunPod synchronously when Redis is not configured
+        # Call RunPod directly (synchronous)
         # If audio_path provided, pass pointer through; the RunPod handler will download it.
         if request.audio_path and "/recorded/" not in request.audio_path:
             raise HTTPException(status_code=400, detail="audio_path must be under recorded/")

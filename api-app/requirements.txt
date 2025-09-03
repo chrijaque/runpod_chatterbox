@@ -28,4 +28,3 @@ nltk>=3.8.1
 
 # Utilities
 python-dotenv>=1.0.0
-redis>=5.0.0

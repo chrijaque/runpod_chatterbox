@@ -1,6 +1,7 @@
-# Services package exports
+from .firebase import FirebaseService
+from .runpod_client import RunPodClient
+
 __all__ = [
-    "redis_queue",
-    "firebase",
-    "runpod_client",
+    "FirebaseService",
+    "RunPodClient",
 ]
