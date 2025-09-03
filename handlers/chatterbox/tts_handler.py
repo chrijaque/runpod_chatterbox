@@ -640,6 +640,17 @@ def handler(event, responseFormat="base64"):
             voice_name=voice_name
         )
         
+        # Debug: Log the result structure for successful TTS generation
+        logger.info(f"🔍 TTS generation result: {result}")
+        logger.info(f"🔍 TTS generation result type: {type(result)}")
+        if isinstance(result, dict):
+            logger.info(f"🔍 TTS generation result keys: {list(result.keys())}")
+            logger.info(f"🔍 TTS generation result status: {result.get('status')}")
+            logger.info(f"🔍 TTS generation result has firebase_url: {'firebase_url' in result}")
+            logger.info(f"🔍 TTS generation result has audio_url: {'audio_url' in result}")
+            logger.info(f"🔍 TTS generation result has audio_path: {'audio_path' in result}")
+            logger.info(f"🔍 TTS generation result has firebase_path: {'firebase_path' in result}")
+        
         # Check if TTS generation failed
         if isinstance(result, dict) and result.get("status") == "error":
             logger.error(f"❌ TTS generation failed: {result.get('message', 'Unknown error')}")
@@ -853,9 +864,30 @@ def handler(event, responseFormat="base64"):
         # ===== TTS SUCCESS CALLBACK LOGGING =====
         logger.info("🔍 ===== TTS SUCCESS CALLBACK PAYLOAD =====")
         
+        # Debug: Log callback_url and result for troubleshooting
+        logger.info(f"🔍 callback_url: {callback_url}")
+        logger.info(f"🔍 callback_url type: {type(callback_url)}")
+        logger.info(f"🔍 result: {result}")
+        logger.info(f"🔍 result type: {type(result)}")
+        if isinstance(result, dict):
+            logger.info(f"🔍 result keys: {list(result.keys())}")
+            logger.info(f"🔍 result status: {result.get('status')}")
+        
         # If callback_url provided, post completion payload
         try:
-            if callback_url and isinstance(result, dict) and result.get("status") == "success":
+            # More flexible callback condition: send callback if we have a callback_url and the result doesn't indicate an error
+            should_send_callback = (
+                callback_url and 
+                isinstance(result, dict) and 
+                result.get("status") != "error"  # Send callback unless explicitly an error
+            )
+            
+            logger.info(f"🔍 Should send callback: {should_send_callback}")
+            logger.info(f"🔍 callback_url exists: {bool(callback_url)}")
+            logger.info(f"🔍 result is dict: {isinstance(result, dict)}")
+            logger.info(f"🔍 result status is not error: {result.get('status') != 'error' if isinstance(result, dict) else 'N/A'}")
+            
+            if should_send_callback:
                 import requests
                 payload = {
                     "story_id": story_id,
