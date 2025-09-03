@@ -73,5 +73,30 @@ class Settings:
         # Final fallback
         return "daezend-audio-storage"
 
+    def validate_firebase_config(self) -> bool:
+        """Return True if Firebase config appears usable for this API app.
+
+        Accept either:
+        - FIREBASE_CREDENTIALS (JSON string) + bucket
+        - FIREBASE_LOCAL_CREDS_FILE path exists + bucket
+        """
+        try:
+            bucket = self.get_firebase_bucket_name()
+            if not bucket:
+                return False
+
+            # Prefer explicit env JSON credentials if provided
+            if self.FIREBASE_CREDENTIALS and len(self.FIREBASE_CREDENTIALS.strip()) > 0:
+                return True
+
+            # Otherwise allow local file for API-only browsing
+            creds_path = self.FIREBASE_LOCAL_CREDS_FILE
+            if creds_path and os.path.exists(creds_path):
+                return True
+
+            return False
+        except Exception:
+            return False
+
 # Create settings instance
 settings = Settings()
