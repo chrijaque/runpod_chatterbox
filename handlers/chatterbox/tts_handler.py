@@ -773,6 +773,7 @@ def handler(event, responseFormat="base64"):
                 # Extract additional hints for post-processing
                 import re
                 output_basename = api_metadata.get("output_basename") or event["input"].get("output_basename")
+                output_filename = api_metadata.get("output_filename") or event["input"].get("output_filename")
                 if not story_name and output_basename:
                     story_name = output_basename.split("_")[0]
                 safe_story = re.sub(r'[^a-z0-9]+', '_', (story_name or 'story').lower()).strip('_')
@@ -788,8 +789,23 @@ def handler(event, responseFormat="base64"):
                 # Build target path
                 if firebase_path:
                     ext = firebase_path.split('.')[-1].lower() if '.' in firebase_path else 'mp3'
+                    # Prefer explicit output_filename (with optional extension), else fall back to output_basename
+                    final_filename = None
+                    try:
+                        if output_filename:
+                            # Use only the basename if a path was provided
+                            provided_name = os.path.basename(output_filename)
+                            if '.' in provided_name:
+                                final_filename = provided_name
+                                ext = provided_name.rsplit('.', 1)[-1].lower()
+                            else:
+                                final_filename = f"{provided_name}.{ext}"
+                        else:
+                            final_filename = f"{base}.{ext}"
+                    except Exception:
+                        final_filename = f"{base}.{ext}"
                     # Store under audio/stories/{language}/user/{user_id}/{file}
-                    target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{base}.{ext}"
+                    target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
                     if target_path != firebase_path:
                         new_url = rename_in_firebase(
                             firebase_path,
