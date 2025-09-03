@@ -5,7 +5,15 @@ import os
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
 from ..services.redis_queue import RedisQueueService
-from ..models.schemas import VoiceCloneRequest, VoiceCloneResponse, VoiceInfo
+from ..models.schemas import (
+    VoiceCloneRequest,
+    VoiceCloneResponse,
+    VoiceInfo,
+    VoiceCloneSuccessCallbackRequest,
+    VoiceCloneSuccessCallbackResponse,
+    VoiceCloneErrorCallbackRequest,
+    VoiceCloneErrorCallbackResponse,
+)
 from ..config import settings
 from ..middleware.security import verify_hmac
 
@@ -156,21 +164,21 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         logger.error(f"❌ Voice clone error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Voice clone failed: {str(e)}")
 
-@router.post("/callback")
-async def voice_clone_callback(request: dict):
+@router.post("/callback", response_model=VoiceCloneSuccessCallbackResponse)
+async def voice_clone_callback(request: VoiceCloneSuccessCallbackRequest):
     """
     Handle voice clone callbacks from RunPod workers.
     This endpoint receives status updates from the voice cloning process.
     """
     try:
-        logger.info(f"📥 Voice clone callback received: {request}")
+        logger.info(f"📥 Voice clone callback received")
         
         # Extract callback data
-        status = request.get('status')
-        user_id = request.get('user_id')
-        voice_id = request.get('voice_id')
-        error = request.get('error')
-        message = request.get('message')  # Some workers send 'message' instead of 'error'
+        status = request.status
+        user_id = request.user_id
+        voice_id = request.voice_id
+        error = request.error
+        message = None  # unified schema uses 'error'
         
         # Handle both error field formats
         error_message = error or message
@@ -191,11 +199,16 @@ async def voice_clone_callback(request: dict):
                     doc_ref = firebase_service.db.collection("voice_profiles").document(voice_id)
                     
                     if status == "success":
-                        # Update to ready status
-                        doc_ref.update({
+                        update_data = {
                             "status": "ready",
                             "updatedAt": SERVER_TIMESTAMP,
-                        })
+                        }
+                        # Persist storage paths if provided
+                        if request.profile_path:
+                            update_data["profile_path"] = request.profile_path
+                        if request.sample_path:
+                            update_data["sample_path"] = request.sample_path
+                        doc_ref.update(update_data)
                         logger.info(f"✅ Updated voice profile {voice_id} to ready status")
                     elif status == "error" or error_message:
                         # Update to failed status with error message
@@ -211,12 +224,43 @@ async def voice_clone_callback(request: dict):
                     logger.warning("⚠️ Firebase service not available for callback update")
             except Exception as e:
                 logger.error(f"❌ Failed to update Firestore voice profile: {e}")
-        
-        return {"success": True}
+        return VoiceCloneSuccessCallbackResponse(success=True)
         
     except Exception as e:
         logger.error(f"❌ Error handling voice clone callback: {e}")
-        return {"success": False, "error": str(e)}
+        return VoiceCloneSuccessCallbackResponse(success=False, error=str(e))
+
+@router.post("/error-callback", response_model=VoiceCloneErrorCallbackResponse)
+async def voice_clone_error_callback(request: VoiceCloneErrorCallbackRequest):
+    """
+    Handle voice clone error callbacks. Mark profile as failed and persist error.
+    """
+    try:
+        logger.info(f"❌ Voice clone error callback received for voice: {request.voice_id}")
+        logger.info(f"🔍 User ID: {request.user_id}")
+        logger.info(f"🔍 Error: {request.error}")
+
+        if request.voice_id and request.user_id:
+            try:
+                firebase_service = get_firebase_service()
+                if firebase_service:
+                    from google.cloud.firestore import SERVER_TIMESTAMP
+                    doc_ref = firebase_service.db.collection("voice_profiles").document(request.voice_id)
+                    doc_ref.update({
+                        "status": "failed",
+                        "error": request.error,
+                        "updatedAt": SERVER_TIMESTAMP,
+                    })
+                    logger.info(f"❌ Updated voice profile {request.voice_id} to failed status")
+                else:
+                    logger.warning("⚠️ Firebase service not available for error callback update")
+            except Exception as e:
+                logger.error(f"❌ Failed to update Firestore voice profile: {e}")
+
+        return VoiceCloneErrorCallbackResponse(success=True)
+    except Exception as e:
+        logger.error(f"❌ Error handling voice clone error callback: {e}")
+        return VoiceCloneErrorCallbackResponse(success=False, error=str(e))
 
 @router.get("/")
 async def list_voices():

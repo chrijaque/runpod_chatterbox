@@ -65,6 +65,48 @@ class TTSErrorCallbackResponse(BaseModel):
     success: bool
     error: Optional[str] = None
 
+class TTSSuccessCallbackRequest(BaseModel):
+    story_id: str
+    user_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    voice_name: Optional[str] = None
+    audio_url: Optional[str] = None
+    storage_path: Optional[str] = None
+    language: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class TTSSuccessCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
+class VoiceCloneSuccessCallbackRequest(BaseModel):
+    status: Optional[str] = None
+    user_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    voice_name: Optional[str] = None
+    language: Optional[str] = None
+    profile_path: Optional[str] = None
+    sample_path: Optional[str] = None
+    error: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class VoiceCloneSuccessCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
+class VoiceCloneErrorCallbackRequest(BaseModel):
+    status: Optional[str] = None
+    user_id: Optional[str] = None
+    voice_id: Optional[str] = None
+    voice_name: Optional[str] = None
+    language: Optional[str] = None
+    error: str
+    metadata: Optional[Dict[str, Any]] = None
+
+class VoiceCloneErrorCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
 class VoiceInfo(BaseModel):
     voice_id: str
     name: str

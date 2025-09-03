@@ -614,14 +614,12 @@ def handle_voice_clone_request(input, responseFormat):
             try:
                 if callback_url:
                     # Construct error callback URL from success callback URL
-                    # Handle different possible callback URL formats
-                    if "/api/voice-clone/callback" in callback_url:
-                        error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voice-clone/error-callback")
-                    elif "/api/voice-clone/" in callback_url:
-                        # If it's a different voice-clone endpoint, replace the last part
+                    # Normalize to voices routes used by the API
+                    if "/api/voices/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/voices/callback", "/api/voices/error-callback")
+                    elif "/api/voices/" in callback_url:
                         error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
                     else:
-                        # Fallback: append error-callback to the base URL
                         base_url = callback_url.rstrip("/")
                         error_callback_url = f"{base_url}/error-callback"
                     
@@ -862,7 +860,8 @@ def _post_signed_callback(callback_url: str, payload: dict):
         raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
 
     parsed = urlparse(callback_url)
-    path_for_signing = parsed.path or '/api/voice-clone/callback'
+    # Default to voices success callback for signing if path is missing
+    path_for_signing = parsed.path or '/api/voices/callback'
     ts = str(int(time.time() * 1000))
     body_bytes = json.dumps(payload).encode('utf-8')
     prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')

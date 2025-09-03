@@ -3,7 +3,15 @@ from typing import List
 import logging
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
-from ..models.schemas import TTSGenerateRequest, TTSGenerateResponse, TTSGeneration, TTSErrorCallbackRequest, TTSErrorCallbackResponse
+from ..models.schemas import (
+    TTSGenerateRequest,
+    TTSGenerateResponse,
+    TTSGeneration,
+    TTSErrorCallbackRequest,
+    TTSErrorCallbackResponse,
+    TTSSuccessCallbackRequest,
+    TTSSuccessCallbackResponse,
+)
 from ..config import settings
 from ..middleware.security import verify_hmac
 
@@ -79,6 +87,52 @@ async def tts_error_callback(request: TTSErrorCallbackRequest):
             success=False, 
             error=f"Internal server error: {str(e)}"
         )
+
+@router.post("/callback", response_model=TTSSuccessCallbackResponse)
+async def tts_success_callback(request: TTSSuccessCallbackRequest):
+    """
+    Handle TTS success callbacks from RunPod worker. Update Firestore story document
+    with the generated audio URL/path and mark audioStatus as 'ready'.
+    """
+    try:
+        logger.info(f"✅ TTS Success callback received for story: {request.story_id}")
+        logger.info(f"🔍 User ID: {request.user_id}")
+        logger.info(f"🔍 Voice ID: {request.voice_id}")
+        logger.info(f"🔍 Audio URL: {request.audio_url}")
+        logger.info(f"🔍 Storage path: {request.storage_path}")
+
+        # Update story document in Firestore
+        try:
+            import firebase_admin
+            from firebase_admin import firestore
+
+            db = firestore.client()
+            story_ref = db.collection("stories").document(request.story_id)
+
+            update_data = {
+                "audioStatus": "ready",
+                "audioUrl": request.audio_url,
+                "audioStoragePath": request.storage_path,
+                "voiceId": request.voice_id,
+                "voiceName": request.voice_name,
+                "language": request.language,
+                "updatedAt": firestore.SERVER_TIMESTAMP,
+            }
+
+            # Merge in metadata if present
+            if request.metadata:
+                update_data["audioMetadata"] = request.metadata
+
+            story_ref.update(update_data)
+
+            logger.info(f"✅ Story {request.story_id} updated with audio info in Firestore")
+            return TTSSuccessCallbackResponse(success=True)
+        except Exception as firestore_error:
+            logger.error(f"❌ Failed to update Firestore for story {request.story_id}: {firestore_error}")
+            return TTSSuccessCallbackResponse(success=False, error=f"Failed to update Firestore: {str(firestore_error)}")
+    except Exception as e:
+        logger.error(f"❌ TTS success callback processing failed: {str(e)}")
+        return TTSSuccessCallbackResponse(success=False, error=f"Internal server error: {str(e)}")
 
 @router.post("/generate", response_model=TTSGenerateResponse, dependencies=[Depends(verify_hmac)])
 async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
