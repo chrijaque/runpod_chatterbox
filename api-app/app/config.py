@@ -25,6 +25,7 @@ class Settings:
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
+    PUBLIC_API_BASE_URL: Optional[str] = os.getenv("PUBLIC_API_BASE_URL")
     
     # CORS Configuration
     # Default origins; can be overridden by ALLOW_ORIGINS (comma-separated)

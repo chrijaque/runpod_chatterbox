@@ -44,6 +44,7 @@ class TTSGenerateRequest(BaseModel):
     # Naming hints (optional)
     story_name: Optional[str] = None
     output_basename: Optional[str] = None
+    output_filename: Optional[str] = None
     voice_name: Optional[str] = None  # Voice name for metadata and Firebase uploads
 
 class TTSGenerateResponse(BaseModel):

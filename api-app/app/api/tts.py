@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import List
 import logging
 from ..services.runpod_client import RunPodClient
@@ -135,7 +135,7 @@ async def tts_success_callback(request: TTSSuccessCallbackRequest):
         return TTSSuccessCallbackResponse(success=False, error=f"Internal server error: {str(e)}")
 
 @router.post("/generate", response_model=TTSGenerateResponse, dependencies=[Depends(verify_hmac)])
-async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
+async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None, http_req: Request | None = None):
     """
     Generate TTS using a voice profile.
     """
@@ -161,6 +161,16 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
         logger.info(f"🔧 RunPod client config - Base URL: {runpod_client.base_url}")
         
         try:
+            # Default callback_url if none provided
+            default_cb = None
+            try:
+                if settings.PUBLIC_API_BASE_URL:
+                    default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/tts/callback"
+                elif http_req is not None and hasattr(http_req, "base_url"):
+                    default_cb = str(http_req.base_url).rstrip("/") + "/api/tts/callback"
+            except Exception:
+                default_cb = None
+
             result = runpod_client.generate_tts_with_context(
                 voice_id=request.voice_id,
                 text=request.text,
@@ -172,7 +182,7 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None):
                 user_id=request.user_id,
                 story_id=request.story_id,
                 profile_path=request.profile_path,
-                callback_url=request.callback_url,
+                callback_url=(request.callback_url or default_cb),
                 story_name=getattr(request, 'story_name', None),
                 output_basename=getattr(request, 'output_basename', None),
                 voice_name=getattr(request, 'voice_name', None),

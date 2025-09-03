@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import List
 import logging
 import os
@@ -94,7 +94,7 @@ def get_queue_service() -> RedisQueueService | None:
         return None
 
 @router.post("/clone", response_model=VoiceCloneResponse, dependencies=[Depends(verify_hmac)])
-async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
+async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None, http_req: Request | None = None):
     """
     Clone a voice using uploaded audio.
     """
@@ -124,6 +124,16 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
         if request.audio_path and "/recorded/" not in request.audio_path:
             raise HTTPException(status_code=400, detail="audio_path must be under recorded/")
 
+        # Default callback_url if none provided
+        default_cb = None
+        try:
+            if settings.PUBLIC_API_BASE_URL:
+                default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/voices/callback"
+            elif http_req is not None and hasattr(http_req, "base_url"):
+                default_cb = str(http_req.base_url).rstrip("/") + "/api/voices/callback"
+        except Exception:
+            default_cb = None
+
         result = runpod_client.create_voice_clone(
             name=request.name,
             audio_base64=request.audio_data,
@@ -137,7 +147,7 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None):
             sample_filename=request.sample_filename or (f"{request.voice_id}.mp3" if request.voice_id else None),
             output_basename=request.output_basename or request.voice_id,
             voice_id=request.voice_id,
-            callback_url=request.callback_url,
+            callback_url=(request.callback_url or default_cb),
         )
         
         logger.info(f"🔍 RunPod result type: {type(result)}")

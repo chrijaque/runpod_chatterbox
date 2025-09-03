@@ -196,7 +196,7 @@ class RunPodClient:
                                  model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
                                  profile_path: Optional[str] = None, callback_url: Optional[str] = None,
                                  story_name: Optional[str] = None, output_basename: Optional[str] = None,
-                                 voice_name: Optional[str] = None) -> Dict[str, Any]:
+                                 output_filename: Optional[str] = None, voice_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -234,6 +234,7 @@ class RunPodClient:
                     "callback_url": callback_url,
                     "story_name": story_name,
                     "output_basename": output_basename,
+                    "output_filename": output_filename,
                     "voice_name": voice_name,
                 },
                 "input": {
@@ -251,6 +252,7 @@ class RunPodClient:
                     "story_id": story_id,
                     "story_name": story_name,
                     "output_basename": output_basename,
+                    "output_filename": output_filename,
                     "voice_name": voice_name,
                     # Nested metadata for handlers that expect it
                     "metadata": {
@@ -263,6 +265,7 @@ class RunPodClient:
                         "callback_url": callback_url,
                         "story_name": story_name,
                         "output_basename": output_basename,
+                        "output_filename": output_filename,
                         "voice_name": voice_name,
                     },
                 }
