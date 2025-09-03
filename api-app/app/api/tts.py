@@ -135,7 +135,7 @@ async def tts_success_callback(request: TTSSuccessCallbackRequest):
         return TTSSuccessCallbackResponse(success=False, error=f"Internal server error: {str(e)}")
 
 @router.post("/generate", response_model=TTSGenerateResponse, dependencies=[Depends(verify_hmac)])
-async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None, http_req: Request | None = None):
+async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: str | None = None):
     """
     Generate TTS using a voice profile.
     """
@@ -162,14 +162,10 @@ async def generate_tts(request: TTSGenerateRequest, job_id: str | None = None, h
         
         try:
             # Default callback_url if none provided
-            default_cb = None
-            try:
-                if settings.PUBLIC_API_BASE_URL:
-                    default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/tts/callback"
-                elif http_req is not None and hasattr(http_req, "base_url"):
-                    default_cb = str(http_req.base_url).rstrip("/") + "/api/tts/callback"
-            except Exception:
-                default_cb = None
+            if settings.PUBLIC_API_BASE_URL:
+                default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/tts/callback"
+            else:
+                default_cb = str(http_req.base_url).rstrip("/") + "/api/tts/callback"
 
             result = runpod_client.generate_tts_with_context(
                 voice_id=request.voice_id,

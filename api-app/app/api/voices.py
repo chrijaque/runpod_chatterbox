@@ -94,7 +94,7 @@ def get_queue_service() -> RedisQueueService | None:
         return None
 
 @router.post("/clone", response_model=VoiceCloneResponse, dependencies=[Depends(verify_hmac)])
-async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None, http_req: Request | None = None):
+async def clone_voice(request: VoiceCloneRequest, http_req: Request, job_id: str | None = None):
     """
     Clone a voice using uploaded audio.
     """
@@ -125,14 +125,10 @@ async def clone_voice(request: VoiceCloneRequest, job_id: str | None = None, htt
             raise HTTPException(status_code=400, detail="audio_path must be under recorded/")
 
         # Default callback_url if none provided
-        default_cb = None
-        try:
-            if settings.PUBLIC_API_BASE_URL:
-                default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/voices/callback"
-            elif http_req is not None and hasattr(http_req, "base_url"):
-                default_cb = str(http_req.base_url).rstrip("/") + "/api/voices/callback"
-        except Exception:
-            default_cb = None
+        if settings.PUBLIC_API_BASE_URL:
+            default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/voices/callback"
+        else:
+            default_cb = str(http_req.base_url).rstrip("/") + "/api/voices/callback"
 
         result = runpod_client.create_voice_clone(
             name=request.name,
