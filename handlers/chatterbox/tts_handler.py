@@ -582,6 +582,12 @@ def handler(event, responseFormat="base64"):
     api_metadata = event["input"].get("metadata", {})
     callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
     
+    # Debug: Log callback_url immediately after extraction
+    logger.info(f"🔍 EXTRACTED callback_url: {callback_url}")
+    logger.info(f"🔍 EXTRACTED callback_url type: {type(callback_url)}")
+    logger.info(f"🔍 EXTRACTED callback_url from api_metadata: {api_metadata.get('callback_url')}")
+    logger.info(f"🔍 EXTRACTED callback_url from event metadata: {event.get('metadata', {}).get('callback_url') if isinstance(event.get('metadata'), dict) else 'N/A'}")
+    
     # Extract voice_id with fallback to metadata (like VC handler)
     voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
     
