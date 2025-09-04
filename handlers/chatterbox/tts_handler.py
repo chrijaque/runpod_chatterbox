@@ -56,26 +56,57 @@ def notify_error_callback(error_callback_url: str, story_id: str, error_message:
 
 def _post_signed_callback(callback_url: str, payload: dict):
     """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+    logger.info(f"🔍 _post_signed_callback called with URL: {callback_url}")
+    logger.info(f"🔍 _post_signed_callback payload keys: {list(payload.keys())}")
+    
+    # Create a clean version of payload for logging (without raw data)
+    clean_payload = {k: v for k, v in payload.items() if k not in ['audio_data']}
+    if 'audio_data' in payload:
+        clean_payload['audio_data'] = f"[BASE64 DATA] Length: {len(payload['audio_data'])} chars"
+    logger.info(f"🔍 _post_signed_callback clean payload: {clean_payload}")
+    
     secret = os.getenv('DAEZEND_API_SHARED_SECRET')
     if not secret:
+        logger.error("❌ DAEZEND_API_SHARED_SECRET not set; cannot sign callback")
         raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+    
+    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
+    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
 
     parsed = urlparse(callback_url)
     path_for_signing = parsed.path or '/api/tts/callback'
     ts = str(int(time.time() * 1000))
+    
+    logger.info(f"🔍 Parsed URL: {parsed}")
+    logger.info(f"🔍 Path for signing: {path_for_signing}")
+    logger.info(f"🔍 Timestamp: {ts}")
 
     body_bytes = json.dumps(payload).encode('utf-8')
     prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
     message = prefix + body_bytes
     sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+    
+    logger.info(f"🔍 Body size: {len(body_bytes)} bytes")
+    logger.info(f"🔍 Message size: {len(message)} bytes")
+    logger.info(f"🔍 Signature: {sig[:20]}...")
 
     headers = {
         'Content-Type': 'application/json',
         'X-Daezend-Timestamp': ts,
         'X-Daezend-Signature': sig,
     }
+    
+    logger.info(f"🔍 Headers: {headers}")
+    logger.info(f"🔍 Making POST request to: {callback_url}")
+    
     resp = requests.post(callback_url, data=body_bytes, headers=headers, timeout=15)
+    
+    logger.info(f"🔍 Response status: {resp.status_code}")
+    logger.info(f"🔍 Response headers: {dict(resp.headers)}")
+    logger.info(f"🔍 Response text: {resp.text[:200]}...")
+    
     resp.raise_for_status()
+    logger.info(f"✅ Callback POST successful: {resp.status_code}")
 
 def clear_python_cache():
     """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
@@ -552,6 +583,8 @@ def handler(event, responseFormat="base64"):
         for key, value in event["input"].items():
             if key == 'profile_base64' and value:
                 logger.info(f"📥 {key}: [BASE64 DATA] Length: {len(value)} chars")
+            elif key == 'audio_data' and value:
+                logger.info(f"📥 {key}: [BASE64 DATA] Length: {len(value)} chars")
             elif isinstance(value, dict):
                 logger.info(f"📥 {key}: {type(value)} with keys: {list(value.keys())}")
             else:
@@ -580,7 +613,7 @@ def handler(event, responseFormat="base64"):
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
-    callback_url = api_metadata.get("callback_url") or event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None
+    callback_url = api_metadata.get("callback_url") or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
     
     # Debug: Log callback_url immediately after extraction
     logger.info(f"🔍 EXTRACTED callback_url: {callback_url}")
@@ -646,16 +679,32 @@ def handler(event, responseFormat="base64"):
             voice_name=voice_name
         )
         
-        # Debug: Log the result structure for successful TTS generation
-        logger.info(f"🔍 TTS generation result: {result}")
+        # Store callback_url in result for reliable access
+        if isinstance(result, dict):
+            result["callback_url"] = callback_url
+            logger.info(f"🔍 STORED callback_url in result: {callback_url}")
+            logger.info(f"🔍 STORED callback_url type: {type(callback_url)}")
+            logger.info(f"🔍 STORED callback_url in result keys: {list(result.keys())}")
+        else:
+            logger.warning(f"⚠️ Result is not a dict, cannot store callback_url. Result type: {type(result)}")
+        
+        # Debug: Log the result structure for successful TTS generation (without raw data)
         logger.info(f"🔍 TTS generation result type: {type(result)}")
         if isinstance(result, dict):
+            # Create a clean version of result without raw data
+            clean_result = {k: v for k, v in result.items() if k not in ['audio_data']}
+            if 'audio_data' in result:
+                clean_result['audio_data'] = f"[BASE64 DATA] Length: {len(result['audio_data'])} chars"
+            
             logger.info(f"🔍 TTS generation result keys: {list(result.keys())}")
             logger.info(f"🔍 TTS generation result status: {result.get('status')}")
             logger.info(f"🔍 TTS generation result has firebase_url: {'firebase_url' in result}")
             logger.info(f"🔍 TTS generation result has audio_url: {'audio_url' in result}")
             logger.info(f"🔍 TTS generation result has audio_path: {'audio_path' in result}")
             logger.info(f"🔍 TTS generation result has firebase_path: {'firebase_path' in result}")
+            logger.info(f"🔍 TTS generation clean result: {clean_result}")
+        else:
+            logger.info(f"🔍 TTS generation result: {result}")
         
         # Check if TTS generation failed
         if isinstance(result, dict) and result.get("status") == "error":
@@ -870,28 +919,58 @@ def handler(event, responseFormat="base64"):
         # ===== TTS SUCCESS CALLBACK LOGGING =====
         logger.info("🔍 ===== TTS SUCCESS CALLBACK PAYLOAD =====")
         
-        # Debug: Log callback_url and result for troubleshooting
-        logger.info(f"🔍 callback_url: {callback_url}")
-        logger.info(f"🔍 callback_url type: {type(callback_url)}")
-        logger.info(f"🔍 result: {result}")
+        # Get callback_url from result (more reliable than variable scope)
+        result_callback_url = result.get("callback_url") if isinstance(result, dict) else None
+        logger.info(f"🔍 EXTRACTED callback_url from result: {result_callback_url}")
+        logger.info(f"🔍 EXTRACTED callback_url from result type: {type(result_callback_url)}")
+        logger.info(f"🔍 EXTRACTED callback_url from result exists: {bool(result_callback_url)}")
+        if isinstance(result, dict):
+            logger.info(f"🔍 EXTRACTED callback_url from result keys: {list(result.keys())}")
+            logger.info(f"🔍 EXTRACTED callback_url from result has callback_url key: {'callback_url' in result}")
+        
+        # Debug: Log callback_url and result for troubleshooting (without raw data)
+        logger.info(f"🔍 callback_url from result: {result_callback_url}")
+        logger.info(f"🔍 callback_url type: {type(result_callback_url)}")
         logger.info(f"🔍 result type: {type(result)}")
         if isinstance(result, dict):
+            # Create a clean version of result without raw data
+            clean_result = {k: v for k, v in result.items() if k not in ['audio_data']}
+            if 'audio_data' in result:
+                clean_result['audio_data'] = f"[BASE64 DATA] Length: {len(result['audio_data'])} chars"
+            
             logger.info(f"🔍 result keys: {list(result.keys())}")
             logger.info(f"🔍 result status: {result.get('status')}")
+            logger.info(f"🔍 clean result: {clean_result}")
+        else:
+            logger.info(f"🔍 result: {result}")
         
         # If callback_url provided, post completion payload
         try:
             # More flexible callback condition: send callback if we have a callback_url and the result doesn't indicate an error
             should_send_callback = (
-                callback_url and 
+                result_callback_url and 
                 isinstance(result, dict) and 
                 result.get("status") != "error"  # Send callback unless explicitly an error
             )
             
-            logger.info(f"🔍 Should send callback: {should_send_callback}")
-            logger.info(f"🔍 callback_url exists: {bool(callback_url)}")
-            logger.info(f"🔍 result is dict: {isinstance(result, dict)}")
-            logger.info(f"🔍 result status is not error: {result.get('status') != 'error' if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"🔍 CALLBACK CONDITION EVALUATION:")
+            logger.info(f"🔍   result_callback_url: {result_callback_url}")
+            logger.info(f"🔍   result_callback_url is truthy: {bool(result_callback_url)}")
+            logger.info(f"🔍   result is dict: {isinstance(result, dict)}")
+            logger.info(f"🔍   result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"🔍   result status != 'error': {result.get('status') != 'error' if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"🔍   Should send callback: {should_send_callback}")
+            
+            # Break down the condition for debugging
+            condition1 = bool(result_callback_url)
+            condition2 = isinstance(result, dict)
+            condition3 = result.get("status") != "error" if isinstance(result, dict) else False
+            
+            logger.info(f"🔍 CALLBACK CONDITION BREAKDOWN:")
+            logger.info(f"🔍   Condition 1 (callback_url exists): {condition1}")
+            logger.info(f"🔍   Condition 2 (result is dict): {condition2}")
+            logger.info(f"🔍   Condition 3 (status != error): {condition3}")
+            logger.info(f"🔍   Final result (all conditions): {condition1 and condition2 and condition3}")
             
             if should_send_callback:
                 import requests
@@ -909,10 +988,15 @@ def handler(event, responseFormat="base64"):
                     },
                 }
                 
-                logger.info(f"📤 TTS callback URL: {callback_url}")
-                logger.info(f"📤 TTS callback payload: {payload}")
+                logger.info(f"📤 TTS callback URL: {result_callback_url}")
                 logger.info(f"📤 TTS callback payload type: {type(payload)}")
                 logger.info(f"📤 TTS callback payload keys: {list(payload.keys())}")
+                
+                # Create a clean version of payload without raw data
+                clean_payload = {k: v for k, v in payload.items() if k not in ['audio_data']}
+                if 'audio_data' in payload:
+                    clean_payload['audio_data'] = f"[BASE64 DATA] Length: {len(payload['audio_data'])} chars"
+                logger.info(f"📤 TTS callback clean payload: {clean_payload}")
                 
                 # Log nested metadata in callback
                 callback_metadata = payload.get("metadata", {})
@@ -924,16 +1008,32 @@ def handler(event, responseFormat="base64"):
                         logger.info(f"📤   TTS callback metadata {key}: {value} (type: {type(value)})")
                 
                 try:
-                    _post_signed_callback(callback_url, payload)
-                    logger.info(f"✅ TTS callback POST {callback_url} -> signed and sent")
+                    logger.info(f"🔍 CALLBACK SENDING:")
+                    logger.info(f"🔍   URL: {result_callback_url}")
+                    logger.info(f"🔍   Payload keys: {list(payload.keys())}")
+                    logger.info(f"🔍   Payload size: {len(str(payload))} characters")
+                    
+                    _post_signed_callback(result_callback_url, payload)
+                    logger.info(f"✅ TTS callback POST {result_callback_url} -> signed and sent")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
                     logger.warning(f"⚠️ TTS callback exception type: {type(cb_e)}")
+                    logger.warning(f"⚠️ TTS callback exception details: {str(cb_e)}")
+                    import traceback
+                    logger.warning(f"⚠️ TTS callback traceback: {traceback.format_exc()}")
         except Exception as e:
             logger.warning(f"⚠️ Error preparing TTS callback: {e}")
             logger.warning(f"⚠️ TTS callback preparation exception type: {type(e)}")
         
         logger.info("🔍 ===== END TTS SUCCESS CALLBACK PAYLOAD =====")
+        
+        # Final callback status summary
+        logger.info(f"🔍 CALLBACK SUMMARY:")
+        logger.info(f"🔍   Original callback_url: {callback_url}")
+        logger.info(f"🔍   Result callback_url: {result_callback_url}")
+        logger.info(f"🔍   Callback sent: {should_send_callback if 'should_send_callback' in locals() else 'Unknown'}")
+        logger.info(f"🔍   Result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
+        
         return result
 
     except Exception as e:
