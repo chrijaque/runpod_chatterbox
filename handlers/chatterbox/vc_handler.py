@@ -477,6 +477,12 @@ def handle_voice_clone_request(input, responseFormat):
     user_id = input.get('user_id') or meta_top.get('user_id')
     callback_url = input.get('callback_url') or meta_top.get('callback_url')
     
+    # Debug: Log callback_url immediately after extraction
+    logger.info(f"🔍 EXTRACTED callback_url: {callback_url}")
+    logger.info(f"🔍 EXTRACTED callback_url type: {type(callback_url)}")
+    logger.info(f"🔍 EXTRACTED callback_url from input: {input.get('callback_url')}")
+    logger.info(f"🔍 EXTRACTED callback_url from meta_top: {meta_top.get('callback_url')}")
+    
     # ===== METADATA BREAKDOWN LOGGING =====
     logger.info("🔍 ===== METADATA BREAKDOWN =====")
     logger.info(f"📋 Top-level metadata: {meta_top}")
@@ -599,6 +605,15 @@ def handle_voice_clone_request(input, responseFormat):
             voice_name=name,
             api_metadata=api_metadata
         )
+        
+        # Store callback_url in result for reliable access
+        if isinstance(result, dict):
+            result["callback_url"] = callback_url
+            logger.info(f"🔍 STORED callback_url in result: {callback_url}")
+            logger.info(f"🔍 STORED callback_url type: {type(callback_url)}")
+            logger.info(f"🔍 STORED callback_url in result keys: {list(result.keys())}")
+        else:
+            logger.warning(f"⚠️ Result is not a dict, cannot store callback_url. Result type: {type(result)}")
         
         # Clean up temporary voice file
         try:
@@ -778,9 +793,44 @@ def handle_voice_clone_request(input, responseFormat):
         # ===== SUCCESS CALLBACK LOGGING =====
         logger.info("🔍 ===== SUCCESS CALLBACK PAYLOAD =====")
         
+        # Get callback_url from result (more reliable than variable scope)
+        result_callback_url = result.get("callback_url") if isinstance(result, dict) else None
+        logger.info(f"🔍 EXTRACTED callback_url from result: {result_callback_url}")
+        logger.info(f"🔍 EXTRACTED callback_url from result type: {type(result_callback_url)}")
+        logger.info(f"🔍 EXTRACTED callback_url from result exists: {bool(result_callback_url)}")
+        if isinstance(result, dict):
+            logger.info(f"🔍 EXTRACTED callback_url from result keys: {list(result.keys())}")
+            logger.info(f"🔍 EXTRACTED callback_url from result has callback_url key: {'callback_url' in result}")
+        
         # Attempt callback on success (only for successful operations)
         try:
-            if callback_url and isinstance(result, dict) and result.get("status") == "success":
+            # More flexible callback condition: send callback if we have a callback_url and the result doesn't indicate an error
+            should_send_callback = (
+                result_callback_url and 
+                isinstance(result, dict) and 
+                result.get("status") != "error"  # Send callback unless explicitly an error
+            )
+            
+            logger.info(f"🔍 CALLBACK CONDITION EVALUATION:")
+            logger.info(f"🔍   result_callback_url: {result_callback_url}")
+            logger.info(f"🔍   result_callback_url is truthy: {bool(result_callback_url)}")
+            logger.info(f"🔍   result is dict: {isinstance(result, dict)}")
+            logger.info(f"🔍   result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"🔍   result status != 'error': {result.get('status') != 'error' if isinstance(result, dict) else 'N/A'}")
+            logger.info(f"🔍   Should send callback: {should_send_callback}")
+            
+            # Break down the condition for debugging
+            condition1 = bool(result_callback_url)
+            condition2 = isinstance(result, dict)
+            condition3 = result.get("status") != "error" if isinstance(result, dict) else False
+            
+            logger.info(f"🔍 CALLBACK CONDITION BREAKDOWN:")
+            logger.info(f"🔍   Condition 1 (callback_url exists): {condition1}")
+            logger.info(f"🔍   Condition 2 (result is dict): {condition2}")
+            logger.info(f"🔍   Condition 3 (status != error): {condition3}")
+            logger.info(f"🔍   Final result (all conditions): {condition1 and condition2 and condition3}")
+            
+            if should_send_callback:
                 try:
                     # Build storage paths using the exact filenames
                     kids_segment = 'kids/' if is_kids_voice else ''
@@ -796,13 +846,25 @@ def handle_voice_clone_request(input, responseFormat):
                         'sample_path': sample_path,
                     }
                     
-                    logger.info(f"📤 Success callback URL: {callback_url}")
+                    logger.info(f"📤 Success callback URL: {result_callback_url}")
                     logger.info(f"📤 Success callback payload: {payload}")
                     logger.info(f"📤 Success callback payload type: {type(payload)}")
                     logger.info(f"📤 Success callback payload keys: {list(payload.keys())}")
                     
-                    _post_signed_callback(callback_url, payload)
-                    logger.info("✅ Success callback sent successfully")
+                    try:
+                        logger.info(f"🔍 CALLBACK SENDING:")
+                        logger.info(f"🔍   URL: {result_callback_url}")
+                        logger.info(f"🔍   Payload keys: {list(payload.keys())}")
+                        logger.info(f"🔍   Payload size: {len(str(payload))} characters")
+                        
+                        _post_signed_callback(result_callback_url, payload)
+                        logger.info(f"✅ VC callback POST {result_callback_url} -> signed and sent")
+                    except Exception as cb_e:
+                        logger.warning(f"⚠️ VC callback POST failed: {cb_e}")
+                        logger.warning(f"⚠️ VC callback exception type: {type(cb_e)}")
+                        logger.warning(f"⚠️ VC callback exception details: {str(cb_e)}")
+                        import traceback
+                        logger.warning(f"⚠️ VC callback traceback: {traceback.format_exc()}")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ Success callback failed: {cb_e}")
                     logger.warning(f"⚠️ Success callback exception type: {type(cb_e)}")
@@ -810,6 +872,13 @@ def handle_voice_clone_request(input, responseFormat):
             logger.warning(f"⚠️ Success callback preparation failed: {e}")
         
         logger.info("🔍 ===== END SUCCESS CALLBACK PAYLOAD =====")
+        
+        # Final callback status summary
+        logger.info(f"🔍 CALLBACK SUMMARY:")
+        logger.info(f"🔍   Original callback_url: {callback_url}")
+        logger.info(f"🔍   Result callback_url: {result_callback_url}")
+        logger.info(f"🔍   Callback sent: {should_send_callback if 'should_send_callback' in locals() else 'Unknown'}")
+        logger.info(f"🔍   Result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
 
         return result
 
@@ -855,26 +924,57 @@ def handle_voice_clone_request(input, responseFormat):
 
 def _post_signed_callback(callback_url: str, payload: dict):
     """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+    logger.info(f"🔍 _post_signed_callback called with URL: {callback_url}")
+    logger.info(f"🔍 _post_signed_callback payload keys: {list(payload.keys())}")
+    
+    # Create a clean version of payload for logging (without raw data)
+    clean_payload = {k: v for k, v in payload.items() if k not in ['audio_data']}
+    if 'audio_data' in payload:
+        clean_payload['audio_data'] = f"[BASE64 DATA] Length: {len(payload['audio_data'])} chars"
+    logger.info(f"🔍 _post_signed_callback clean payload: {clean_payload}")
+    
     secret = os.getenv('DAEZEND_API_SHARED_SECRET')
     if not secret:
+        logger.error("❌ DAEZEND_API_SHARED_SECRET not set; cannot sign callback")
         raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+    
+    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
+    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
 
     parsed = urlparse(callback_url)
     # Default to voices success callback for signing if path is missing
     path_for_signing = parsed.path or '/api/voices/callback'
     ts = str(int(time.time() * 1000))
+    
+    logger.info(f"🔍 Parsed URL: {parsed}")
+    logger.info(f"🔍 Path for signing: {path_for_signing}")
+    logger.info(f"🔍 Timestamp: {ts}")
+    
     body_bytes = json.dumps(payload).encode('utf-8')
     prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
     message = prefix + body_bytes
     sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+    
+    logger.info(f"🔍 Body size: {len(body_bytes)} bytes")
+    logger.info(f"🔍 Message size: {len(message)} bytes")
+    logger.info(f"🔍 Signature: {sig[:20]}...")
 
-    req = Request(callback_url, data=body_bytes, headers={
+    headers = {
         'Content-Type': 'application/json',
         'X-Daezend-Timestamp': ts,
         'X-Daezend-Signature': sig,
-    }, method='POST')
+    }
+    
+    logger.info(f"🔍 Headers: {headers}")
+    logger.info(f"🔍 Making POST request to: {callback_url}")
+
+    req = Request(callback_url, data=body_bytes, headers=headers, method='POST')
     with urlopen(req, timeout=15) as resp:
-        _ = resp.read()
+        response_data = resp.read()
+        logger.info(f"🔍 Response status: {resp.status}")
+        logger.info(f"🔍 Response headers: {dict(resp.headers)}")
+        logger.info(f"🔍 Response text: {response_data.decode('utf-8')[:200]}...")
+        logger.info(f"✅ VC Callback POST successful: {resp.status}")
 
 if __name__ == '__main__':
     logger.info("🚀 Voice Clone Handler starting...")
