@@ -292,13 +292,21 @@ class RunPodClient:
                 raise Exception(f"RunPod TTS API error: {response.text}")
             
             result = response.json()
-            logger.info(f"✅ TTS generated successfully")
             logger.info(f"📊 Response type: {type(result)}")
             logger.info(f"📊 Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
             if isinstance(result, dict):
                 logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
                 logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
                 logger.info(f"🔍 Response keys: {list(result.keys())}")
+                
+                # Check if the TTS handler returned an error status
+                if result.get('status') == 'error':
+                    error_message = result.get('error', result.get('message', 'Unknown error from TTS handler'))
+                    logger.error(f"❌ TTS handler returned error: {error_message}")
+                    # Return the error response as-is so the API can handle it properly
+                    return result
+                else:
+                    logger.info(f"✅ TTS generated successfully")
             
             return result
             

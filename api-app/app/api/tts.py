@@ -196,8 +196,14 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
             logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
             logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
         
+        # Check for error status first
+        if result.get("status") == "error":
+            error_message = result.get("error", result.get("message", "Unknown error occurred"))
+            logger.error(f"❌ TTS generation failed: {error_message}")
+            raise HTTPException(status_code=500, detail=error_message)
+        
         # Return immediately when job is queued (like voice cloning)
-        if result.get("status") in ["IN_QUEUE", "IN_PROGRESS"] and result.get("id"):
+        elif result.get("status") in ["IN_QUEUE", "IN_PROGRESS"] and result.get("id"):
             job_id = result.get("id")
             logger.info(f"⏳ TTS job queued with ID: {job_id}, returning immediately...")
             
