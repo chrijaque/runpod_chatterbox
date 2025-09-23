@@ -24,6 +24,136 @@ logger = logging.getLogger(__name__)
 
 """Minimal, production-focused TTS handler for RunPod runtime."""
 
+# ---------------------------------------------------------------------------------
+# Disk/cache management: centralize caches and provide cleanup + headroom checks
+# ---------------------------------------------------------------------------------
+def _ensure_cache_env_dirs():
+    """Set cache-related environment variables and ensure directories exist."""
+    try:
+        cache_root = Path(os.getenv("CACHE_ROOT", "/cache"))
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        env_to_subdir = {
+            "HF_HOME": "hf",
+            "TRANSFORMERS_CACHE": "hf",
+            "TORCH_HOME": "torch",
+            "PIP_CACHE_DIR": "pip",
+            "XDG_CACHE_HOME": "xdg",
+            "NLTK_DATA": "nltk",
+        }
+        for env_key, subdir in env_to_subdir.items():
+            os.environ.setdefault(env_key, str(cache_root / subdir))
+            try:
+                Path(os.environ[env_key]).mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        # Non-fatal: proceed without centralized caches
+        pass
+
+def _bytes_human(n: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+def _disk_free_bytes(path: str = "/") -> int:
+    try:
+        total, used, free = shutil.disk_usage(path)
+        return int(free)
+    except Exception:
+        return 0
+
+def _safe_remove(path: Path):
+    try:
+        if path.is_file() or path.is_symlink():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
+
+def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 * 30) -> None:
+    """
+    Prune temporary working dirs and, when necessary, heavy caches.
+    - Always clear temp voice/story dirs aggressively (older-than policy).
+    - If force=True or disk is low, also prune model/tool caches.
+    """
+    try:
+        # Temp/work dirs
+        temp_dirs = [
+            Path("/temp_voice"),
+            Path("/voice_samples"),
+            Path("/voice_profiles"),
+            Path("/tts_generated"),
+        ]
+        now = time.time()
+        for d in temp_dirs:
+            if not d.exists():
+                continue
+            for entry in d.iterdir():
+                try:
+                    mtime = entry.stat().st_mtime if entry.exists() else now
+                    if force or (now - mtime) > temp_age_seconds:
+                        _safe_remove(entry)
+                except Exception:
+                    pass
+
+        # Decide whether to prune caches
+        min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
+        free_bytes = _disk_free_bytes("/")
+        low_space = free_bytes < int(min_free_gb * (1024 ** 3))
+
+        if force or low_space:
+            # Known heavy caches (both centralized and default locations)
+            cache_candidates = [
+                Path(os.environ.get("HF_HOME", "")),
+                Path(os.environ.get("TRANSFORMERS_CACHE", "")),
+                Path(os.environ.get("TORCH_HOME", "")),
+                Path(os.environ.get("PIP_CACHE_DIR", "")),
+                Path(os.environ.get("XDG_CACHE_HOME", "")),
+                Path(os.environ.get("NLTK_DATA", "")),
+                Path.home() / ".cache" / "huggingface",
+                Path.home() / ".cache" / "torch",
+                Path.home() / ".nv" / "ComputeCache",
+                Path("/tmp"),
+            ]
+            for c in cache_candidates:
+                try:
+                    if c and c.exists():
+                        for child in c.iterdir():
+                            _safe_remove(child)
+                except Exception:
+                    pass
+
+        # Log free space after cleanup
+        free_after = _disk_free_bytes("/")
+        logger.info(
+            f"🧹 Cleanup done. Free space: { _bytes_human(free_after) }"
+        )
+    except Exception:
+        # Never fail handler due to cleanup
+        pass
+
+def ensure_disk_headroom(min_free_gb: float = None) -> None:
+    """Ensure minimum free disk space; trigger cleanup when below threshold."""
+    try:
+        if min_free_gb is None:
+            min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
+        free_before = _disk_free_bytes("/")
+        logger.info(f"💽 Free disk before check: { _bytes_human(free_before) }")
+        if free_before < int(min_free_gb * (1024 ** 3)):
+            logger.warning(
+                f"⚠️ Low disk space detected (<{min_free_gb} GB). Running cleanup..."
+            )
+            cleanup_runtime_storage(force=True)
+    except Exception:
+        pass
+
+# Initialize cache env as early as possible
+_ensure_cache_env_dirs()
+
 def notify_error_callback(error_callback_url: str, story_id: str, error_message: str, **kwargs):
     """
     Send error callback to the main app when TTS generation fails.
@@ -150,6 +280,15 @@ VOICE_SAMPLES_DIR = Path("/voice_samples")  # For voice clone samples
 TTS_GENERATED_DIR = Path("/tts_generated")  # For TTS story generation
 TEMP_VOICE_DIR = Path("/temp_voice")
 
+# Create directories if they don't exist
+for _d in [VOICE_PROFILES_DIR, VOICE_SAMPLES_DIR, TTS_GENERATED_DIR, TEMP_VOICE_DIR]:
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+os.environ.setdefault("TMPDIR", str(TEMP_VOICE_DIR))
+
 logger.info(f"Using directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
 logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
@@ -227,6 +366,7 @@ except Exception:
     logger.error("❌ Error during repository update")
 
 # Initialize models AFTER repository update
+ensure_disk_headroom()
 logger.info("🔧 Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
@@ -572,6 +712,15 @@ def handler(event, responseFormat="base64"):
     """Pure API orchestration: Handle TTS generation requests"""
     global tts_model, bucket
     
+    ensure_disk_headroom()
+
+    def _return_with_cleanup(obj):
+        try:
+            cleanup_runtime_storage(force=False)
+        except Exception:
+            pass
+        return obj
+
     # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
     logger.info("🔍 ===== TTS HANDLER INPUT PARAMETERS =====")
     logger.info(f"📥 Raw event keys: {list(event.keys())}")
@@ -597,12 +746,12 @@ def handler(event, responseFormat="base64"):
     # Initialize Firebase at the start
     if not initialize_firebase():
         logger.error("❌ Failed to initialize Firebase, cannot proceed")
-        return {"status": "error", "error": "Failed to initialize Firebase storage"}
+        return _return_with_cleanup({"status": "error", "error": "Failed to initialize Firebase storage"})
     
     # Check if TTS model is available
     if tts_model is None:
         logger.error("❌ TTS model not available")
-        return {"status": "error", "error": "TTS model not available"}
+        return _return_with_cleanup({"status": "error", "error": "TTS model not available"})
     
     logger.info("✅ Using pre-initialized TTS model")
     
@@ -656,7 +805,7 @@ def handler(event, responseFormat="base64"):
     _debug_gcs_creds()
     
     if not text or not voice_id:
-        return {"status": "error", "error": "Both text and voice_id are required"}
+        return _return_with_cleanup({"status": "error", "error": "Both text and voice_id are required"})
 
     logger.info(f"🎵 TTS request. Voice ID: {voice_id}")
     logger.info(f"🎵 Voice Name: {voice_name}")
@@ -749,7 +898,7 @@ def handler(event, responseFormat="base64"):
             except Exception as callback_error:
                 logger.error(f"❌ Failed to send error callback: {callback_error}")
             
-            return result
+            return _return_with_cleanup(result)
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
@@ -1034,7 +1183,7 @@ def handler(event, responseFormat="base64"):
         logger.info(f"🔍   Callback sent: {should_send_callback if 'should_send_callback' in locals() else 'Unknown'}")
         logger.info(f"🔍   Result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
         
-        return result
+        return _return_with_cleanup(result)
 
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
@@ -1077,7 +1226,7 @@ def handler(event, responseFormat="base64"):
         except Exception as callback_error:
             logger.error(f"❌ Failed to send error callback: {callback_error}")
         
-        return {"status": "error", "error": str(e)}
+        return _return_with_cleanup({"status": "error", "error": str(e)})
 
 def handle_file_download(input):
     """Handle file download requests"""

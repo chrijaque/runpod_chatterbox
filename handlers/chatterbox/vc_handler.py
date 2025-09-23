@@ -24,6 +24,135 @@ logger = logging.getLogger(__name__)
 
 """Minimal, production-focused VC handler for RunPod runtime."""
 
+# ---------------------------------------------------------------------------------
+# Disk/cache management: centralize caches and provide cleanup + headroom checks
+# ---------------------------------------------------------------------------------
+def _ensure_cache_env_dirs():
+    """Set cache-related environment variables and ensure directories exist."""
+    try:
+        cache_root = Path(os.getenv("CACHE_ROOT", "/cache"))
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        env_to_subdir = {
+            "HF_HOME": "hf",
+            "TRANSFORMERS_CACHE": "hf",
+            "TORCH_HOME": "torch",
+            "PIP_CACHE_DIR": "pip",
+            "XDG_CACHE_HOME": "xdg",
+            "NLTK_DATA": "nltk",
+        }
+        for env_key, subdir in env_to_subdir.items():
+            os.environ.setdefault(env_key, str(cache_root / subdir))
+            try:
+                Path(os.environ[env_key]).mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+    except Exception:
+        # Non-fatal: proceed without centralized caches
+        pass
+
+def _bytes_human(n: int) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+def _disk_free_bytes(path: str = "/") -> int:
+    try:
+        total, used, free = shutil.disk_usage(path)
+        return int(free)
+    except Exception:
+        return 0
+
+def _safe_remove(path: Path):
+    try:
+        if path.is_file() or path.is_symlink():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
+
+def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 * 30) -> None:
+    """
+    Prune temporary working dirs and, when necessary, heavy caches.
+    - Always clear temp voice dirs aggressively (older-than policy).
+    - If force=True or disk is low, also prune model/tool caches.
+    """
+    try:
+        # Temp/work dirs
+        temp_dirs = [
+            Path("/temp_voice"),
+            Path("/voice_samples"),
+            Path("/voice_profiles"),
+        ]
+        now = time.time()
+        for d in temp_dirs:
+            if not d.exists():
+                continue
+            for entry in d.iterdir():
+                try:
+                    mtime = entry.stat().st_mtime if entry.exists() else now
+                    if force or (now - mtime) > temp_age_seconds:
+                        _safe_remove(entry)
+                except Exception:
+                    pass
+
+        # Decide whether to prune caches
+        min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
+        free_bytes = _disk_free_bytes("/")
+        low_space = free_bytes < int(min_free_gb * (1024 ** 3))
+
+        if force or low_space:
+            # Known heavy caches (both centralized and default locations)
+            cache_candidates = [
+                Path(os.environ.get("HF_HOME", "")),
+                Path(os.environ.get("TRANSFORMERS_CACHE", "")),
+                Path(os.environ.get("TORCH_HOME", "")),
+                Path(os.environ.get("PIP_CACHE_DIR", "")),
+                Path(os.environ.get("XDG_CACHE_HOME", "")),
+                Path(os.environ.get("NLTK_DATA", "")),
+                Path.home() / ".cache" / "huggingface",
+                Path.home() / ".cache" / "torch",
+                Path.home() / ".nv" / "ComputeCache",
+                Path("/tmp"),
+            ]
+            for c in cache_candidates:
+                try:
+                    if c and c.exists():
+                        for child in c.iterdir():
+                            _safe_remove(child)
+                except Exception:
+                    pass
+
+        # Log free space after cleanup
+        free_after = _disk_free_bytes("/")
+        logger.info(
+            f"🧹 Cleanup done. Free space: { _bytes_human(free_after) }"
+        )
+    except Exception:
+        # Never fail handler due to cleanup
+        pass
+
+def ensure_disk_headroom(min_free_gb: float = None) -> None:
+    """Ensure minimum free disk space; trigger cleanup when below threshold."""
+    try:
+        if min_free_gb is None:
+            min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
+        free_before = _disk_free_bytes("/")
+        logger.info(f"💽 Free disk before check: { _bytes_human(free_before) }")
+        if free_before < int(min_free_gb * (1024 ** 3)):
+            logger.warning(
+                f"⚠️ Low disk space detected (<{min_free_gb} GB). Running cleanup..."
+            )
+            cleanup_runtime_storage(force=True)
+    except Exception:
+        pass
+
+# Initialize cache env as early as possible
+_ensure_cache_env_dirs()
+
 def clear_python_cache():
     """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
     try:
@@ -72,6 +201,9 @@ TEMP_VOICE_DIR = Path("/temp_voice")
 VOICE_PROFILES_DIR.mkdir(exist_ok=True)
 VOICE_SAMPLES_DIR.mkdir(exist_ok=True)
 TEMP_VOICE_DIR.mkdir(exist_ok=True)
+
+# Ensure generic temp dir is under our managed directory
+os.environ.setdefault("TMPDIR", str(TEMP_VOICE_DIR))
 
 logger.info(f"Using directories:")
 logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
@@ -150,6 +282,7 @@ except Exception:
     logger.error("❌ Error during repository update")
 
 # Initialize models AFTER repository update
+ensure_disk_headroom()
 logger.info("🔧 Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
@@ -432,6 +565,9 @@ def handle_voice_clone_request(input, responseFormat):
     """Pure API orchestration: Handle voice cloning requests"""
     global vc_model
     
+    # Ensure we have disk headroom before doing any significant work
+    ensure_disk_headroom()
+
     # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
     logger.info("🔍 ===== VC HANDLER INPUT PARAMETERS =====")
     logger.info(f"📥 Raw input keys: {list(input.keys())}")
@@ -880,6 +1016,11 @@ def handle_voice_clone_request(input, responseFormat):
         logger.info(f"🔍   Callback sent: {should_send_callback if 'should_send_callback' in locals() else 'Unknown'}")
         logger.info(f"🔍   Result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
 
+        # Opportunistic cleanup after job
+        try:
+            cleanup_runtime_storage(force=False)
+        except Exception:
+            pass
         return result
 
     except Exception as e:
@@ -919,6 +1060,10 @@ def handle_voice_clone_request(input, responseFormat):
             logger.warning(f"⚠️ Error callback preparation failed: {callback_prep_e}")
         
         logger.info("🔍 ===== END ERROR CALLBACK PAYLOAD =====")
+        try:
+            cleanup_runtime_storage(force=False)
+        except Exception:
+            pass
         return {"status": "error", "error": str(e)}
 
 
