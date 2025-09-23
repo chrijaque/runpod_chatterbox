@@ -35,6 +35,7 @@ def _ensure_cache_env_dirs():
 
         env_to_subdir = {
             "HF_HOME": "hf",
+            "HF_HUB_CACHE": "hf/hub",
             "TRANSFORMERS_CACHE": "hf",
             "TORCH_HOME": "torch",
             "PIP_CACHE_DIR": "pip",
@@ -48,27 +49,22 @@ def _ensure_cache_env_dirs():
             except Exception:
                 pass
 
-        # Redirect hard-coded default cache paths via symlink to our cache_root
-        def _relocate_and_link(src: Path, target: Path):
-            try:
-                src_parent = src.parent
-                src_parent.mkdir(parents=True, exist_ok=True)
-                if src.exists() and not src.is_symlink():
-                    # Move existing contents to target then replace with symlink
-                    target.mkdir(parents=True, exist_ok=True)
-                    for item in src.iterdir():
-                        try:
-                            shutil.move(str(item), str(target / item.name))
-                        except Exception:
-                            pass
-                    shutil.rmtree(src, ignore_errors=True)
-                if not src.exists():
-                    src.symlink_to(target, target_is_directory=True)
-            except Exception:
-                pass
+        # If a broken/cyclic symlink exists at ~/.cache/huggingface, remove it
+        hf_default = Path.home() / ".cache" / "huggingface"
+        try:
+            if hf_default.is_symlink():
+                try:
+                    _ = hf_default.resolve()
+                except Exception:
+                    hf_default.unlink(missing_ok=True)
+        except Exception:
+            pass
 
-        _relocate_and_link(Path.home() / ".cache" / "huggingface", Path(os.environ.get("HF_HOME", str(cache_root / "hf"))))
-        _relocate_and_link(Path.home() / ".cache" / "torch", Path(os.environ.get("TORCH_HOME", str(cache_root / "torch"))))
+        # Ensure default HF hub dir exists to avoid token write errors
+        try:
+            (hf_default / "hub").mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
     except Exception:
         # Non-fatal: proceed without centralized caches
         pass
@@ -655,6 +651,8 @@ def handle_voice_clone_request(input, responseFormat):
                 # Construct error callback URL from success callback URL
                 if "/api/voices/callback" in callback_url:
                     error_callback_url = callback_url.replace("/api/voices/callback", "/api/voices/error-callback")
+                elif "/api/voice-clone/callback" in callback_url:
+                    error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voices/error-callback")
                 elif "/api/voices/" in callback_url:
                     error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
                 else:
@@ -851,6 +849,8 @@ def handle_voice_clone_request(input, responseFormat):
                     # Normalize to voices routes used by the API
                     if "/api/voices/callback" in callback_url:
                         error_callback_url = callback_url.replace("/api/voices/callback", "/api/voices/error-callback")
+                    elif "/api/voice-clone/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voices/error-callback")
                     elif "/api/voices/" in callback_url:
                         error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
                     else:
