@@ -13,6 +13,7 @@ import hashlib
 import json
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
@@ -1245,9 +1246,42 @@ def _post_signed_callback(callback_url: str, payload: dict):
         response_data = resp.read()
         logger.info(f"🔍 Response status: {resp.status}")
         logger.info(f"🔍 Response headers: {dict(resp.headers)}")
+        logger.info(f"🔍 Final URL after request: {getattr(resp, 'geturl', lambda: 'unknown')()}")
         logger.info(f"🔍 Response text: {response_data.decode('utf-8')[:200]}...")
         logger.info(f"✅ VC Callback POST successful: {resp.status}")
         resp.close()
+    except HTTPError as http_err:
+        # Explicitly handle 307/308 by re-posting to Location
+        code = getattr(http_err, 'code', None)
+        loc = None
+        try:
+            loc = http_err.headers.get('Location') if hasattr(http_err, 'headers') and http_err.headers else None
+        except Exception:
+            loc = None
+        logger.warning(f"🔁 HTTPError encountered: code={code}, will inspect for redirect. Location={loc}")
+        if code in (307, 308) and loc:
+            try:
+                # Build absolute URL if relative
+                from urllib.parse import urljoin
+                follow_url = urljoin(callback_url, loc)
+                logger.info(f"🔁 Following {code} redirect to: {follow_url}")
+                # Reuse same signed headers and body (signature uses only path + body + timestamp)
+                req2 = Request(follow_url, data=body_bytes, headers=headers, method='POST')
+                resp2 = opener.open(req2, timeout=15)
+                response_data2 = resp2.read()
+                logger.info(f"🔍 Redirected response status: {resp2.status}")
+                logger.info(f"🔍 Redirected response headers: {dict(resp2.headers)}")
+                logger.info(f"🔍 Final URL after redirect: {getattr(resp2, 'geturl', lambda: 'unknown')()}")
+                logger.info(f"🔍 Redirected response text: {response_data2.decode('utf-8')[:200]}...")
+                logger.info(f"✅ VC Callback POST successful after redirect: {resp2.status}")
+                resp2.close()
+                return
+            except Exception as follow_e:
+                logger.error(f"❌ Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
+                raise
+        else:
+            logger.error(f"❌ HTTP request failed (no redirect follow): {type(http_err).__name__}: {http_err}")
+            raise
     except Exception as e:
         logger.error(f"❌ HTTP request failed: {e}")
         raise
