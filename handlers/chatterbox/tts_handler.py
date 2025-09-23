@@ -47,6 +47,28 @@ def _ensure_cache_env_dirs():
                 Path(os.environ[env_key]).mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
+
+        # Redirect hard-coded default cache paths via symlink to our cache_root
+        def _relocate_and_link(src: Path, target: Path):
+            try:
+                src_parent = src.parent
+                src_parent.mkdir(parents=True, exist_ok=True)
+                if src.exists() and not src.is_symlink():
+                    # Move existing contents to target then replace with symlink
+                    target.mkdir(parents=True, exist_ok=True)
+                    for item in src.iterdir():
+                        try:
+                            shutil.move(str(item), str(target / item.name))
+                        except Exception:
+                            pass
+                    shutil.rmtree(src, ignore_errors=True)
+                if not src.exists():
+                    src.symlink_to(target, target_is_directory=True)
+            except Exception:
+                pass
+
+        _relocate_and_link(Path.home() / ".cache" / "huggingface", Path(os.environ.get("HF_HOME", str(cache_root / "hf"))))
+        _relocate_and_link(Path.home() / ".cache" / "torch", Path(os.environ.get("TORCH_HOME", str(cache_root / "torch"))))
     except Exception:
         # Non-fatal: proceed without centralized caches
         pass
