@@ -83,6 +83,57 @@ def _disk_free_bytes(path: str = "/") -> int:
     except Exception:
         return 0
 
+def _directory_size_bytes(path: Path) -> int:
+    try:
+        if not path.exists():
+            return 0
+        if path.is_file():
+            return path.stat().st_size
+        total_size = 0
+        for root, dirs, files in os.walk(path, topdown=True):
+            for f in files:
+                try:
+                    fp = os.path.join(root, f)
+                    total_size += os.path.getsize(fp)
+                except Exception:
+                    pass
+        return total_size
+    except Exception:
+        return 0
+
+def log_disk_usage_summary(context: str = "") -> None:
+    try:
+        logger.info(f"🧭 Disk usage summary {('(' + context + ')') if context else ''}:")
+        points = [
+            ("/", Path("/")),
+            ("/cache", Path("/cache")),
+            ("HF_HOME", Path(os.environ.get("HF_HOME", ""))),
+            ("HF_HUB_CACHE", Path(os.environ.get("HF_HUB_CACHE", ""))),
+            ("TRANSFORMERS_CACHE", Path(os.environ.get("TRANSFORMERS_CACHE", ""))),
+            ("~/.cache/huggingface", Path.home() / ".cache" / "huggingface"),
+            ("TORCH_HOME", Path(os.environ.get("TORCH_HOME", ""))),
+            ("~/.cache/torch", Path.home() / ".cache" / "torch"),
+            ("~/.nv/ComputeCache", Path.home() / ".nv" / "ComputeCache"),
+            ("/tmp", Path("/tmp")),
+            ("/voice_profiles", Path("/voice_profiles")),
+            ("/voice_samples", Path("/voice_samples")),
+            ("/temp_voice", Path("/temp_voice")),
+            ("/tts_generated", Path("/tts_generated")),
+            ("/workspace/chatterbox_embed/.git", Path("/workspace/chatterbox_embed/.git")),
+        ]
+        rows = []
+        for label, p in points:
+            try:
+                size_b = _directory_size_bytes(p)
+                rows.append((label, size_b, str(p)))
+            except Exception:
+                rows.append((label, 0, str(p)))
+        rows.sort(key=lambda r: r[1], reverse=True)
+        for label, size_b, pstr in rows:
+            logger.info(f"  {label:28} { _bytes_human(size_b):>10 }  -> {pstr}")
+    except Exception:
+        pass
+
 def _safe_remove(path: Path):
     try:
         if path.is_file() or path.is_symlink():
@@ -119,21 +170,16 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
                     pass
 
         # Decide whether to prune caches
-        min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
+        min_free_gb = float(os.getenv("MIN_FREE_GB", "10"))
         free_bytes = _disk_free_bytes("/")
         low_space = free_bytes < int(min_free_gb * (1024 ** 3))
 
         if force or low_space:
+            # Log what's using space before cleanup
+            log_disk_usage_summary("before_cleanup")
             # Known heavy caches (both centralized and default locations)
             cache_candidates = [
-                Path(os.environ.get("HF_HOME", "")),
-                Path(os.environ.get("TRANSFORMERS_CACHE", "")),
-                Path(os.environ.get("TORCH_HOME", "")),
-                Path(os.environ.get("PIP_CACHE_DIR", "")),
-                Path(os.environ.get("XDG_CACHE_HOME", "")),
-                Path(os.environ.get("NLTK_DATA", "")),
-                Path.home() / ".cache" / "huggingface",
-                Path.home() / ".cache" / "torch",
+                # Keep HF/Torch caches intact for simplicity and speed
                 Path.home() / ".nv" / "ComputeCache",
                 Path("/tmp"),
             ]
@@ -150,6 +196,8 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
         logger.info(
             f"🧹 Cleanup done. Free space: { _bytes_human(free_after) }"
         )
+        # Log summary again after cleanup
+        log_disk_usage_summary("after_cleanup")
     except Exception:
         # Never fail handler due to cleanup
         pass
@@ -176,10 +224,12 @@ _ensure_cache_env_dirs()
 try:
     _pre_free = _disk_free_bytes("/")
     logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
-    _min_gb = float(os.getenv("MIN_FREE_GB", "2"))
+    _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
     if _pre_free < int(_min_gb * (1024 ** 3)):
         logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
+        log_disk_usage_summary("preflight_before_cleanup")
         cleanup_runtime_storage(force=True)
+        log_disk_usage_summary("preflight_after_cleanup")
 except Exception:
     pass
 
@@ -289,22 +339,7 @@ def clear_python_cache():
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
 
-# Patch huggingface_hub to skip specific large, unused assets before any model code runs
-try:
-    import huggingface_hub as _hfhub
-    _orig_snapshot_download = _hfhub.snapshot_download
-    def _filtered_snapshot_download(*args, **kwargs):
-        ignore = list(kwargs.get('ignore_patterns', []))
-        ignore += [
-            't3_23lang.safetensors',
-            '**/t3_23lang.safetensors',
-        ]
-        kwargs['ignore_patterns'] = ignore
-        return _orig_snapshot_download(*args, **kwargs)
-    _hfhub.snapshot_download = _filtered_snapshot_download
-    logger.info("✅ Patched huggingface_hub.snapshot_download to ignore unused assets")
-except Exception as _e:
-    logger.warning(f"⚠️ Could not patch huggingface_hub snapshot_download: {_e}")
+# Keep model downloads simple: no monkey patches to huggingface_hub
 
 # Import the models from the forked repository
 try:
