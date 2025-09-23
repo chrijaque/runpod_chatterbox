@@ -176,6 +176,17 @@ def ensure_disk_headroom(min_free_gb: float = None) -> None:
 # Initialize cache env as early as possible
 _ensure_cache_env_dirs()
 
+# Early, pre-import disk headroom preflight (runs before any model downloads)
+try:
+    _pre_free = _disk_free_bytes("/")
+    logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
+    _min_gb = float(os.getenv("MIN_FREE_GB", "2"))
+    if _pre_free < int(_min_gb * (1024 ** 3)):
+        logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
+        cleanup_runtime_storage(force=True)
+except Exception:
+    pass
+
 def notify_error_callback(error_callback_url: str, story_id: str, error_message: str, **kwargs):
     """
     Send error callback to the main app when TTS generation fails.
@@ -281,6 +292,23 @@ def clear_python_cache():
 
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
+
+# Patch huggingface_hub to skip specific large, unused assets before any model code runs
+try:
+    import huggingface_hub as _hfhub
+    _orig_snapshot_download = _hfhub.snapshot_download
+    def _filtered_snapshot_download(*args, **kwargs):
+        ignore = list(kwargs.get('ignore_patterns', []))
+        ignore += [
+            't3_23lang.safetensors',
+            '**/t3_23lang.safetensors',
+        ]
+        kwargs['ignore_patterns'] = ignore
+        return _orig_snapshot_download(*args, **kwargs)
+    _hfhub.snapshot_download = _filtered_snapshot_download
+    logger.info("✅ Patched huggingface_hub.snapshot_download to ignore unused assets")
+except Exception as _e:
+    logger.warning(f"⚠️ Could not patch huggingface_hub snapshot_download: {_e}")
 
 # Import the models from the forked repository
 try:
