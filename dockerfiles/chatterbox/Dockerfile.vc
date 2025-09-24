@@ -87,8 +87,7 @@ RUN echo "🔧 Installing other requirements..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
 # Pre-download Hugging Face models into the image cache to avoid runtime downloads
-RUN echo "🔧 Installing minimal HF tooling for predownload..." && \
-    python -m pip install --no-cache-dir huggingface_hub==0.24.6 transformers==4.43.3 && \
+RUN echo "🔧 Preparing HF cache for predownload..." && \
     mkdir -p /models/hf/hub && \
     if [ -n "$HF_TOKEN" ]; then \
       echo "🔑 Using HF token for non-interactive login" && \
