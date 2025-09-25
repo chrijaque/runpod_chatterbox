@@ -97,11 +97,10 @@ RUN echo "🔧 Preparing HF cache for predownload..." && \
     fi && \
     python - <<'PY'
 from huggingface_hub import snapshot_download
-print("🔽 Pre-downloading ResembleAI/chatterbox (excluding t3_23lang.safetensors)...")
+print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
 snapshot_download(
     repo_id="ResembleAI/chatterbox",
     revision="main",
-    ignore_patterns=["t3_23lang.safetensors"],
 )
 print("✅ Pre-download complete.")
 PY

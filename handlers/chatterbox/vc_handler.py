@@ -11,7 +11,7 @@ import shutil
 import hmac
 import hashlib
 import json
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from pathlib import Path
@@ -19,9 +19,12 @@ from datetime import datetime
 from google.cloud import storage
 from typing import Optional
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
+_VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
+_LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
+logging.basicConfig(level=_LOG_LEVEL)
 logger = logging.getLogger(__name__)
+logger.setLevel(_LOG_LEVEL)
 
 """Minimal, production-focused VC handler for RunPod runtime."""
 
@@ -31,24 +34,26 @@ logger = logging.getLogger(__name__)
 def _ensure_cache_env_dirs():
     """Set cache-related environment variables and ensure directories exist."""
     try:
-        cache_root = Path(os.getenv("CACHE_ROOT", "/cache"))
-        cache_root.mkdir(parents=True, exist_ok=True)
+        # Align model caches to persistent /models path for cold-start avoidance
+        models_root = Path(os.getenv("MODELS_ROOT", "/models"))
+        hf_root = Path(os.getenv("HF_ROOT", str(models_root / "hf")))
+        torch_root = Path(os.getenv("TORCH_ROOT", str(models_root / "torch")))
 
-        env_to_subdir = {
-            "HF_HOME": "hf",
-            "HF_HUB_CACHE": "hf/hub",
-            "TRANSFORMERS_CACHE": "hf",
-            "TORCH_HOME": "torch",
-            "PIP_CACHE_DIR": "pip",
-            "XDG_CACHE_HOME": "xdg",
-            "NLTK_DATA": "nltk",
-        }
-        for env_key, subdir in env_to_subdir.items():
-            os.environ.setdefault(env_key, str(cache_root / subdir))
+        for p in [models_root, hf_root, hf_root / "hub", torch_root]:
             try:
-                Path(os.environ[env_key]).mkdir(parents=True, exist_ok=True)
+                p.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
+
+        # Prefer HF_HOME/HF_HUB_CACHE; set TRANSFORMERS_CACHE for compatibility
+        os.environ.setdefault("HF_HOME", str(hf_root))
+        os.environ.setdefault("HF_HUB_CACHE", str(hf_root / "hub"))
+        os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_root))
+        os.environ.setdefault("TORCH_HOME", str(torch_root))
+        # Optional caches
+        os.environ.setdefault("PIP_CACHE_DIR", str(models_root / "pip"))
+        os.environ.setdefault("XDG_CACHE_HOME", str(models_root / "xdg"))
+        os.environ.setdefault("NLTK_DATA", str(models_root / "nltk"))
 
         # If a broken/cyclic symlink exists at ~/.cache/huggingface, remove it
         hf_default = Path.home() / ".cache" / "huggingface"
@@ -151,6 +156,9 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
     - If force=True or disk is low, also prune model/tool caches.
     """
     try:
+        # Disabled by default; enable via ENABLE_STORAGE_MAINTENANCE=true
+        if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() != "true":
+            return
         # Temp/work dirs
         temp_dirs = [
             Path("/temp_voice"),
@@ -205,6 +213,9 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
 def ensure_disk_headroom(min_free_gb: float = None) -> None:
     """Ensure minimum free disk space; trigger cleanup when below threshold."""
     try:
+        # Disabled by default; enable via ENABLE_STORAGE_MAINTENANCE=true
+        if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() != "true":
+            return
         if min_free_gb is None:
             min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
         free_before = _disk_free_bytes("/")
@@ -222,14 +233,15 @@ _ensure_cache_env_dirs()
 
 # Early, pre-import disk headroom preflight (runs before any model downloads)
 try:
-    _pre_free = _disk_free_bytes("/")
-    logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
-    _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
-    if _pre_free < int(_min_gb * (1024 ** 3)):
-        logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
-        log_disk_usage_summary("preflight_before_cleanup")
-        cleanup_runtime_storage(force=True)
-        log_disk_usage_summary("preflight_after_cleanup")
+    if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() == "true":
+        _pre_free = _disk_free_bytes("/")
+        logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
+        _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
+        if _pre_free < int(_min_gb * (1024 ** 3)):
+            logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
+            log_disk_usage_summary("preflight_before_cleanup")
+            cleanup_runtime_storage(force=True)
+            log_disk_usage_summary("preflight_after_cleanup")
 except Exception:
     pass
 
@@ -296,74 +308,7 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
-# Update repository to latest commit BEFORE initializing models
-logger.info("🔧 Updating repository to latest commit...")
-try:
-    import subprocess
-    chatterbox_embed_path = None
-    for root, dirs, files in os.walk("/workspace"):
-        if "chatterbox_embed" in dirs:
-            chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
-            break
-    if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
-        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
-        git_dir = os.path.join(chatterbox_embed_path, ".git")
-        if os.path.exists(git_dir):
-            logger.info("✅ Found .git directory - updating to latest commit...")
-            # Current commit
-            try:
-                old_commit = subprocess.run([
-                    "git", "rev-parse", "HEAD"
-                ], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                old_commit_hash = old_commit.stdout.strip() if old_commit.returncode == 0 else "unknown"
-                logger.info(f"🔍 Current commit: {old_commit_hash}")
-            except Exception:
-                old_commit_hash = "unknown"
-                logger.warning("⚠️ Could not get current commit")
-            # Fetch + reset to default branch head
-            try:
-                logger.info("🔄 Fetching latest changes...")
-                subprocess.run(["git", "fetch", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
-                remote_show = subprocess.run(["git", "remote", "show", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                default_branch = None
-                if remote_show.returncode == 0:
-                    for line in remote_show.stdout.split('\n'):
-                        if 'HEAD branch' in line:
-                            default_branch = line.split()[-1]
-                            logger.info(f"🔍 Default branch: {default_branch}")
-                            break
-                if default_branch:
-                    logger.info(f"🔄 Resetting to origin/{default_branch}...")
-                    subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
-                    new_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                    new_commit_hash = new_commit.stdout.strip() if new_commit.returncode == 0 else old_commit_hash
-                    logger.info(f"🆕 New commit: {new_commit_hash}")
-                    if new_commit_hash != old_commit_hash:
-                        logger.info("🔄 Repository updated! Clearing modules to reload...")
-                        # If updated, clear chatterbox modules to reload code
-                        for name in [n for n in list(sys.modules.keys()) if 'chatterbox' in n]:
-                            del sys.modules[name]
-                        # Re-import models after update
-                        try:
-                            from chatterbox.vc import ChatterboxVC
-                            from chatterbox.tts import ChatterboxTTS
-                            logger.info("✅ Successfully re-imported models after update")
-                        except ImportError as e:
-                            logger.warning(f"⚠️ Failed to re-import models: {e}")
-                    else:
-                        logger.info("✅ Already at latest commit")
-                else:
-                    logger.warning("⚠️ Could not determine default branch")
-            except Exception:
-                logger.warning("⚠️ Error during git update")
-        else:
-            logger.warning("⚠️ No .git directory found")
-    else:
-        logger.warning("⚠️ Could not find chatterbox_embed directory")
-except Exception:
-    logger.error("❌ Error during repository update")
-
-# Initialize models AFTER repository update
+# Initialize models
 ensure_disk_headroom()
 logger.info("🔧 Initializing models...")
 try:
@@ -922,126 +867,6 @@ def handle_voice_clone_request(input, responseFormat):
         except Exception:
             pass
         logger.info(f"📤 Voice clone completed successfully")
-
-        # ===== POST-GENERATION METADATA VERIFICATION =====
-        logger.info("🔍 ===== POST-GENERATION METADATA VERIFICATION =====")
-        
-        # Verify metadata was set on uploaded files (only for successful operations)
-        try:
-            if isinstance(result, dict) and result.get("status") == "success":
-                # Build Firebase paths based on language and kids voice
-                kids_segment = 'kids/' if is_kids_voice else ''
-                base_firebase_path = f"audio/voices/{language}/{kids_segment}"
-                
-                # Check profile file metadata
-                profile_filename = result.get("profile_path")
-                if profile_filename:
-                    # Construct full Firebase path
-                    profile_firebase_path = f"{base_firebase_path}profiles/{profile_filename}"
-                    logger.info(f"🔍 Verifying metadata on profile: {profile_firebase_path}")
-                    try:
-                        blob = bucket.blob(profile_firebase_path)
-                        if blob.exists():
-                            blob.reload()
-                            actual_metadata = blob.metadata or {}
-                            logger.info(f"📋 Profile metadata found: {actual_metadata}")
-                            expected_metadata = {
-                                'user_id': user_id or '',
-                                'voice_id': voice_id,
-                                'voice_name': name,
-                                'language': language,
-                                'is_kids_voice': str(is_kids_voice).lower(),
-                            }
-                            logger.info(f"📋 Expected profile metadata: {expected_metadata}")
-                            
-                            # Check if metadata matches
-                            if actual_metadata == expected_metadata:
-                                logger.info("✅ Profile metadata matches expected")
-                            else:
-                                logger.warning("⚠️ Profile metadata mismatch, attempting to fix...")
-                                blob.metadata = expected_metadata
-                                blob.patch()
-                                logger.info("✅ Profile metadata fixed")
-                        else:
-                            logger.warning(f"⚠️ Profile blob does not exist: {profile_firebase_path}")
-                    except Exception as profile_e:
-                        logger.warning(f"⚠️ Could not verify profile metadata: {profile_e}")
-                
-                # Check sample file metadata
-                sample_filename = result.get("sample_audio_path")
-                if sample_filename:
-                    # Construct full Firebase path
-                    sample_firebase_path = f"{base_firebase_path}samples/{sample_filename}"
-                    logger.info(f"🔍 Verifying metadata on sample: {sample_firebase_path}")
-                    try:
-                        blob = bucket.blob(sample_firebase_path)
-                        if blob.exists():
-                            blob.reload()
-                            actual_metadata = blob.metadata or {}
-                            logger.info(f"📋 Sample metadata found: {actual_metadata}")
-                            expected_metadata = {
-                                'user_id': user_id or '',
-                                'voice_id': voice_id,
-                                'voice_name': name,
-                                'language': language,
-                                'is_kids_voice': str(is_kids_voice).lower(),
-                            }
-                            logger.info(f"📋 Expected sample metadata: {expected_metadata}")
-                            
-                            # Check if metadata matches
-                            if actual_metadata == expected_metadata:
-                                logger.info("✅ Sample metadata matches expected")
-                            else:
-                                logger.warning("⚠️ Sample metadata mismatch, attempting to fix...")
-                                blob.metadata = expected_metadata
-                                blob.patch()
-                                logger.info("✅ Sample metadata fixed")
-                        else:
-                            logger.warning(f"⚠️ Sample blob does not exist: {sample_firebase_path}")
-                    except Exception as sample_e:
-                        logger.warning(f"⚠️ Could not verify sample metadata: {sample_e}")
-                
-                # Check recorded file metadata (if available)
-                recorded_filename = result.get("recorded_audio_path")
-                if recorded_filename:
-                    # Check if recorded_filename is already a full Firebase path
-                    if recorded_filename.startswith("audio/voices/"):
-                        recorded_firebase_path = recorded_filename
-                    else:
-                        # Construct full Firebase path if it's just a filename
-                        recorded_firebase_path = f"{base_firebase_path}recorded/{recorded_filename}"
-                    logger.info(f"🔍 Verifying metadata on recorded: {recorded_firebase_path}")
-                    try:
-                        blob = bucket.blob(recorded_firebase_path)
-                        if blob.exists():
-                            blob.reload()
-                            actual_metadata = blob.metadata or {}
-                            logger.info(f"📋 Recorded metadata found: {actual_metadata}")
-                            expected_metadata = {
-                                'user_id': user_id or '',
-                                'voice_id': voice_id,
-                                'voice_name': name,
-                                'language': language,
-                                'is_kids_voice': str(is_kids_voice).lower(),
-                            }
-                            logger.info(f"📋 Expected recorded metadata: {expected_metadata}")
-                            
-                            # Check if metadata matches
-                            if actual_metadata == expected_metadata:
-                                logger.info("✅ Recorded metadata matches expected")
-                            else:
-                                logger.warning("⚠️ Recorded metadata mismatch, attempting to fix...")
-                                blob.metadata = expected_metadata
-                                blob.patch()
-                                logger.info("✅ Recorded metadata fixed")
-                        else:
-                            logger.info(f"ℹ️ Recorded blob does not exist (expected for pointer-based recordings): {recorded_firebase_path}")
-                    except Exception as recorded_e:
-                        logger.warning(f"⚠️ Could not verify recorded metadata: {recorded_e}")
-        except Exception as verify_e:
-            logger.warning(f"⚠️ Metadata verification failed: {verify_e}")
-        
-        logger.info("🔍 ===== END POST-GENERATION METADATA VERIFICATION =====")
         
         # No post-process renaming: model now uploads with standardized names directly
 
@@ -1205,7 +1030,23 @@ def _post_signed_callback(callback_url: str, payload: dict):
     logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
     logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
 
-    parsed = urlparse(callback_url)
+    # Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)
+    def _canonicalize_callback_url(url: str) -> str:
+        try:
+            p = urlparse(url)
+            scheme = p.scheme or 'https'
+            netloc = p.netloc
+            if netloc == 'daezend.app':
+                netloc = 'www.daezend.app'
+            if not netloc and p.path:
+                return f'https://www.daezend.app{p.path}'
+            return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+        except Exception:
+            return url
+
+    canonical_url = _canonicalize_callback_url(callback_url)
+
+    parsed = urlparse(canonical_url)
     # Default to voices success callback for signing if path is missing
     path_for_signing = parsed.path or '/api/voices/callback'
     ts = str(int(time.time() * 1000))
@@ -1230,7 +1071,7 @@ def _post_signed_callback(callback_url: str, payload: dict):
     }
     
     logger.info(f"🔍 Headers: {headers}")
-    logger.info(f"🔍 Making POST request to: {callback_url}")
+    logger.info(f"🔍 Making POST request to: {canonical_url}")
 
     # Configure HTTP opener to follow redirects
     from urllib.request import HTTPRedirectHandler, build_opener
@@ -1239,7 +1080,7 @@ def _post_signed_callback(callback_url: str, payload: dict):
     redirect_handler = HTTPRedirectHandler()
     opener = build_opener(redirect_handler)
     
-    req = Request(callback_url, data=body_bytes, headers=headers, method='POST')
+    req = Request(canonical_url, data=body_bytes, headers=headers, method='POST')
     
     try:
         resp = opener.open(req, timeout=15)
@@ -1263,7 +1104,7 @@ def _post_signed_callback(callback_url: str, payload: dict):
             try:
                 # Build absolute URL if relative
                 from urllib.parse import urljoin
-                follow_url = urljoin(callback_url, loc)
+                follow_url = urljoin(canonical_url, loc)
                 logger.info(f"🔁 Following {code} redirect to: {follow_url}")
                 # Reuse same signed headers and body (signature uses only path + body + timestamp)
                 req2 = Request(follow_url, data=body_bytes, headers=headers, method='POST')
