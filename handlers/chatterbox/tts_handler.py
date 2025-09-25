@@ -11,16 +11,19 @@ import shutil
 import requests
 import hmac
 import hashlib
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import json
 from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
 from typing import Optional
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
+_VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
+_LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
+logging.basicConfig(level=_LOG_LEVEL)
 logger = logging.getLogger(__name__)
+logger.setLevel(_LOG_LEVEL)
 
 """Minimal, production-focused TTS handler for RunPod runtime."""
 
@@ -30,24 +33,25 @@ logger = logging.getLogger(__name__)
 def _ensure_cache_env_dirs():
     """Set cache-related environment variables and ensure directories exist."""
     try:
-        cache_root = Path(os.getenv("CACHE_ROOT", "/cache"))
-        cache_root.mkdir(parents=True, exist_ok=True)
+        # Align model caches to persistent /models path for cold-start avoidance
+        models_root = Path(os.getenv("MODELS_ROOT", "/models"))
+        hf_root = Path(os.getenv("HF_ROOT", str(models_root / "hf")))
+        torch_root = Path(os.getenv("TORCH_ROOT", str(models_root / "torch")))
 
-        env_to_subdir = {
-            "HF_HOME": "hf",
-            "HF_HUB_CACHE": "hf/hub",
-            "TRANSFORMERS_CACHE": "hf",
-            "TORCH_HOME": "torch",
-            "PIP_CACHE_DIR": "pip",
-            "XDG_CACHE_HOME": "xdg",
-            "NLTK_DATA": "nltk",
-        }
-        for env_key, subdir in env_to_subdir.items():
-            os.environ.setdefault(env_key, str(cache_root / subdir))
+        for p in [models_root, hf_root, hf_root / "hub", torch_root]:
             try:
-                Path(os.environ[env_key]).mkdir(parents=True, exist_ok=True)
+                p.mkdir(parents=True, exist_ok=True)
             except Exception:
                 pass
+
+        os.environ.setdefault("HF_HOME", str(hf_root))
+        os.environ.setdefault("HF_HUB_CACHE", str(hf_root / "hub"))
+        os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_root))
+        os.environ.setdefault("TORCH_HOME", str(torch_root))
+        # Optional caches
+        os.environ.setdefault("PIP_CACHE_DIR", str(models_root / "pip"))
+        os.environ.setdefault("XDG_CACHE_HOME", str(models_root / "xdg"))
+        os.environ.setdefault("NLTK_DATA", str(models_root / "nltk"))
 
         # If a broken/cyclic symlink exists at ~/.cache/huggingface, remove it
         hf_default = Path.home() / ".cache" / "huggingface"
@@ -150,6 +154,9 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
     - If force=True or disk is low, also prune model/tool caches.
     """
     try:
+        # Disabled by default; enable via ENABLE_STORAGE_MAINTENANCE=true
+        if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() != "true":
+            return
         # Temp/work dirs
         temp_dirs = [
             Path("/temp_voice"),
@@ -205,6 +212,9 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
 def ensure_disk_headroom(min_free_gb: float = None) -> None:
     """Ensure minimum free disk space; trigger cleanup when below threshold."""
     try:
+        # Disabled by default; enable via ENABLE_STORAGE_MAINTENANCE=true
+        if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() != "true":
+            return
         if min_free_gb is None:
             min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
         free_before = _disk_free_bytes("/")
@@ -222,14 +232,15 @@ _ensure_cache_env_dirs()
 
 # Early, pre-import disk headroom preflight (runs before any model downloads)
 try:
-    _pre_free = _disk_free_bytes("/")
-    logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
-    _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
-    if _pre_free < int(_min_gb * (1024 ** 3)):
-        logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
-        log_disk_usage_summary("preflight_before_cleanup")
-        cleanup_runtime_storage(force=True)
-        log_disk_usage_summary("preflight_after_cleanup")
+    if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() == "true":
+        _pre_free = _disk_free_bytes("/")
+        logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
+        _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
+        if _pre_free < int(_min_gb * (1024 ** 3)):
+            logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
+            log_disk_usage_summary("preflight_before_cleanup")
+            cleanup_runtime_storage(force=True)
+            log_disk_usage_summary("preflight_after_cleanup")
 except Exception:
     pass
 
@@ -282,7 +293,23 @@ def _post_signed_callback(callback_url: str, payload: dict):
     logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
     logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
 
-    parsed = urlparse(callback_url)
+    # Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)
+    def _canonicalize_callback_url(url: str) -> str:
+        try:
+            p = urlparse(url)
+            scheme = p.scheme or 'https'
+            netloc = p.netloc
+            if netloc == 'daezend.app':
+                netloc = 'www.daezend.app'
+            if not netloc and p.path:
+                return f'https://www.daezend.app{p.path}'
+            return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+        except Exception:
+            return url
+
+    canonical_url = _canonicalize_callback_url(callback_url)
+
+    parsed = urlparse(canonical_url)
     path_for_signing = parsed.path or '/api/tts/callback'
     ts = str(int(time.time() * 1000))
     
@@ -306,9 +333,9 @@ def _post_signed_callback(callback_url: str, payload: dict):
     }
     
     logger.info(f"🔍 Headers: {headers}")
-    logger.info(f"🔍 Making POST request to: {callback_url}")
+    logger.info(f"🔍 Making POST request to: {canonical_url}")
     
-    resp = requests.post(callback_url, data=body_bytes, headers=headers, timeout=15)
+    resp = requests.post(canonical_url, data=body_bytes, headers=headers, timeout=15)
     
     logger.info(f"🔍 Response status: {resp.status_code}")
     logger.info(f"🔍 Response headers: {dict(resp.headers)}")
@@ -380,73 +407,7 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
-# Update repository to latest commit BEFORE initializing models
-logger.info("🔧 Updating repository to latest commit...")
-try:
-    import subprocess
-    chatterbox_embed_path = None
-    for root, dirs, files in os.walk("/workspace"):
-        if "chatterbox_embed" in dirs:
-            chatterbox_embed_path = os.path.join(root, "chatterbox_embed")
-            break
-    if chatterbox_embed_path and os.path.exists(chatterbox_embed_path):
-        logger.info(f"📂 Found chatterbox_embed at: {chatterbox_embed_path}")
-        git_dir = os.path.join(chatterbox_embed_path, ".git")
-        if os.path.exists(git_dir):
-            logger.info("✅ Found .git directory - updating to latest commit...")
-            # Current commit
-            try:
-                old_commit = subprocess.run([
-                    "git", "rev-parse", "HEAD"
-                ], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                old_commit_hash = old_commit.stdout.strip() if old_commit.returncode == 0 else "unknown"
-                logger.info(f"🔍 Current commit: {old_commit_hash}")
-            except Exception:
-                old_commit_hash = "unknown"
-                logger.warning("⚠️ Could not get current commit")
-            # Fetch + reset to default branch head
-            try:
-                logger.info("🔄 Fetching latest changes...")
-                subprocess.run(["git", "fetch", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
-                remote_show = subprocess.run(["git", "remote", "show", "origin"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                default_branch = None
-                if remote_show.returncode == 0:
-                    for line in remote_show.stdout.split('\n'):
-                        if 'HEAD branch' in line:
-                            default_branch = line.split()[-1]
-                            logger.info(f"🔍 Default branch: {default_branch}")
-                            break
-                if default_branch:
-                    logger.info(f"🔄 Resetting to origin/{default_branch}...")
-                    subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=30)
-                    new_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=chatterbox_embed_path, capture_output=True, text=True, timeout=10)
-                    new_commit_hash = new_commit.stdout.strip() if new_commit.returncode == 0 else old_commit_hash
-                    logger.info(f"🆕 New commit: {new_commit_hash}")
-                    if new_commit_hash != old_commit_hash:
-                        logger.info("🔄 Repository updated! Clearing modules to reload...")
-                        for name in [n for n in list(sys.modules.keys()) if 'chatterbox' in n]:
-                            del sys.modules[name]
-                        # Re-import models after update
-                        try:
-                            from chatterbox.vc import ChatterboxVC
-                            from chatterbox.tts import ChatterboxTTS
-                            logger.info("✅ Successfully re-imported models after update")
-                        except ImportError as e:
-                            logger.warning(f"⚠️ Failed to re-import models: {e}")
-                    else:
-                        logger.info("✅ Already at latest commit")
-                else:
-                    logger.warning("⚠️ Could not determine default branch")
-            except Exception:
-                logger.warning("⚠️ Error during git update")
-        else:
-            logger.warning("⚠️ No .git directory found")
-    else:
-        logger.warning("⚠️ Could not find chatterbox_embed directory")
-except Exception:
-    logger.error("❌ Error during repository update")
-
-# Initialize models AFTER repository update
+# Initialize models
 ensure_disk_headroom()
 logger.info("🔧 Initializing models...")
 try:
@@ -983,85 +944,6 @@ def handler(event, responseFormat="base64"):
         
         # Return the result from the TTS model
         logger.info(f"📤 TTS generation completed successfully")
-        
-        # ===== POST-GENERATION METADATA VERIFICATION =====
-        logger.info("🔍 ===== TTS POST-GENERATION METADATA VERIFICATION =====")
-        
-        # Verify metadata was set on uploaded files
-        try:
-            if isinstance(result, dict) and result.get("status") == "success":
-                # Check audio file metadata
-                firebase_path = result.get("firebase_path")
-                if firebase_path:
-                    logger.info(f"🔍 Verifying metadata on TTS audio: {firebase_path}")
-                    try:
-                        blob = bucket.blob(firebase_path)
-                        if blob.exists():
-                            blob.reload()
-                            actual_metadata = blob.metadata or {}
-                            logger.info(f"📋 TTS audio metadata found: {actual_metadata}")
-                            expected_metadata = {
-                                'user_id': user_id or '',
-                                'story_id': story_id or '',
-                                'voice_id': voice_id,
-                                'voice_name': voice_name or '',
-                                'language': language,
-                                'story_type': story_type,
-                                'story_name': story_name or '',
-                            }
-                            logger.info(f"📋 Expected TTS audio metadata: {expected_metadata}")
-                            
-                            # Check if metadata matches
-                            if actual_metadata == expected_metadata:
-                                logger.info("✅ TTS audio metadata matches expected")
-                            else:
-                                logger.warning("⚠️ TTS audio metadata mismatch, attempting to fix...")
-                                blob.metadata = expected_metadata
-                                blob.patch()
-                                logger.info("✅ TTS audio metadata fixed")
-                        else:
-                            logger.warning(f"⚠️ TTS audio blob does not exist: {firebase_path}")
-                            
-                            # Try to construct the path if it's just a filename
-                            if not firebase_path.startswith('audio/'):
-                                # Build Firebase path based on language and story type
-                                constructed_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{firebase_path}"
-                                logger.info(f"🔍 Trying constructed path: {constructed_path}")
-                                try:
-                                    blob = bucket.blob(constructed_path)
-                                    if blob.exists():
-                                        blob.reload()
-                                        actual_metadata = blob.metadata or {}
-                                        logger.info(f"📋 TTS audio metadata found (constructed path): {actual_metadata}")
-                                        expected_metadata = {
-                                            'user_id': user_id or '',
-                                            'story_id': story_id or '',
-                                            'voice_id': voice_id,
-                                            'voice_name': voice_name or '',
-                                            'language': language,
-                                            'story_type': story_type,
-                                            'story_name': story_name or '',
-                                        }
-                                        logger.info(f"📋 Expected TTS audio metadata: {expected_metadata}")
-                                        
-                                        # Check if metadata matches
-                                        if actual_metadata == expected_metadata:
-                                            logger.info("✅ TTS audio metadata matches expected (constructed path)")
-                                        else:
-                                            logger.warning("⚠️ TTS audio metadata mismatch, attempting to fix...")
-                                            blob.metadata = expected_metadata
-                                            blob.patch()
-                                            logger.info("✅ TTS audio metadata fixed (constructed path)")
-                                    else:
-                                        logger.warning(f"⚠️ TTS audio blob does not exist (constructed path): {constructed_path}")
-                                except Exception as constructed_e:
-                                    logger.warning(f"⚠️ Could not verify TTS audio metadata (constructed path): {constructed_e}")
-                    except Exception as audio_e:
-                        logger.warning(f"⚠️ Could not verify TTS audio metadata: {audio_e}")
-        except Exception as verify_e:
-            logger.warning(f"⚠️ TTS metadata verification failed: {verify_e}")
-        
-        logger.info("🔍 ===== END TTS POST-GENERATION METADATA VERIFICATION =====")
         
         # Post-process: rename output file to requested naming if model saved with default name.
         try:
