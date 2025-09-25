@@ -86,7 +86,7 @@ RUN echo "🔧 Installing other requirements..." && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
-# Pre-download Hugging Face models into the image cache to avoid runtime downloads
+# Pre-download HF models into the image cache to avoid runtime downloads
 RUN echo "🔧 Preparing HF cache for predownload..." && \
     mkdir -p /models/hf/hub && \
     if [ -n "$HF_TOKEN" ]; then \
