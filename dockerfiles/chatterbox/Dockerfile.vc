@@ -50,8 +50,11 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 # Add build argument to force cache invalidation
 ARG CACHE_BUST=1
 ARG BUILD_TIME
-ARG RUNPOD_CACHE_BUST
+ARG RUNPOD_CACHE_BUST=1
 ARG CHATTERBOX_REF=master
+
+# Cache-bust layer: change RUNPOD_CACHE_BUST each build to force refetch
+RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
 
 # Clone the forked repository and install in editable mode
 RUN echo "🔧 Cloning forked repository..." && \
@@ -63,11 +66,14 @@ RUN echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
     cd /workspace/chatterbox_embed && \
     echo "🔧 Fetching ref ${CHATTERBOX_REF}..." && \
-    git fetch origin ${CHATTERBOX_REF} && \
-    echo "🔧 Checking out ${CHATTERBOX_REF}..." && \
-    git checkout -B build_ref origin/${CHATTERBOX_REF} && \
-    echo "🔧 Resetting to origin/${CHATTERBOX_REF}..." && \
-    git reset --hard origin/${CHATTERBOX_REF} && \
+    git fetch --tags --force origin ${CHATTERBOX_REF} || true && \
+    if git ls-remote --exit-code origin ${CHATTERBOX_REF} >/dev/null 2>&1; then \
+      REF=origin/${CHATTERBOX_REF}; \
+    else \
+      REF=${CHATTERBOX_REF}; \
+    fi && \
+    echo "🔧 Checking out ${REF}..." && \
+    git checkout --detach ${REF} && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
