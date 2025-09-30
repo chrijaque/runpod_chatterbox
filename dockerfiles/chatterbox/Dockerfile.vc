@@ -51,6 +51,7 @@ RUN echo "📋 Contents of requirements.txt:" && cat requirements.txt
 ARG CACHE_BUST=1
 ARG BUILD_TIME
 ARG RUNPOD_CACHE_BUST
+ARG CHATTERBOX_REF=master
 
 # Clone the forked repository and install in editable mode
 RUN echo "🔧 Cloning forked repository..." && \
@@ -61,13 +62,12 @@ RUN echo "🔧 Cloning forked repository..." && \
     echo "🔧 Cloning forked repository..." && \
     git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
     cd /workspace/chatterbox_embed && \
-    echo "🔧 Fetching latest changes..." && \
-    git fetch origin && \
-    echo "🔧 Detecting default branch..." && \
-    DEFAULT_BRANCH=$(git remote show origin | grep 'HEAD branch' | cut -d' ' -f5) && \
-    echo "🔧 Default branch is: $DEFAULT_BRANCH" && \
-    echo "🔧 Resetting to latest $DEFAULT_BRANCH branch..." && \
-    git reset --hard origin/$DEFAULT_BRANCH && \
+    echo "🔧 Fetching ref ${CHATTERBOX_REF}..." && \
+    git fetch origin ${CHATTERBOX_REF} && \
+    echo "🔧 Checking out ${CHATTERBOX_REF}..." && \
+    git checkout -B build_ref origin/${CHATTERBOX_REF} && \
+    echo "🔧 Resetting to origin/${CHATTERBOX_REF}..." && \
+    git reset --hard origin/${CHATTERBOX_REF} && \
     echo "🔧 Installing forked repository in editable mode..." && \
     pip install -e /workspace/chatterbox_embed && \
     echo "🔍 Verifying forked repository installation..." && \
