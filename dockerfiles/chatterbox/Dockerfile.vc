@@ -53,6 +53,9 @@ ARG BUILD_TIME
 ARG RUNPOD_CACHE_BUST=1
 ARG CHATTERBOX_REF=master
 
+# Invalidate cache when the selected ref's HEAD changes
+ADD https://api.github.com/repos/chrijaque/chatterbox_embed/commits/${CHATTERBOX_REF} /tmp/chatterbox_head.json
+
 # Cache-bust layer: change RUNPOD_CACHE_BUST each build to force refetch
 RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
 
