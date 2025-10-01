@@ -56,7 +56,7 @@ ARG CHATTERBOX_REF=master
 # Cache-bust layer: change RUNPOD_CACHE_BUST each build to force refetch
 RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
 
-# Clone the forked repository and install in editable mode
+# Clone the forked repository and install in eatable mode
 RUN echo "🔧 Cloning forked repository..." && \
     echo "🔍 Testing repository access..." && \
     curl -s -o /dev/null -w "%{http_code}" https://github.com/chrijaque/chatterbox_embed && \
