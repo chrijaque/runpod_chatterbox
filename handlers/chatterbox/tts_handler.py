@@ -366,8 +366,6 @@ def clear_python_cache():
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
 
-# Keep model downloads simple: no monkey patches to huggingface_hub
-
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
