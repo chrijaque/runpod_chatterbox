@@ -159,7 +159,7 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
         # Disabled by default; enable via ENABLE_STORAGE_MAINTENANCE=true
         if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() != "true":
             return
-        # Temp/work dirs
+        # Temp/work directories
         temp_dirs = [
             Path("/temp_voice"),
             Path("/voice_samples"),
