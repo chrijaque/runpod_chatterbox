@@ -244,6 +244,48 @@ try:
 except Exception:
     pass
 
+APP_BASE_URL = os.getenv('APP_BASE_URL', '').strip()
+
+def _normalize_callback_url(url: str) -> str:
+    """Replace localhost callback host with APP_BASE_URL if provided; then canonicalize."""
+    try:
+        p = urlparse(url)
+        # Replace localhost hosts if an explicit base URL is provided
+        if APP_BASE_URL and (p.hostname in ('localhost', '127.0.0.1')):
+            base = urlparse(APP_BASE_URL)
+            return urlunparse((base.scheme or 'https', base.netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        pass
+    return url
+
+def _persist_failed_callback_to_storage(payload: dict, story_id: str) -> Optional[str]:
+    """Persist failed callback payload for later replay under failed_callbacks/YYYY-MM-DD."""
+    try:
+        global bucket
+        if bucket is None and not initialize_firebase():
+            return None
+        key = f"failed_callbacks/{datetime.utcnow():%Y-%m-%d}/{(story_id or 'unknown')}-{int(time.time())}.json"
+        b = bucket.blob(key)
+        b.upload_from_string(json.dumps(payload), content_type='application/json')
+        return key
+    except Exception:
+        return None
+
+def _write_metadata_json(storage_path: str, metadata: dict) -> Optional[str]:
+    """Write a sibling .json metadata file next to the audio object."""
+    try:
+        global bucket
+        if not storage_path:
+            return None
+        if bucket is None and not initialize_firebase():
+            return None
+        json_path = storage_path.rsplit('.', 1)[0] + '.json'
+        bj = bucket.blob(json_path)
+        bj.upload_from_string(json.dumps(metadata), content_type='application/json')
+        return json_path
+    except Exception:
+        return None
+
 def notify_error_callback(error_callback_url: str, story_id: str, error_message: str, **kwargs):
     """
     Send error callback to the main app when TTS generation fails.
@@ -266,7 +308,7 @@ def notify_error_callback(error_callback_url: str, story_id: str, error_message:
     try:
         logger.info(f"📤 Sending error callback to: {error_callback_url}")
         logger.info(f"📤 Error callback payload: {payload}")
-        _post_signed_callback(error_callback_url, payload)
+        _post_signed_callback_with_retry(error_callback_url, payload)
         logger.info(f"✅ Error callback sent successfully for story {story_id}")
         return True
     except Exception as e:
@@ -307,7 +349,8 @@ def _post_signed_callback(callback_url: str, payload: dict):
         except Exception:
             return url
 
-    canonical_url = _canonicalize_callback_url(callback_url)
+    # Normalize against APP_BASE_URL first, then canonicalize
+    canonical_url = _canonicalize_callback_url(_normalize_callback_url(callback_url))
 
     parsed = urlparse(canonical_url)
     path_for_signing = parsed.path or '/api/tts/callback'
@@ -343,6 +386,25 @@ def _post_signed_callback(callback_url: str, payload: dict):
     
     resp.raise_for_status()
     logger.info(f"✅ Callback POST successful: {resp.status_code}")
+
+def _post_signed_callback_with_retry(callback_url: str, payload: dict, *, retries: int = 5, base_delay: float = 5.0):
+    """Retry wrapper around _post_signed_callback with exponential backoff and durable persistence."""
+    last_exc: Optional[Exception] = None
+    url = _normalize_callback_url(callback_url)
+    for attempt in range(1, retries + 1):
+        try:
+            _post_signed_callback(url, payload)
+            return
+        except Exception as e:
+            last_exc = e
+            logger.warning(f"Callback attempt {attempt}/{retries} failed: {e}")
+            time.sleep(base_delay * (2 ** (attempt - 1)))
+    try:
+        _persist_failed_callback_to_storage(payload, payload.get('story_id') or 'unknown')
+    except Exception:
+        pass
+    if last_exc:
+        raise last_exc
 
 def clear_python_cache():
     """Clear Python caches and loaded chatterbox modules to ensure fresh load."""
@@ -1123,7 +1185,29 @@ def handler(event, responseFormat="base64"):
                     logger.info(f"🔍   Payload keys: {list(payload.keys())}")
                     logger.info(f"🔍   Payload size: {len(str(payload))} characters")
                     
-                    _post_signed_callback(result_callback_url, payload)
+                    # Attempt signed callback with retry; if it ultimately fails, write metadata JSON as fallback
+                    try:
+                        _post_signed_callback_with_retry(result_callback_url, payload)
+                    except Exception as final_cb_e:
+                        logger.warning(f"⚠️ Final callback failed after retries: {final_cb_e}")
+                        try:
+                            _write_metadata_json(
+                                (result.get("firebase_path") or ""),
+                                {
+                                    "story_id": story_id,
+                                    "user_id": user_id,
+                                    "voice_id": voice_id,
+                                    "voice_name": voice_name,
+                                    "audio_url": payload.get("audio_url"),
+                                    "storage_path": payload.get("storage_path"),
+                                    "language": language,
+                                    "status": "success",
+                                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                                    "metadata": payload.get("metadata") or {},
+                                },
+                            )
+                        except Exception:
+                            pass
                     logger.info(f"✅ TTS callback POST {result_callback_url} -> signed and sent")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
