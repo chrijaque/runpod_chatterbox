@@ -18,6 +18,7 @@ from pathlib import Path
 from datetime import datetime
 from google.cloud import storage
 from typing import Optional
+import torch
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
@@ -308,18 +309,56 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 storage_client = None
 bucket = None
 
+# -------------------------------------------------------------
+# Device selection with robust fallback
+# -------------------------------------------------------------
+def _select_device() -> str:
+    """Choose execution device honoring env overrides and runtime availability."""
+    try:
+        forced = (os.getenv("VC_DEVICE") or os.getenv("DAEZEND_DEVICE") or os.getenv("DEVICE") or "").lower()
+        if forced in ("cpu", "cuda", "mps"):
+            return forced
+        if forced == "auto":
+            forced = ""
+    except Exception:
+        forced = ""
+
+    try:
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+
+    try:
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return "mps"
+    except Exception:
+        pass
+
+    return "cpu"
+
 # Initialize models
 ensure_disk_headroom()
 logger.info("🔧 Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
-        # Initialize TTS model first (needed for s3gen)
-        tts_model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxTTS ready")
-        
-        # Initialize VC model using the correct method
-        vc_model = ChatterboxVC.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxVC ready")
+        _device = _select_device()
+        logger.info(f"🖥️ Selected device: {_device}")
+        try:
+            tts_model = ChatterboxTTS.from_pretrained(device=_device)
+            logger.info("✅ ChatterboxTTS ready")
+            vc_model = ChatterboxVC.from_pretrained(device=_device)
+            logger.info("✅ ChatterboxVC ready")
+        except Exception as dev_e:
+            logger.error(f"❌ Init failed on {_device}: {dev_e}. Retrying on CPU…")
+            try:
+                tts_model = ChatterboxTTS.from_pretrained(device='cpu')
+                vc_model = ChatterboxVC.from_pretrained(device='cpu')
+                logger.info("✅ Models initialized on CPU")
+            except Exception as cpu_e:
+                logger.error(f"❌ CPU fallback init failed: {cpu_e}")
+                vc_model = None
+                tts_model = None
 
         
         
@@ -586,7 +625,20 @@ def handler(event, responseFormat="base64"):
     input = event['input']    
     
     # This handler is for voice cloning only
-    return handle_voice_clone_request(input, responseFormat)
+    result = handle_voice_clone_request(input, responseFormat)
+    try:
+        # Emit a structured error line for system log collectors if error
+        if isinstance(result, dict) and result.get("status") == "error":
+            req_id = event.get('id') or event.get('requestId')
+            msg = {
+                "requestId": req_id,
+                "message": f"Error: {result.get('error', 'Unknown error')}",
+                "level": "ERROR",
+            }
+            print(json.dumps(msg, ensure_ascii=False))
+    except Exception:
+        pass
+    return result
 
 def handle_voice_clone_request(input, responseFormat):
     """Pure API orchestration: Handle voice cloning requests"""
@@ -629,17 +681,6 @@ def handle_voice_clone_request(input, responseFormat):
         # Send error callback if callback_url is available
         if callback_url:
             try:
-                # Construct error callback URL from success callback URL
-                if "/api/voices/callback" in callback_url:
-                    error_callback_url = callback_url.replace("/api/voices/callback", "/api/voices/error-callback")
-                elif "/api/voice-clone/callback" in callback_url:
-                    error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voices/error-callback")
-                elif "/api/voices/" in callback_url:
-                    error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
-                else:
-                    base_url = callback_url.rstrip("/")
-                    error_callback_url = f"{base_url}/error-callback"
-                
                 # Send error callback
                 payload = {
                     'status': 'error',
@@ -650,10 +691,10 @@ def handle_voice_clone_request(input, responseFormat):
                     'error': 'VC model not available',
                 }
                 
-                logger.info(f"📤 Error callback URL: {error_callback_url}")
+                logger.info(f"📤 Error callback URL: {callback_url}")
                 logger.info(f"📤 Error callback payload: {payload}")
                 
-                _post_signed_callback(error_callback_url, payload)
+                _post_signed_callback(callback_url, payload)
                 logger.info("✅ Error callback sent successfully")
             except Exception as callback_error:
                 logger.error(f"❌ Failed to send error callback: {callback_error}")
@@ -826,18 +867,6 @@ def handle_voice_clone_request(input, responseFormat):
             # Send error callback if callback_url is available
             try:
                 if callback_url:
-                    # Construct error callback URL from success callback URL
-                    # Normalize to voices routes used by the API
-                    if "/api/voices/callback" in callback_url:
-                        error_callback_url = callback_url.replace("/api/voices/callback", "/api/voices/error-callback")
-                    elif "/api/voice-clone/callback" in callback_url:
-                        error_callback_url = callback_url.replace("/api/voice-clone/callback", "/api/voices/error-callback")
-                    elif "/api/voices/" in callback_url:
-                        error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
-                    else:
-                        base_url = callback_url.rstrip("/")
-                        error_callback_url = f"{base_url}/error-callback"
-                    
                     # Send error callback
                     payload = {
                         'status': 'error',
@@ -848,10 +877,10 @@ def handle_voice_clone_request(input, responseFormat):
                         'error': result.get('error', 'Unknown error'),
                     }
                     
-                    logger.info(f"📤 Error callback URL: {error_callback_url}")
+                    logger.info(f"📤 Error callback URL: {callback_url}")
                     logger.info(f"📤 Error callback payload: {payload}")
                     
-                    _post_signed_callback(error_callback_url, payload)
+                    _post_signed_callback(callback_url, payload)
                     logger.info("✅ Error callback sent successfully")
             except Exception as callback_error:
                 logger.error(f"❌ Failed to send error callback: {callback_error}")
