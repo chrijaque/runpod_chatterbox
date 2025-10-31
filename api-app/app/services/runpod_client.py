@@ -3,6 +3,7 @@ import os
 import logging
 from typing import Dict, Any, Optional
 import time
+from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,19 @@ class RunPodClient:
                 logger.info(f"🎯 Defaulting to ChatterboxTTS VC endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
+
+            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            cb_url = callback_url
+            if cb_url:
+                try:
+                    p = urlparse(cb_url)
+                    scheme = p.scheme or 'https'
+                    netloc = p.netloc
+                    if netloc == 'daezend.app':
+                        netloc = 'www.daezend.app'
+                    cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+                except Exception:
+                    pass
             
             payload = {
                 # Some handlers read top-level metadata
@@ -99,7 +113,7 @@ class RunPodClient:
                     "language": language,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
-                    "callback_url": callback_url,
+                    "callback_url": cb_url,
                     # Naming hints for downstream handler
                     "profile_filename": profile_filename,
                     "sample_filename": sample_filename,
@@ -130,7 +144,7 @@ class RunPodClient:
                         "language": language,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
-                        "callback_url": callback_url,
+                        "callback_url": cb_url,
                         # New naming hints
                         "voice_name": name,
                         "profile_filename": profile_filename,
@@ -221,6 +235,19 @@ class RunPodClient:
                 logger.info(f"🎯 Defaulting to ChatterboxTTS TTS endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
+
+            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            cb_url = callback_url
+            if cb_url:
+                try:
+                    p = urlparse(cb_url)
+                    scheme = p.scheme or 'https'
+                    netloc = p.netloc
+                    if netloc == 'daezend.app':
+                        netloc = 'www.daezend.app'
+                    cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+                except Exception:
+                    pass
             
             payload = {
                 # Some handlers read top-level metadata
@@ -231,7 +258,7 @@ class RunPodClient:
                     "story_type": story_type,
                     "is_kids_voice": is_kids_voice,
                     "model_type": model_type,
-                    "callback_url": callback_url,
+                    "callback_url": cb_url,
                     "story_name": story_name,
                     "output_basename": output_basename,
                     "output_filename": output_filename,
@@ -262,7 +289,7 @@ class RunPodClient:
                         "story_type": story_type,
                         "is_kids_voice": is_kids_voice,
                         "model_type": model_type,
-                        "callback_url": callback_url,
+                        "callback_url": cb_url,
                         "story_name": story_name,
                         "output_basename": output_basename,
                         "output_filename": output_filename,

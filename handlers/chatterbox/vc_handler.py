@@ -951,8 +951,11 @@ def handle_voice_clone_request(input, responseFormat):
                         'voice_id': voice_id,
                         'voice_name': name,
                         'language': language,
+                        'is_kids_voice': bool(is_kids_voice),
+                        'model_type': input.get('model_type') or 'chatterbox',
                         'profile_path': profile_path,
                         'sample_path': sample_path,
+                        'recorded_path': audio_path or (result.get('recorded_audio_path') if isinstance(result, dict) else ''),
                     }
                     
                     logger.info(f"📤 Success callback URL: {result_callback_url}")
@@ -1053,11 +1056,7 @@ def _post_signed_callback(callback_url: str, payload: dict):
     
     secret = os.getenv('DAEZEND_API_SHARED_SECRET')
     if not secret:
-        logger.error("❌ DAEZEND_API_SHARED_SECRET not set; cannot sign callback")
-        raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
-    
-    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
-    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
+        logger.warning("⚠️ DAEZEND_API_SHARED_SECRET not set; proceeding with UNSIGNED callback POST")
 
     # Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)
     def _canonicalize_callback_url(url: str) -> str:
@@ -1085,19 +1084,20 @@ def _post_signed_callback(callback_url: str, payload: dict):
     logger.info(f"🔍 Timestamp: {ts}")
     
     body_bytes = json.dumps(payload).encode('utf-8')
-    prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
-    message = prefix + body_bytes
-    sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
-    
-    logger.info(f"🔍 Body size: {len(body_bytes)} bytes")
-    logger.info(f"🔍 Message size: {len(message)} bytes")
-    logger.info(f"🔍 Signature: {sig[:20]}...")
-
     headers = {
         'Content-Type': 'application/json',
-        'X-Daezend-Timestamp': ts,
-        'X-Daezend-Signature': sig,
     }
+    if secret:
+        prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
+        message = prefix + body_bytes
+        sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+        logger.info(f"🔍 Body size: {len(body_bytes)} bytes")
+        logger.info(f"🔍 Message size: {len(message)} bytes")
+        logger.info(f"🔍 Signature: {sig[:20]}...")
+        headers.update({
+            'X-Daezend-Timestamp': ts,
+            'X-Daezend-Signature': sig,
+        })
     
     logger.info(f"🔍 Headers: {headers}")
     logger.info(f"🔍 Making POST request to: {canonical_url}")
