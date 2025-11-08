@@ -42,7 +42,8 @@ class RunPodClient:
                           user_id: Optional[str] = None, audio_path: Optional[str] = None,
                           profile_filename: Optional[str] = None, sample_filename: Optional[str] = None,
                           output_basename: Optional[str] = None, voice_id: Optional[str] = None,
-                          callback_url: Optional[str] = None) -> Dict[str, Any]:
+                          callback_url: Optional[str] = None,
+                          bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a voice clone using RunPod
         
@@ -119,6 +120,9 @@ class RunPodClient:
                     "sample_filename": sample_filename,
                     "output_basename": output_basename,
                     "voice_name": name,
+                    # Geo/bucket hints
+                    "bucket_name": bucket_name,
+                    "country_code": country_code,
                 },
                 "input": {
                     "name": name,
@@ -137,6 +141,8 @@ class RunPodClient:
                     "sample_filename": sample_filename,
                     "output_basename": output_basename,
                     "voice_name": name,
+                    "bucket_name": bucket_name,
+                    "country_code": country_code,
                     # Also include a nested metadata object for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
@@ -150,6 +156,8 @@ class RunPodClient:
                         "profile_filename": profile_filename,
                         "sample_filename": sample_filename,
                         "output_basename": output_basename,
+                        "bucket_name": bucket_name,
+                        "country_code": country_code,
                     },
                 }
             }
@@ -210,7 +218,8 @@ class RunPodClient:
                                  model_type: str = "chatterbox", user_id: Optional[str] = None, story_id: Optional[str] = None,
                                  profile_path: Optional[str] = None, callback_url: Optional[str] = None,
                                  story_name: Optional[str] = None, output_basename: Optional[str] = None,
-                                 output_filename: Optional[str] = None, voice_name: Optional[str] = None) -> Dict[str, Any]:
+                                 output_filename: Optional[str] = None, voice_name: Optional[str] = None,
+                                 bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate TTS using RunPod with story context
         
@@ -263,6 +272,9 @@ class RunPodClient:
                     "output_basename": output_basename,
                     "output_filename": output_filename,
                     "voice_name": voice_name,
+                    # Geo/bucket routing
+                    "bucket_name": bucket_name,
+                    "country_code": country_code,
                 },
                 "input": {
                     "voice_id": voice_id,
@@ -281,6 +293,8 @@ class RunPodClient:
                     "output_basename": output_basename,
                     "output_filename": output_filename,
                     "voice_name": voice_name,
+                    "bucket_name": bucket_name,
+                    "country_code": country_code,
                     # Nested metadata for handlers that expect it
                     "metadata": {
                         "user_id": user_id,
@@ -294,6 +308,8 @@ class RunPodClient:
                         "output_basename": output_basename,
                         "output_filename": output_filename,
                         "voice_name": voice_name,
+                        "bucket_name": bucket_name,
+                        "country_code": country_code,
                     },
                 }
             }

@@ -17,6 +17,9 @@ class VoiceCloneRequest(BaseModel):
     sample_filename: Optional[str] = None
     output_basename: Optional[str] = None
     callback_url: Optional[str] = None
+    # Geo/bucket routing (optional)
+    bucket_name: Optional[str] = None
+    country_code: Optional[str] = None
 
 class VoiceCloneResponse(BaseModel):
     status: str
@@ -46,6 +49,9 @@ class TTSGenerateRequest(BaseModel):
     output_basename: Optional[str] = None
     output_filename: Optional[str] = None
     voice_name: Optional[str] = None  # Voice name for metadata and Firebase uploads
+    # Geo/bucket routing (optional)
+    bucket_name: Optional[str] = None
+    country_code: Optional[str] = None  # e.g., 'AU'
 
 class TTSGenerateResponse(BaseModel):
     status: str
