@@ -425,9 +425,13 @@ def _debug_gcs_creds():
             logger.error("❌ RUNPOD_SECRET_Firebase environment variable not set")
             
         # Check bucket identifier
-        bucket_name = "godnathistorie-a25fa.firebasestorage.app"
+        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
+        bucket_name = bucket_name_raw if bucket_name_raw else 'not-set'
         logger.info(f"🔑 Bucket identifier: {bucket_name}")
-        logger.info(f"🔑 Bucket project ID: {bucket_name.replace('.firebasestorage.app', '')}")
+        if bucket_name != 'not-set':
+            # Normalize to show project ID
+            normalized = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
+            logger.info(f"🔑 Bucket project ID: {normalized}")
         
     except Exception as e:
         logger.error(f"❌ Firebase credential validation failed: {e}")
@@ -453,8 +457,14 @@ def initialize_firebase():
             client = storage.Client()
         storage_client = client
         # Normalize bucket name: strip .firebasestorage.app suffix for GCS client
-        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or "godnathistorie-a25fa.firebasestorage.app"
-        bucket_name = bucket_name_raw.replace('.firebasestorage.app', '').replace('.appspot.com', '')
+        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
+        if not bucket_name_raw:
+            raise ValueError("GCS_BUCKET_US or FIREBASE_STORAGE_BUCKET environment variable must be set")
+        # Normalize: strip gs://, https://, .firebasestorage.app, .appspot.com
+        bucket_name = bucket_name_raw.replace('gs://', '').replace('https://', '').replace('http://', '')
+        if '/' in bucket_name:
+            bucket_name = bucket_name.split('/')[0]
+        bucket_name = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
         bucket = storage_client.bucket(bucket_name)
         logger.info(f"✅ Firebase storage client ready (bucket: {bucket_name})")
         return True
