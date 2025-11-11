@@ -628,8 +628,11 @@ def initialize_firebase():
             logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
             storage_client = storage.Client()
         
-        bucket = storage_client.bucket("godnathistorie-a25fa.firebasestorage.app")
-        logger.info("✅ Firebase storage client initialized successfully")
+        # Normalize bucket name: strip .firebasestorage.app suffix for GCS client
+        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or "godnathistorie-a25fa.firebasestorage.app"
+        bucket_name = bucket_name_raw.replace('.firebasestorage.app', '').replace('.appspot.com', '')
+        bucket = storage_client.bucket(bucket_name)
+        logger.info(f"✅ Firebase storage client initialized successfully (bucket: {bucket_name})")
         return True
     except Exception as e:
         logger.error(f"❌ Failed to initialize Firebase storage: {e}")
