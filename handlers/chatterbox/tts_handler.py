@@ -427,7 +427,7 @@ def _post_signed_callback(callback_url: str, payload: dict):
     resp.raise_for_status()
     logger.info(f"✅ Callback POST successful: {resp.status_code}")
 
-def _post_signed_callback_with_retry(callback_url: str, payload: dict, *, retries: int = 5, base_delay: float = 5.0):
+def _post_signed_callback_with_retry(callback_url: str, payload: dict, *, retries: int = 4, base_delay: float = 5.0):
     """Retry wrapper around _post_signed_callback with exponential backoff and durable persistence."""
     last_exc: Optional[Exception] = None
     url = _normalize_callback_url(callback_url)
@@ -756,6 +756,7 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
     Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
     Returns new public URL or None.
     """
+    global bucket  # Declare global at the top before any assignment
     try:
         from google.cloud import storage
         
@@ -771,7 +772,6 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
             bucket = storage_client.bucket(resolved_bucket)
         else:
             # Fallback to global bucket for backward compatibility
-            global bucket
             if bucket is None and not initialize_firebase():
                 logger.error("❌ Firebase not initialized, cannot rename")
                 return None
@@ -1280,8 +1280,38 @@ def handler(event, responseFormat="base64"):
                         callback_success = True
                         logger.info(f"✅ TTS callback POST {result_callback_url} -> signed and sent")
                     except Exception as final_cb_e:
-                        logger.error(f"❌ Final callback failed after 5 retries: {final_cb_e}")
+                        logger.error(f"❌ Final callback failed after 4 retries: {final_cb_e}")
                         logger.error(f"❌ Callback failure will trigger GPU shutdown to prevent resource waste")
+                        
+                        # CRITICAL: Send error callback before shutting down GPU so UI can update
+                        try:
+                            # Derive error callback URL from success callback URL
+                            error_callback_url = None
+                            if result_callback_url:
+                                if "/api/tts/callback" in result_callback_url:
+                                    error_callback_url = result_callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
+                                elif "/callback" in result_callback_url:
+                                    error_callback_url = result_callback_url.rsplit("/", 1)[0] + "/error-callback"
+                                else:
+                                    base_url = result_callback_url.rstrip("/")
+                                    error_callback_url = f"{base_url}/error-callback"
+                            
+                            if error_callback_url:
+                                logger.info(f"📤 Sending error callback for callback failure: {error_callback_url}")
+                                notify_error_callback(
+                                    error_callback_url=error_callback_url,
+                                    story_id=story_id,
+                                    error_message=f"Failed to send success callback after 4 retries: {final_cb_e}",
+                                    user_id=user_id,
+                                    voice_id=voice_id,
+                                    error_details=str(final_cb_e),
+                                    job_id=input.get('job_id'),
+                                    metadata=payload.get("metadata") or {},
+                                )
+                                logger.info(f"✅ Error callback sent for callback failure")
+                        except Exception as error_cb_e:
+                            logger.error(f"❌ Failed to send error callback for callback failure: {error_cb_e}")
+                        
                         try:
                             _write_metadata_json(
                                 (result.get("firebase_path") or ""),
@@ -1301,7 +1331,7 @@ def handler(event, responseFormat="base64"):
                         except Exception:
                             pass
                         # CRITICAL: Stop GPU usage by raising exception - this will cause RunPod to stop the worker
-                        raise RuntimeError(f"Callback failed after 5 retries. Stopping GPU to prevent resource waste. Error: {final_cb_e}")
+                        raise RuntimeError(f"Callback failed after 4 retries. Stopping GPU to prevent resource waste. Error: {final_cb_e}")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
                     logger.warning(f"⚠️ TTS callback exception type: {type(cb_e)}")

@@ -704,7 +704,7 @@ def handler(event, responseFormat="base64"):
 
 def handle_voice_clone_request(input, responseFormat):
     """Pure API orchestration: Handle voice cloning requests"""
-    global vc_model
+    global vc_model, storage_client
     
     # Ensure we have disk headroom before doing any significant work
     ensure_disk_headroom()
@@ -838,14 +838,68 @@ def handle_voice_clone_request(input, responseFormat):
             elif lower.endswith(".m4a"): ext = ".m4a"
             temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}{ext}"
             try:
-                if bucket is None and not initialize_firebase():
-                    return {"status": "error", "error": "Failed to initialize Firebase storage"}
-                blob = bucket.blob(audio_path)
-                blob.download_to_filename(str(temp_voice_file))
-                logger.info(f"Downloaded audio from Firebase {audio_path} to {temp_voice_file}")
+                # Resolve region-aware bucket from metadata hints (same as upload_to_firebase)
+                bucket_hint = meta_top.get('bucket_name') or input.get('bucket_name')
+                country_hint = meta_top.get('country_code') or input.get('country_code')
+                resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
+                
+                logger.info(f"🔍 Attempting to download audio from bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
+                logger.info(f"🔍 Audio path: {audio_path}")
+                
+                # Reuse global storage client (initialized with credentials) or create new one if needed
+                if storage_client is None:
+                    logger.warning("⚠️ Global storage_client not initialized, creating new client")
+                    storage_client = storage.Client()
+                download_bucket = storage_client.bucket(resolved_bucket)
+                blob = download_bucket.blob(audio_path)
+                
+                # Try to download from user's regional bucket first
+                try:
+                    blob.download_to_filename(str(temp_voice_file))
+                    logger.info(f"✅ Downloaded audio from Firebase {audio_path} to {temp_voice_file} (bucket: {resolved_bucket})")
+                except Exception as dl_e:
+                    # If download fails, try US bucket as fallback (for legacy recordings)
+                    logger.warning(f"⚠️ Failed to download from {resolved_bucket}, trying US bucket fallback: {dl_e}")
+                    us_bucket_name = resolve_bucket_name(None, None)  # Resolves to US default
+                    if us_bucket_name != resolved_bucket:  # Only try if different bucket
+                        us_bucket = storage_client.bucket(us_bucket_name)
+                        us_blob = us_bucket.blob(audio_path)
+                        us_blob.download_to_filename(str(temp_voice_file))
+                        logger.info(f"✅ Downloaded audio from US fallback bucket: {us_bucket_name}")
+                    else:
+                        # Same bucket or fallback failed - re-raise original error
+                        raise dl_e
             except Exception as dl_e:
                 logger.error(f"❌ Failed to download audio_path {audio_path}: {dl_e}")
-                return {"status": "error", "error": f"Failed to download audio_path: {dl_e}"}
+                
+                # Send error callback before returning
+                error_message = f"Failed to download audio_path: {dl_e}"
+                try:
+                    if callback_url:
+                        # Extract voice_id if available
+                        voice_id_for_error = input.get('voice_id') or meta_top.get('voice_id')
+                        name_for_error = input.get('name') or meta_top.get('name', 'unknown')
+                        language_for_error = input.get('language') or meta_top.get('language', 'en')
+                        
+                        # Send error callback
+                        payload = {
+                            'status': 'error',
+                            'user_id': user_id,
+                            'voice_id': voice_id_for_error,
+                            'voice_name': name_for_error,
+                            'language': language_for_error,
+                            'error': error_message,
+                        }
+                        
+                        logger.info(f"📤 Sending error callback for download failure: {callback_url}")
+                        logger.info(f"📤 Error callback payload: {payload}")
+                        
+                        _post_signed_callback(callback_url, payload)
+                        logger.info("✅ Error callback sent successfully for download failure")
+                except Exception as callback_error:
+                    logger.error(f"❌ Failed to send error callback for download failure: {callback_error}")
+                
+                return {"status": "error", "error": error_message}
         else:
             temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
             audio_bytes = base64.b64decode(audio_data)
