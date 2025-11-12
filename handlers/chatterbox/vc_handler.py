@@ -20,6 +20,46 @@ from google.cloud import storage
 from typing import Optional
 import torch
 
+def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
+    """
+    Normalize and resolve the target GCS bucket name for uploads.
+    Priority:
+      1) Explicit bucket_name (strip gs:// prefix and Firebase Storage domain suffixes)
+      2) AU if country_code == 'AU' and AU env present
+      3) US default
+    
+    Normalizes Firebase Storage domain formats to actual GCS bucket names:
+    - godnathistorie-a25fa.firebasestorage.app -> godnathistorie-a25fa
+    - godnathistorie-a25fa.appspot.com -> godnathistorie-a25fa
+    - australia-a25fa -> australia-a25fa
+    """
+    if bucket_name:
+        bn = str(bucket_name).replace('gs://', '')
+    elif (country_code or '').upper() == 'AU':
+        bn = os.getenv('GCS_BUCKET_AU') or os.getenv('FIREBASE_STORAGE_BUCKET_AU') or ''
+    else:
+        bn = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
+    bn = (bn or '').strip()
+    # Basic validation: forbid slashes and stray prefixes
+    if bn.startswith('gs://'):
+        bn = bn.replace('gs://', '')
+    # Strip protocol if present
+    if bn.startswith('https://') or bn.startswith('http://'):
+        bn = bn.split('://', 1)[1]
+    # If URL-like, take host part only
+    if '/' in bn:
+        bn = bn.split('/')[0]
+    # Strip Firebase Storage domain suffixes (GCS client needs actual bucket name)
+    if bn.endswith('.firebasestorage.app'):
+        bn = bn.replace('.firebasestorage.app', '')
+    if bn.endswith('.appspot.com'):
+        bn = bn.replace('.appspot.com', '')
+    if '/' in bn or '\\' in bn:
+        raise ValueError(f"Invalid bucket name (contains slash): {bn}")
+    if not bn:
+        raise ValueError("Bucket name could not be resolved from inputs or environment")
+    return bn
+
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
 _LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
@@ -482,17 +522,24 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
     :param metadata: Optional metadata to store with the file
     :return: Public URL or None if failed
     """
-    global bucket # Ensure bucket is accessible
-    if bucket is None:
-        logger.info("🔍 Bucket is None, initializing Firebase...")
-        if not initialize_firebase():
-            logger.error("❌ Firebase not initialized, cannot upload")
-            return None
-    
     try:
+        from google.cloud import storage
+        
+        # Resolve region-aware bucket from metadata hints
+        bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
+        country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
+        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
+        
+        logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
+        
+        # Initialize Firebase storage client and bucket
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(resolved_bucket)
+        
         logger.info(f"🔍 Creating blob: {destination_blob_name}")
+        logger.info(f"🔍 Uploading {len(data)} bytes to bucket {resolved_bucket}...")
+        
         blob = bucket.blob(destination_blob_name)
-        logger.info(f"🔍 Uploading {len(data)} bytes...")
         
         # Set metadata if provided
         if metadata:
@@ -519,11 +566,13 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
                 logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
         
         public_url = blob.public_url
-        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url} (bucket: {resolved_bucket})")
         return public_url
         
     except Exception as e:
         logger.error(f"❌ Firebase upload failed: {e}")
+        import traceback
+        logger.error(f"❌ Firebase upload traceback: {traceback.format_exc()}")
         return None
 
 def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
@@ -811,6 +860,10 @@ def handle_voice_clone_request(input, responseFormat):
         logger.info("🔍 ===== API METADATA PREPARATION =====")
         
         # Prepare API metadata including language and kids voice flag
+        # Include bucket_name and country_code from top-level metadata for bucket resolution
+        bucket_name = meta_top.get('bucket_name') or input.get('bucket_name')
+        country_code = meta_top.get('country_code') or input.get('country_code')
+        
         api_metadata = {
             'user_id': input.get('user_id'),
             'project_id': input.get('project_id'),
@@ -823,6 +876,9 @@ def handle_voice_clone_request(input, responseFormat):
             # Explicit filenames (if provided/derived) so model uploads with the exact names
             'profile_filename': target_profile_name,
             'sample_filename': target_sample_name,
+            # Bucket information for region-aware uploads
+            'bucket_name': bucket_name,
+            'country_code': country_code,
             # Strong metadata contract for Storage uploads downstream
             'storage_metadata': {
                 'user_id': input.get('user_id') or '',
@@ -831,6 +887,9 @@ def handle_voice_clone_request(input, responseFormat):
                 'language': language,
                 'is_kids_voice': str(is_kids_voice).lower(),
                 'model_type': input.get('model_type') or 'chatterbox',
+                # Include bucket info in storage_metadata as well for upload functions
+                'bucket_name': bucket_name,
+                'country_code': country_code,
             }
         }
         

@@ -18,6 +18,46 @@ from datetime import datetime
 from google.cloud import storage
 from typing import Optional
 
+def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
+    """
+    Normalize and resolve the target GCS bucket name for uploads.
+    Priority:
+      1) Explicit bucket_name (strip gs:// prefix and Firebase Storage domain suffixes)
+      2) AU if country_code == 'AU' and AU env present
+      3) US default
+    
+    Normalizes Firebase Storage domain formats to actual GCS bucket names:
+    - godnathistorie-a25fa.firebasestorage.app -> godnathistorie-a25fa
+    - godnathistorie-a25fa.appspot.com -> godnathistorie-a25fa
+    - australia-a25fa -> australia-a25fa
+    """
+    if bucket_name:
+        bn = str(bucket_name).replace('gs://', '')
+    elif (country_code or '').upper() == 'AU':
+        bn = os.getenv('GCS_BUCKET_AU') or os.getenv('FIREBASE_STORAGE_BUCKET_AU') or ''
+    else:
+        bn = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
+    bn = (bn or '').strip()
+    # Basic validation: forbid slashes and stray prefixes
+    if bn.startswith('gs://'):
+        bn = bn.replace('gs://', '')
+    # Strip protocol if present
+    if bn.startswith('https://') or bn.startswith('http://'):
+        bn = bn.split('://', 1)[1]
+    # If URL-like, take host part only
+    if '/' in bn:
+        bn = bn.split('/')[0]
+    # Strip Firebase Storage domain suffixes (GCS client needs actual bucket name)
+    if bn.endswith('.firebasestorage.app'):
+        bn = bn.replace('.firebasestorage.app', '')
+    if bn.endswith('.appspot.com'):
+        bn = bn.replace('.appspot.com', '')
+    if '/' in bn or '\\' in bn:
+        raise ValueError(f"Invalid bucket name (contains slash): {bn}")
+    if not bn:
+        raise ValueError("Bucket name could not be resolved from inputs or environment")
+    return bn
+
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
 _LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
@@ -658,17 +698,24 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
     :param metadata: Optional metadata to store with the file
     :return: Public URL or None if failed
     """
-    global bucket # Ensure bucket is accessible
-    if bucket is None:
-        logger.info("🔍 Bucket is None, initializing Firebase...")
-        if not initialize_firebase():
-            logger.error("❌ Firebase not initialized, cannot upload")
-            return None
-    
     try:
+        from google.cloud import storage
+        
+        # Resolve region-aware bucket from metadata hints
+        bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
+        country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
+        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
+        
+        logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
+        
+        # Initialize Firebase storage client and bucket
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(resolved_bucket)
+        
         logger.info(f"🔍 Creating blob: {destination_blob_name}")
+        logger.info(f"🔍 Uploading {len(data)} bytes to bucket {resolved_bucket}...")
+        
         blob = bucket.blob(destination_blob_name)
-        logger.info(f"🔍 Uploading {len(data)} bytes...")
         
         # Set metadata if provided
         if metadata:
@@ -695,11 +742,13 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
                 logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
         
         public_url = blob.public_url
-        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url}")
+        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url} (bucket: {resolved_bucket})")
         return public_url
         
     except Exception as e:
         logger.error(f"❌ Firebase upload failed: {e}")
+        import traceback
+        logger.error(f"❌ Firebase upload traceback: {traceback.format_exc()}")
         return None
 
 def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
@@ -707,11 +756,27 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
     Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
     Returns new public URL or None.
     """
-    global bucket
     try:
-        if bucket is None and not initialize_firebase():
-            logger.error("❌ Firebase not initialized, cannot rename")
-            return None
+        from google.cloud import storage
+        
+        # Resolve region-aware bucket from metadata hints (if available)
+        bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
+        country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
+        
+        # If no bucket hint in metadata, fall back to global bucket initialization
+        if bucket_hint or country_hint:
+            resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
+            logger.info(f"🔍 Rename: Using resolved bucket {resolved_bucket} from metadata")
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(resolved_bucket)
+        else:
+            # Fallback to global bucket for backward compatibility
+            global bucket
+            if bucket is None and not initialize_firebase():
+                logger.error("❌ Firebase not initialized, cannot rename")
+                return None
+            logger.info(f"🔍 Rename: Using global bucket (no bucket hint in metadata)")
+        
         src_blob = bucket.blob(src_path)
         if not src_blob.exists():
             logger.warning(f"⚠️ Source blob does not exist: {src_path}")
@@ -737,6 +802,8 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
         return new_blob.public_url
     except Exception as e:
         logger.error(f"❌ Rename failed {src_path} → {dest_path}: {e}")
+        import traceback
+        logger.error(f"❌ Rename traceback: {traceback.format_exc()}")
         return None
 
 def list_files_for_debug():
@@ -1058,18 +1125,26 @@ def handler(event, responseFormat="base64"):
                     # Store under audio/stories/{language}/user/{user_id}/{file}
                     target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
                     if target_path != firebase_path:
+                        # Include bucket_name and country_code from api_metadata for bucket resolution
+                        rename_metadata = {
+                            'user_id': (user_id or ''),
+                            'story_id': (story_id or ''),
+                            'voice_id': (voice_id or ''),
+                            'voice_name': (voice_name or ''),
+                            'language': (language or ''),
+                            'story_type': (story_type or ''),
+                            'story_name': (safe_story or ''),
+                        }
+                        # Add bucket info from api_metadata if available
+                        if api_metadata:
+                            if 'bucket_name' in api_metadata:
+                                rename_metadata['bucket_name'] = api_metadata['bucket_name']
+                            if 'country_code' in api_metadata:
+                                rename_metadata['country_code'] = api_metadata['country_code']
                         new_url = rename_in_firebase(
                             firebase_path,
                             target_path,
-                            metadata={
-                                'user_id': (user_id or ''),
-                                'story_id': (story_id or ''),
-                                'voice_id': (voice_id or ''),
-                                'voice_name': (voice_name or ''),
-                                'language': (language or ''),
-                                'story_type': (story_type or ''),
-                                'story_name': (safe_story or ''),
-                            },
+                            metadata=rename_metadata,
                             content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav'
                         )
                         if new_url:
@@ -1199,10 +1274,14 @@ def handler(event, responseFormat="base64"):
                     logger.info(f"🔍   Payload size: {len(str(payload))} characters")
                     
                     # Attempt signed callback with retry; if it ultimately fails, write metadata JSON as fallback
+                    callback_success = False
                     try:
                         _post_signed_callback_with_retry(result_callback_url, payload)
+                        callback_success = True
+                        logger.info(f"✅ TTS callback POST {result_callback_url} -> signed and sent")
                     except Exception as final_cb_e:
-                        logger.warning(f"⚠️ Final callback failed after retries: {final_cb_e}")
+                        logger.error(f"❌ Final callback failed after 5 retries: {final_cb_e}")
+                        logger.error(f"❌ Callback failure will trigger GPU shutdown to prevent resource waste")
                         try:
                             _write_metadata_json(
                                 (result.get("firebase_path") or ""),
@@ -1221,7 +1300,8 @@ def handler(event, responseFormat="base64"):
                             )
                         except Exception:
                             pass
-                    logger.info(f"✅ TTS callback POST {result_callback_url} -> signed and sent")
+                        # CRITICAL: Stop GPU usage by raising exception - this will cause RunPod to stop the worker
+                        raise RuntimeError(f"Callback failed after 5 retries. Stopping GPU to prevent resource waste. Error: {final_cb_e}")
                 except Exception as cb_e:
                     logger.warning(f"⚠️ TTS callback POST failed: {cb_e}")
                     logger.warning(f"⚠️ TTS callback exception type: {type(cb_e)}")
