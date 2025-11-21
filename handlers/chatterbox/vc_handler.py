@@ -1067,10 +1067,15 @@ def handle_voice_clone_request(input, responseFormat):
             
             if should_send_callback:
                 try:
-                    # Build storage paths using the exact filenames
+                    # Extract R2 paths from result (new R2 upload flow)
+                    profile_storage_path = result.get('profile_storage_path') if isinstance(result, dict) else None
+                    sample_storage_path = result.get('sample_storage_path') if isinstance(result, dict) else None
+                    
+                    # Build storage paths - use R2 paths if available, otherwise fallback to old format
                     kids_segment = 'kids/' if is_kids_voice else ''
-                    profile_path = f"audio/voices/{language}/{kids_segment}profiles/{target_profile_name}"
-                    sample_path = f"audio/voices/{language}/{kids_segment}samples/{target_sample_name}"
+                    profile_path = profile_storage_path or f"audio/voices/{language}/{kids_segment}profiles/{target_profile_name}"
+                    sample_path = sample_storage_path or f"audio/voices/{language}/{kids_segment}samples/{target_sample_name}"
+                    
                     payload = {
                         'status': 'success',
                         'user_id': user_id,
@@ -1081,6 +1086,8 @@ def handle_voice_clone_request(input, responseFormat):
                         'model_type': input.get('model_type') or 'chatterbox',
                         'profile_path': profile_path,
                         'sample_path': sample_path,
+                        'r2_profile_path': profile_storage_path,  # Explicit R2 path for callback validation
+                        'r2_sample_path': sample_storage_path,  # Explicit R2 path for callback validation
                         'recorded_path': audio_path or (result.get('recorded_audio_path') if isinstance(result, dict) else ''),
                     }
                     
