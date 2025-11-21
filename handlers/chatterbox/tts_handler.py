@@ -20,7 +20,7 @@ from typing import Optional
 
 def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
     """
-    Normalize and resolve the target GCS bucket name for uploads.
+    Normalize and resolve the target bucket name for uploads (GCS or R2).
     Priority:
       1) Explicit bucket_name (strip gs:// prefix and Firebase Storage domain suffixes)
       2) AU if country_code == 'AU' and AU env present
@@ -30,9 +30,12 @@ def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optiona
     - godnathistorie-a25fa.firebasestorage.app -> godnathistorie-a25fa
     - godnathistorie-a25fa.appspot.com -> godnathistorie-a25fa
     - australia-a25fa -> australia-a25fa
+    
+    Recognizes R2 bucket names:
+    - daezend-public-content -> daezend-public-content (R2 bucket)
     """
     if bucket_name:
-        bn = str(bucket_name).replace('gs://', '')
+        bn = str(bucket_name).replace('gs://', '').replace('r2://', '')
     elif (country_code or '').upper() == 'AU':
         bn = os.getenv('GCS_BUCKET_AU') or os.getenv('FIREBASE_STORAGE_BUCKET_AU') or ''
     else:
@@ -41,6 +44,8 @@ def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optiona
     # Basic validation: forbid slashes and stray prefixes
     if bn.startswith('gs://'):
         bn = bn.replace('gs://', '')
+    if bn.startswith('r2://'):
+        bn = bn.replace('r2://', '')
     # Strip protocol if present
     if bn.startswith('https://') or bn.startswith('http://'):
         bn = bn.split('://', 1)[1]
@@ -57,6 +62,10 @@ def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optiona
     if not bn:
         raise ValueError("Bucket name could not be resolved from inputs or environment")
     return bn
+
+def is_r2_bucket(bucket_name: str) -> bool:
+    """Check if bucket name indicates R2 storage."""
+    return bucket_name == 'daezend-public-content' or bucket_name.startswith('r2://')
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
@@ -596,6 +605,120 @@ def _debug_gcs_creds():
     
     logger.info("🔍 ===== END TTS FIREBASE CREDENTIAL VALIDATION =====")
 
+def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
+    """
+    Upload data to Cloudflare R2 using boto3 S3 client.
+    
+    :param data: Binary data to upload
+    :param destination_key: Destination key/path in R2
+    :param content_type: MIME type of the file
+    :param metadata: Optional metadata dict (will be stored as R2 metadata)
+    :return: Public URL or None if failed
+    """
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        # Get R2 credentials from environment
+        r2_account_id = os.getenv('R2_ACCOUNT_ID')
+        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+        r2_endpoint = os.getenv('R2_ENDPOINT')
+        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+        r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
+        
+        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+            logger.error("❌ R2 credentials not configured")
+            return None
+        
+        # Create S3 client for R2
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_access_key_id,
+            aws_secret_access_key=r2_secret_access_key,
+            region_name='auto'
+        )
+        
+        # Prepare metadata for R2
+        extra_args = {
+            'ContentType': content_type,
+        }
+        if metadata:
+            # R2 metadata must be strings
+            extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
+        
+        # Upload to R2
+        s3_client.put_object(
+            Bucket=r2_bucket_name,
+            Key=destination_key,
+            Body=data,
+            **extra_args
+        )
+        
+        logger.info(f"✅ Uploaded to R2: {destination_key} ({len(data)} bytes)")
+        
+        # Return public URL if available
+        if r2_public_url:
+            public_url = f"{r2_public_url.rstrip('/')}/{destination_key}"
+            return public_url
+        
+        # Fallback: return R2 path
+        return destination_key
+        
+    except Exception as e:
+        logger.error(f"❌ R2 upload failed: {e}")
+        import traceback
+        logger.error(f"❌ R2 upload traceback: {traceback.format_exc()}")
+        return None
+
+def download_from_r2(source_key: str) -> Optional[bytes]:
+    """
+    Download data from Cloudflare R2 using boto3 S3 client.
+    
+    :param source_key: Source key/path in R2
+    :return: Binary data or None if failed
+    """
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        # Get R2 credentials from environment
+        r2_account_id = os.getenv('R2_ACCOUNT_ID')
+        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+        r2_endpoint = os.getenv('R2_ENDPOINT')
+        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+        
+        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+            logger.error("❌ R2 credentials not configured")
+            return None
+        
+        # Create S3 client for R2
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_access_key_id,
+            aws_secret_access_key=r2_secret_access_key,
+            region_name='auto'
+        )
+        
+        # Download from R2
+        response = s3_client.get_object(
+            Bucket=r2_bucket_name,
+            Key=source_key
+        )
+        
+        data = response['Body'].read()
+        logger.info(f"✅ Downloaded from R2: {source_key} ({len(data)} bytes)")
+        return data
+        
+    except Exception as e:
+        logger.error(f"❌ R2 download failed: {e}")
+        import traceback
+        logger.error(f"❌ R2 download traceback: {traceback.format_exc()}")
+        return None
+
 def initialize_firebase():
     """Initialize Firebase storage client"""
     global storage_client, bucket
@@ -690,23 +813,32 @@ def initialize_firebase():
 
 def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
     """
-    Upload data directly to Firebase Storage with metadata
+    Upload data directly to Firebase Storage or R2 with metadata.
+    Automatically detects R2 bucket and routes accordingly.
     
     :param data: Binary data to upload
-    :param destination_blob_name: Destination path in Firebase
+    :param destination_blob_name: Destination path in Firebase/R2
     :param content_type: MIME type of the file
     :param metadata: Optional metadata to store with the file
     :return: Public URL or None if failed
     """
     try:
-        from google.cloud import storage
-        
         # Resolve region-aware bucket from metadata hints
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
         
         logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
+        
+        # Check if this is an R2 bucket
+        if is_r2_bucket(resolved_bucket):
+            logger.info(f"🔍 Using R2 upload for bucket: {resolved_bucket}")
+            return upload_to_r2(data, destination_blob_name, content_type, metadata)
+        
+        # Otherwise use Firebase/GCS
+        from google.cloud import storage
+        
+        logger.info(f"🔍 Using Firebase/GCS upload for bucket: {resolved_bucket}")
         
         # Initialize Firebase storage client and bucket
         storage_client = storage.Client()
@@ -746,9 +878,9 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         return public_url
         
     except Exception as e:
-        logger.error(f"❌ Firebase upload failed: {e}")
+        logger.error(f"❌ Upload failed: {e}")
         import traceback
-        logger.error(f"❌ Firebase upload traceback: {traceback.format_exc()}")
+        logger.error(f"❌ Upload traceback: {traceback.format_exc()}")
         return None
 
 def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
@@ -764,10 +896,87 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         
-        # If no bucket hint in metadata, fall back to global bucket initialization
+        # Resolve bucket name
         if bucket_hint or country_hint:
             resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
-            logger.info(f"🔍 Rename: Using resolved bucket {resolved_bucket} from metadata")
+        else:
+            # Fallback to global bucket for backward compatibility
+            if bucket is None and not initialize_firebase():
+                logger.error("❌ Firebase not initialized, cannot rename")
+                return None
+            # Get bucket name from global bucket
+            resolved_bucket = bucket.name if bucket else resolve_bucket_name(None, None)
+        
+        logger.info(f"🔍 Rename: Using bucket {resolved_bucket}")
+        
+        # Check if this is an R2 bucket
+        if is_r2_bucket(resolved_bucket):
+            logger.info(f"🔍 Rename: Using R2 copy/delete for bucket: {resolved_bucket}")
+            try:
+                import boto3
+                
+                # Get R2 credentials
+                r2_account_id = os.getenv('R2_ACCOUNT_ID')
+                r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+                r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+                r2_endpoint = os.getenv('R2_ENDPOINT')
+                r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+                r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
+                
+                if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+                    logger.error("❌ R2 credentials not configured")
+                    return None
+                
+                s3_client = boto3.client(
+                    's3',
+                    endpoint_url=r2_endpoint,
+                    aws_access_key_id=r2_access_key_id,
+                    aws_secret_access_key=r2_secret_access_key,
+                    region_name='auto'
+                )
+                
+                # Check if source exists
+                try:
+                    s3_client.head_object(Bucket=r2_bucket_name, Key=src_path)
+                except Exception:
+                    logger.warning(f"⚠️ Source object does not exist in R2: {src_path}")
+                    return None
+                
+                # Copy object
+                copy_source = {'Bucket': r2_bucket_name, 'Key': src_path}
+                extra_args = {}
+                if content_type:
+                    extra_args['ContentType'] = content_type
+                if metadata:
+                    extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
+                
+                s3_client.copy_object(
+                    CopySource=copy_source,
+                    Bucket=r2_bucket_name,
+                    Key=dest_path,
+                    **extra_args
+                )
+                
+                # Delete original
+                try:
+                    s3_client.delete_object(Bucket=r2_bucket_name, Key=src_path)
+                except Exception as del_e:
+                    logger.warning(f"⚠️ Could not delete original R2 object {src_path}: {del_e}")
+                
+                logger.info(f"✅ Renamed in R2: {src_path} → {dest_path}")
+                
+                # Return public URL if available
+                if r2_public_url:
+                    return f"{r2_public_url.rstrip('/')}/{dest_path}"
+                return dest_path
+                
+            except Exception as r2_e:
+                logger.error(f"❌ R2 rename failed: {r2_e}")
+                return None
+        
+        # Otherwise use Firebase/GCS
+        # If no bucket hint in metadata, fall back to global bucket initialization
+        if bucket_hint or country_hint:
             storage_client = storage.Client()
             bucket = storage_client.bucket(resolved_bucket)
         else:
@@ -816,13 +1025,19 @@ def list_files_for_debug():
         else:
             logger.info(f"  {directory}: [DIRECTORY NOT FOUND]")
 
-def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata, voice_name=None):
+def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, story_type, is_kids_voice, api_metadata, voice_name=None, profile_path=None, user_id=None, story_id=None):
     """
     Implement TTS generation using available model methods.
     
     Uses the TTS model's generate method for text-to-speech generation.
     """
     global tts_model
+    
+    # Extract user_id and story_id from metadata if not provided explicitly
+    if not user_id:
+        user_id = api_metadata.get("user_id") if isinstance(api_metadata, dict) else ""
+    if not story_id:
+        story_id = api_metadata.get("story_id") if isinstance(api_metadata, dict) else ""
     
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
@@ -832,6 +1047,9 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     logger.info(f"  story_type: {story_type}")
     logger.info(f"  is_kids_voice: {is_kids_voice}")
     logger.info(f"  text_length: {len(text)} characters")
+    logger.info(f"  profile_path: {profile_path}")
+    logger.info(f"  user_id: {user_id}")
+    logger.info(f"  story_id: {story_id}")
     
     start_time = time.time()
     
@@ -858,7 +1076,10 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                     story_type=story_type,
                     is_kids_voice=is_kids_voice,
                     metadata=api_metadata,
-                    voice_name=voice_name
+                    voice_name=voice_name,
+                    profile_path=profile_path,
+                    user_id=user_id,
+                    story_id=story_id
                 )
                 generation_time = time.time() - start_time
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
@@ -944,6 +1165,7 @@ def handler(event, responseFormat="base64"):
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
+    profile_path = event["input"].get("profile_path") or (api_metadata.get("profile_path") if isinstance(api_metadata, dict) else None)
     callback_url = api_metadata.get("callback_url") or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
     
     # Debug: Log callback_url immediately after extraction
@@ -1007,7 +1229,10 @@ def handler(event, responseFormat="base64"):
             story_type=story_type,
             is_kids_voice=is_kids_voice,
             api_metadata=api_metadata,
-            voice_name=voice_name
+            voice_name=voice_name,
+            profile_path=profile_path,
+            user_id=user_id,
+            story_id=story_id
         )
         
         # Store callback_url in result for reliable access
@@ -1241,6 +1466,7 @@ def handler(event, responseFormat="base64"):
                     "voice_name": voice_name,
                     "audio_url": result.get("firebase_url") or result.get("audio_url") or result.get("audio_path"),
                     "storage_path": result.get("firebase_path"),
+                    "r2_path": result.get("r2_path") or result.get("firebase_path"),  # Explicit R2 path for callback validation
                     "language": language,
                     "metadata": {
                         **({} if not isinstance(api_metadata, dict) else api_metadata),
