@@ -605,7 +605,29 @@ def _debug_gcs_creds():
     
     logger.info("🔍 ===== END TTS FIREBASE CREDENTIAL VALIDATION =====")
 
-def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
+def validate_storage_path(path: str) -> str:
+    """
+    Validate and sanitize a storage path to prevent directory traversal attacks.
+    
+    :param path: The storage path to validate
+    :return: The sanitized path
+    :raises ValueError: If the path contains invalid sequences (.. or leading /)
+    """
+    if not path:
+        raise ValueError("Storage path cannot be empty")
+    
+    # Check for directory traversal sequences
+    if '..' in path:
+        raise ValueError(f"Storage path contains invalid '..' sequence: {path}")
+    
+    # Check for absolute paths (leading slash)
+    if path.startswith('/'):
+        raise ValueError(f"Storage path cannot start with '/': {path}")
+    
+    # Normalize the path by removing any trailing slashes (already handled by rstrip in usage)
+    return path.strip()
+
+def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None, bucket_name: Optional[str] = None) -> Optional[str]:
     """
     Upload data to Cloudflare R2 using boto3 S3 client.
     
@@ -613,6 +635,7 @@ def upload_to_r2(data: bytes, destination_key: str, content_type: str = "applica
     :param destination_key: Destination key/path in R2
     :param content_type: MIME type of the file
     :param metadata: Optional metadata dict (will be stored as R2 metadata)
+    :param bucket_name: Optional bucket name (defaults to R2_BUCKET_NAME env var)
     :return: Public URL or None if failed
     """
     try:
@@ -624,12 +647,15 @@ def upload_to_r2(data: bytes, destination_key: str, content_type: str = "applica
         r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
         r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
         r2_endpoint = os.getenv('R2_ENDPOINT')
-        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+        # Use provided bucket_name or fall back to environment variable
+        r2_bucket_name = bucket_name or os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
         r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
         
         if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
             logger.error("❌ R2 credentials not configured")
             return None
+        
+        logger.info(f"🔍 Uploading to R2 bucket: {r2_bucket_name}, key: {destination_key}")
         
         # Create S3 client for R2
         s3_client = boto3.client(
@@ -833,7 +859,7 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
         # Check if this is an R2 bucket
         if is_r2_bucket(resolved_bucket):
             logger.info(f"🔍 Using R2 upload for bucket: {resolved_bucket}")
-            return upload_to_r2(data, destination_blob_name, content_type, metadata)
+            return upload_to_r2(data, destination_blob_name, content_type, metadata, bucket_name=resolved_bucket)
         
         # Otherwise use Firebase/GCS
         from google.cloud import storage
@@ -920,7 +946,8 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
                 r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
                 r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
                 r2_endpoint = os.getenv('R2_ENDPOINT')
-                r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+                # Use resolved_bucket instead of environment variable
+                r2_bucket_name = resolved_bucket
                 r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
                 
                 if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
@@ -1347,8 +1374,23 @@ def handler(event, responseFormat="base64"):
                             final_filename = f"{base}.{ext}"
                     except Exception:
                         final_filename = f"{base}.{ext}"
-                    # Store under audio/stories/{language}/user/{user_id}/{file}
-                    target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
+                    # Check if storage_path is provided in metadata (for admin generations)
+                    storage_path_hint = api_metadata.get("storage_path") if isinstance(api_metadata, dict) else None
+                    if storage_path_hint:
+                        # Validate storage_path to prevent directory traversal attacks
+                        try:
+                            validated_path = validate_storage_path(storage_path_hint)
+                            # Use provided storage_path and append filename
+                            target_path = f"{validated_path.rstrip('/')}/{final_filename}"
+                            logger.info(f"🔍 Using storage_path from metadata: {target_path}")
+                        except ValueError as e:
+                            logger.error(f"❌ Invalid storage_path provided: {e}")
+                            # Fall back to default path structure
+                            target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
+                            logger.warning(f"⚠️ Falling back to default path: {target_path}")
+                    else:
+                        # Store under audio/stories/{language}/user/{user_id}/{file}
+                        target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
                     if target_path != firebase_path:
                         # Include bucket_name and country_code from api_metadata for bucket resolution
                         rename_metadata = {
