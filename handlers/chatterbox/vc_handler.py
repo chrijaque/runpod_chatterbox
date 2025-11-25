@@ -803,6 +803,7 @@ def _canonicalize_callback_url(url: str) -> str:
 
 def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
     """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+    logger.info(f"📤 Posting callback to {callback_url}")
     if _VERBOSE_LOGS:
         logger.debug(f"Posting callback to {callback_url}")
     
@@ -812,7 +813,8 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
     
     canonical_url = _canonicalize_callback_url(callback_url)
     parsed = urlparse(canonical_url)
-    path_for_signing = parsed.path or '/api/voices/callback'
+    path_for_signing = parsed.path or '/api/voice-clone/callback'  # Fixed default path
+    logger.info(f"📤 Callback signing path: {path_for_signing}, canonical URL: {canonical_url}")
     ts = str(int(time.time() * 1000))
     
     body_bytes = json.dumps(payload).encode('utf-8')
@@ -835,6 +837,7 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
     try:
         resp = opener.open(req, timeout=15)
         response_data = resp.read()
+        logger.info(f"✅ Callback response status: {resp.status}, URL: {canonical_url}")
         if _VERBOSE_LOGS:
             logger.debug(f"Callback response status: {resp.status}")
         resp.close()
@@ -847,6 +850,7 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
         except Exception:
             loc = None
         
+        logger.error(f"❌ Callback HTTP error: {code} for URL: {canonical_url}, Location: {loc}")
         if code in (307, 308) and loc:
             try:
                 follow_url = urljoin(canonical_url, loc)
@@ -855,15 +859,16 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
                 resp2 = opener.open(req2, timeout=15)
                 resp2.read()
                 resp2.close()
+                logger.info(f"✅ Callback redirect succeeded: {follow_url}")
                 return
             except Exception as follow_e:
                 logger.error(f"Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
                 raise
         else:
-            logger.error(f"HTTP request failed: {type(http_err).__name__}: {http_err}")
+            logger.error(f"HTTP request failed: {type(http_err).__name__}: {http_err}, URL: {canonical_url}")
             raise
     except Exception as e:
-        logger.error(f"HTTP request failed: {e}")
+        logger.error(f"❌ Callback request failed: {e}, URL: {canonical_url}")
         raise
 
 if __name__ == '__main__':
