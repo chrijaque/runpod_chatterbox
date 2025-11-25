@@ -172,7 +172,7 @@ The TTS service calls the error callback for:
 
 ### 4. Storage Errors
 - Failed to upload generated audio
-- Firebase storage issues
+- R2 issues
 - Network connectivity problems
 
 ### 5. Resource Errors

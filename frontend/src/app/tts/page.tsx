@@ -519,7 +519,7 @@ export default function TTSPage() {
                                                         TTS Generation Complete!
                                                     </h3>
                                                     <div className="mt-2 text-sm text-green-700">
-                                                        <p>The audio file has been saved to Firebase storage.</p>
+                                                        <p>The audio file has been saved to R2.</p>
                                                         <p className="mt-1">Path: {result.audio_path}</p>
                                                         <p className="mt-1">You can find it in the TTS Generations Library below.</p>
                                                     </div>

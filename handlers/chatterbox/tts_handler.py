@@ -1,7 +1,6 @@
 import runpod
 import time  
 import os
-import tempfile
 import base64
 import logging
 import sys
@@ -15,53 +14,38 @@ from urllib.parse import urlparse, urlunparse
 import json
 from pathlib import Path
 from datetime import datetime
-from google.cloud import storage
 from typing import Optional
 
 def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
     """
-    Normalize and resolve the target bucket name for uploads (GCS or R2).
-    Priority:
-      1) Explicit bucket_name (strip gs:// prefix and Firebase Storage domain suffixes)
-      2) AU if country_code == 'AU' and AU env present
-      3) US default
+    Resolve R2 bucket name. Only R2 storage is supported.
     
-    Normalizes Firebase Storage domain formats to actual GCS bucket names:
-    - godnathistorie-a25fa.firebasestorage.app -> godnathistorie-a25fa
-    - godnathistorie-a25fa.appspot.com -> godnathistorie-a25fa
-    - australia-a25fa -> australia-a25fa
+    Returns the R2 bucket name (defaults to 'daezend-public-content').
+    The country_code parameter is ignored as we only use a single R2 bucket.
     
-    Recognizes R2 bucket names:
-    - daezend-public-content -> daezend-public-content (R2 bucket)
+    :param bucket_name: Optional explicit bucket name (will be validated as R2)
+    :param country_code: Ignored (kept for API compatibility)
+    :return: R2 bucket name
     """
+    # Default R2 bucket
+    default_r2_bucket = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+    
     if bucket_name:
-        bn = str(bucket_name).replace('gs://', '').replace('r2://', '')
-    elif (country_code or '').upper() == 'AU':
-        bn = os.getenv('GCS_BUCKET_AU') or os.getenv('FIREBASE_STORAGE_BUCKET_AU') or ''
-    else:
-        bn = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-    bn = (bn or '').strip()
-    # Basic validation: forbid slashes and stray prefixes
-    if bn.startswith('gs://'):
-        bn = bn.replace('gs://', '')
-    if bn.startswith('r2://'):
-        bn = bn.replace('r2://', '')
-    # Strip protocol if present
-    if bn.startswith('https://') or bn.startswith('http://'):
-        bn = bn.split('://', 1)[1]
-    # If URL-like, take host part only
-    if '/' in bn:
-        bn = bn.split('/')[0]
-    # Strip Firebase Storage domain suffixes (GCS client needs actual bucket name)
-    if bn.endswith('.firebasestorage.app'):
-        bn = bn.replace('.firebasestorage.app', '')
-    if bn.endswith('.appspot.com'):
-        bn = bn.replace('.appspot.com', '')
-    if '/' in bn or '\\' in bn:
-        raise ValueError(f"Invalid bucket name (contains slash): {bn}")
-    if not bn:
-        raise ValueError("Bucket name could not be resolved from inputs or environment")
-    return bn
+        # Clean up the bucket name
+        bn = str(bucket_name).replace('r2://', '').replace('gs://', '').strip()
+        # Strip protocol if present
+        if bn.startswith('https://') or bn.startswith('http://'):
+            bn = bn.split('://', 1)[1]
+        # If URL-like, take host part only
+        if '/' in bn:
+            bn = bn.split('/')[0]
+        # Validate it's an R2 bucket
+        if not is_r2_bucket(bn):
+            raise ValueError(f"Only R2 storage is supported. Bucket '{bn}' is not an R2 bucket. Expected 'daezend-public-content'.")
+        return bn
+    
+    # Return default R2 bucket
+    return default_r2_bucket
 
 def is_r2_bucket(bucket_name: str) -> bool:
     """Check if bucket name indicates R2 storage."""
@@ -308,30 +292,24 @@ def _normalize_callback_url(url: str) -> str:
     return url
 
 def _persist_failed_callback_to_storage(payload: dict, story_id: str) -> Optional[str]:
-    """Persist failed callback payload for later replay under failed_callbacks/YYYY-MM-DD."""
+    """Persist failed callback payload to R2 for later replay under failed_callbacks/YYYY-MM-DD."""
     try:
-        global bucket
-        if bucket is None and not initialize_firebase():
-            return None
         key = f"failed_callbacks/{datetime.utcnow():%Y-%m-%d}/{(story_id or 'unknown')}-{int(time.time())}.json"
-        b = bucket.blob(key)
-        b.upload_from_string(json.dumps(payload), content_type='application/json')
-        return key
+        payload_json = json.dumps(payload).encode('utf-8')
+        result = upload_to_r2(payload_json, key, content_type='application/json')
+        return key if result else None
     except Exception:
         return None
 
 def _write_metadata_json(storage_path: str, metadata: dict) -> Optional[str]:
-    """Write a sibling .json metadata file next to the audio object."""
+    """Write a sibling .json metadata file next to the audio object in R2."""
     try:
-        global bucket
         if not storage_path:
             return None
-        if bucket is None and not initialize_firebase():
-            return None
         json_path = storage_path.rsplit('.', 1)[0] + '.json'
-        bj = bucket.blob(json_path)
-        bj.upload_from_string(json.dumps(metadata), content_type='application/json')
-        return json_path
+        metadata_json = json.dumps(metadata).encode('utf-8')
+        result = upload_to_r2(metadata_json, json_path, content_type='application/json')
+        return json_path if result else None
     except Exception:
         return None
 
@@ -512,9 +490,7 @@ logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
-# Initialize Firebase storage client
-storage_client = None
-bucket = None
+# R2 storage is used directly via boto3 - no client initialization needed
 
 # Initialize models
 ensure_disk_headroom()
@@ -745,301 +721,123 @@ def download_from_r2(source_key: str) -> Optional[bytes]:
         logger.error(f"❌ R2 download traceback: {traceback.format_exc()}")
         return None
 
-def initialize_firebase():
-    """Initialize Firebase storage client"""
-    global storage_client, bucket
-    
-    try:
-        # Debug: Check environment variables
-        logger.info("🔍 Checking Firebase environment variables...")
-        firebase_secret = os.getenv('RUNPOD_SECRET_Firebase')
-        google_creds = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
-        logger.info(f"🔍 RUNPOD_SECRET_Firebase exists: {firebase_secret is not None}")
-        logger.info(f"🔍 GOOGLE_APPLICATION_CREDENTIALS exists: {google_creds is not None}")
-        
-        # Debug: Log Firebase credentials details
-        if firebase_secret:
-            logger.info(f"🔍 RUNPOD_SECRET_Firebase length: {len(firebase_secret)} characters")
-            logger.info(f"🔍 RUNPOD_SECRET_Firebase: Loaded successfully")
-            
-            # Try to parse and validate the JSON
-            try:
-                import json
-                cred_data = json.loads(firebase_secret)
-                logger.info(f"🔍 Firebase Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
-                logger.info(f"🔍 Firebase Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
-                logger.info("✅ Firebase credentials JSON is valid")
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ Firebase credentials JSON is invalid: {e}")
-                logger.error(f"❌ Credentials validation failed")
-        else:
-            logger.warning("⚠️ RUNPOD_SECRET_Firebase is not set!")
-            logger.warning("⚠️ Firebase functionality will not work")
-        
-        # Check if we're in RunPod and have the secret
-        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        
-        if firebase_secret_path:
-            if firebase_secret_path.startswith('{'):
-                # It's JSON content, create a temporary file
-                logger.info("✅ Using RunPod Firebase secret as JSON content")
-                import tempfile
-                import json
-                
-                # Validate JSON first
-                try:
-                    creds_data = json.loads(firebase_secret_path)
-                    logger.info(f"✅ Valid JSON with project_id: {creds_data.get('project_id', 'unknown')}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ Invalid JSON in RUNPOD_SECRET_Firebase: {e}")
-                    raise
-                
-                # Create temporary file with the JSON content
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
-                    json.dump(creds_data, tmp_file)
-                    tmp_path = tmp_file.name
-                
-                logger.info(f"✅ Created temporary credentials file: {tmp_path}")
-                
-                # Set the environment variable for Google Cloud SDK
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = tmp_path
-                logger.info(f"✅ Set GOOGLE_APPLICATION_CREDENTIALS to: {tmp_path}")
-                
-                storage_client = storage.Client.from_service_account_json(tmp_path)
-                
-            elif os.path.exists(firebase_secret_path):
-                # It's a file path
-                logger.info(f"✅ Using RunPod Firebase secret file: {firebase_secret_path}")
-                storage_client = storage.Client.from_service_account_json(firebase_secret_path)
-            else:
-                logger.warning(f"⚠️ RUNPOD_SECRET_Firebase exists but is not JSON content or valid file path")
-                # Fallback to GOOGLE_APPLICATION_CREDENTIALS
-                logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
-                storage_client = storage.Client()
-        else:
-            # No RunPod secret, fallback to GOOGLE_APPLICATION_CREDENTIALS
-            logger.info("🔄 Using GOOGLE_APPLICATION_CREDENTIALS fallback")
-            storage_client = storage.Client()
-        
-        # Normalize bucket name: strip .firebasestorage.app suffix for GCS client
-        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-        if not bucket_name_raw:
-            raise ValueError("GCS_BUCKET_US or FIREBASE_STORAGE_BUCKET environment variable must be set")
-        # Normalize: strip gs://, https://, .firebasestorage.app, .appspot.com
-        bucket_name = bucket_name_raw.replace('gs://', '').replace('https://', '').replace('http://', '')
-        if '/' in bucket_name:
-            bucket_name = bucket_name.split('/')[0]
-        bucket_name = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
-        bucket = storage_client.bucket(bucket_name)
-        logger.info(f"✅ Firebase storage client initialized successfully (bucket: {bucket_name})")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Firebase storage: {e}")
-        return False
+# Removed: initialize_firebase() - R2 is no longer used, only R2
 
 def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
     """
-    Upload data directly to Firebase Storage or R2 with metadata.
-    Automatically detects R2 bucket and routes accordingly.
+    Upload data directly to R2 only (R2 removed).
     
     :param data: Binary data to upload
-    :param destination_blob_name: Destination path in Firebase/R2
+    :param destination_blob_name: Destination path in R2
     :param content_type: MIME type of the file
     :param metadata: Optional metadata to store with the file
     :return: Public URL or None if failed
     """
     try:
-        # Resolve region-aware bucket from metadata hints
+        # Resolve bucket from metadata hints
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
         
         logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
         
-        # Check if this is an R2 bucket
-        if is_r2_bucket(resolved_bucket):
-            logger.info(f"🔍 Using R2 upload for bucket: {resolved_bucket}")
-            return upload_to_r2(data, destination_blob_name, content_type, metadata, bucket_name=resolved_bucket)
+        # Only R2 is supported - verify bucket is R2
+        if not is_r2_bucket(resolved_bucket):
+            error_msg = f"Only R2 storage is supported. Bucket '{resolved_bucket}' is not an R2 bucket. Expected 'daezend-public-content'."
+            logger.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
-        # Otherwise use Firebase/GCS
-        from google.cloud import storage
-        
-        logger.info(f"🔍 Using Firebase/GCS upload for bucket: {resolved_bucket}")
-        
-        # Initialize Firebase storage client and bucket
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(resolved_bucket)
-        
-        logger.info(f"🔍 Creating blob: {destination_blob_name}")
-        logger.info(f"🔍 Uploading {len(data)} bytes to bucket {resolved_bucket}...")
-        
-        blob = bucket.blob(destination_blob_name)
-        
-        # Set metadata if provided
-        if metadata:
-            blob.metadata = metadata
-            logger.info(f"🔍 Set metadata: {metadata}")
-        
-        # Set content type
-        blob.content_type = content_type
-        logger.info(f"🔍 Set content type: {content_type}")
-        
-        # Upload the data
-        blob.upload_from_string(data, content_type=content_type)
-        logger.info(f"🔍 Upload completed, making public...")
-        
-        # Make the blob publicly accessible
-        blob.make_public()
-        
-        # CRITICAL: Patch metadata to ensure persistence
-        if metadata:
-            try:
-                blob.patch()
-                logger.info(f"✅ Metadata patched successfully for: {destination_blob_name}")
-            except Exception as patch_e:
-                logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
-        
-        public_url = blob.public_url
-        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url} (bucket: {resolved_bucket})")
-        return public_url
+        logger.info(f"✅ Using R2 upload for bucket: {resolved_bucket}")
+        return upload_to_r2(data, destination_blob_name, content_type, metadata, bucket_name=resolved_bucket)
         
     except Exception as e:
-        logger.error(f"❌ Upload failed: {e}")
+        logger.error(f"❌ R2 upload failed: {e}")
         import traceback
-        logger.error(f"❌ Upload traceback: {traceback.format_exc()}")
+        logger.error(f"❌ R2 upload traceback: {traceback.format_exc()}")
         return None
 
 def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
     """
-    Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
+    Rename (copy + delete) an object in R2 only (R2 removed).
     Returns new public URL or None.
     """
-    global bucket  # Declare global at the top before any assignment
     try:
-        from google.cloud import storage
-        
-        # Resolve region-aware bucket from metadata hints (if available)
+        # Resolve bucket from metadata hints
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         
-        # Resolve bucket name
-        if bucket_hint or country_hint:
-            resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
-        else:
-            # Fallback to global bucket for backward compatibility
-            if bucket is None and not initialize_firebase():
-                logger.error("❌ Firebase not initialized, cannot rename")
-                return None
-            # Get bucket name from global bucket
-            resolved_bucket = bucket.name if bucket else resolve_bucket_name(None, None)
+        # Resolve bucket name (should be R2)
+        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint) if (bucket_hint or country_hint) else 'daezend-public-content'
         
-        logger.info(f"🔍 Rename: Using bucket {resolved_bucket}")
+        # Only R2 is supported
+        if not is_r2_bucket(resolved_bucket):
+            error_msg = f"Only R2 storage is supported. Bucket '{resolved_bucket}' is not an R2 bucket."
+            logger.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
-        # Check if this is an R2 bucket
-        if is_r2_bucket(resolved_bucket):
-            logger.info(f"🔍 Rename: Using R2 copy/delete for bucket: {resolved_bucket}")
-            try:
-                import boto3
-                
-                # Get R2 credentials
-                r2_account_id = os.getenv('R2_ACCOUNT_ID')
-                r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
-                r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
-                r2_endpoint = os.getenv('R2_ENDPOINT')
-                # Use resolved_bucket instead of environment variable
-                r2_bucket_name = resolved_bucket
-                r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
-                
-                if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
-                    logger.error("❌ R2 credentials not configured")
-                    return None
-                
-                s3_client = boto3.client(
-                    's3',
-                    endpoint_url=r2_endpoint,
-                    aws_access_key_id=r2_access_key_id,
-                    aws_secret_access_key=r2_secret_access_key,
-                    region_name='auto'
-                )
-                
-                # Check if source exists
-                try:
-                    s3_client.head_object(Bucket=r2_bucket_name, Key=src_path)
-                except Exception:
-                    logger.warning(f"⚠️ Source object does not exist in R2: {src_path}")
-                    return None
-                
-                # Copy object
-                copy_source = {'Bucket': r2_bucket_name, 'Key': src_path}
-                extra_args = {}
-                if content_type:
-                    extra_args['ContentType'] = content_type
-                if metadata:
-                    extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
-                
-                s3_client.copy_object(
-                    CopySource=copy_source,
-                    Bucket=r2_bucket_name,
-                    Key=dest_path,
-                    **extra_args
-                )
-                
-                # Delete original
-                try:
-                    s3_client.delete_object(Bucket=r2_bucket_name, Key=src_path)
-                except Exception as del_e:
-                    logger.warning(f"⚠️ Could not delete original R2 object {src_path}: {del_e}")
-                
-                logger.info(f"✅ Renamed in R2: {src_path} → {dest_path}")
-                
-                # Return public URL if available
-                if r2_public_url:
-                    return f"{r2_public_url.rstrip('/')}/{dest_path}"
-                return dest_path
-                
-            except Exception as r2_e:
-                logger.error(f"❌ R2 rename failed: {r2_e}")
-                return None
+        logger.info(f"✅ Rename: Using R2 copy/delete for bucket: {resolved_bucket}")
         
-        # Otherwise use Firebase/GCS
-        # If no bucket hint in metadata, fall back to global bucket initialization
-        if bucket_hint or country_hint:
-            storage_client = storage.Client()
-            bucket = storage_client.bucket(resolved_bucket)
-        else:
-            # Fallback to global bucket for backward compatibility
-            if bucket is None and not initialize_firebase():
-                logger.error("❌ Firebase not initialized, cannot rename")
-                return None
-            logger.info(f"🔍 Rename: Using global bucket (no bucket hint in metadata)")
+        import boto3
         
-        src_blob = bucket.blob(src_path)
-        if not src_blob.exists():
-            logger.warning(f"⚠️ Source blob does not exist: {src_path}")
+        # Get R2 credentials
+        r2_account_id = os.getenv('R2_ACCOUNT_ID')
+        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+        r2_endpoint = os.getenv('R2_ENDPOINT')
+        r2_bucket_name = resolved_bucket
+        r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
+        
+        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+            logger.error("❌ R2 credentials not configured")
             return None
-        # Perform copy
-        new_blob = bucket.copy_blob(src_blob, bucket, dest_path)
-        # Set metadata/content type and persist
-        if metadata:
-            new_blob.metadata = metadata
-        if content_type:
-            new_blob.content_type = content_type
+        
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_access_key_id,
+            aws_secret_access_key=r2_secret_access_key,
+            region_name='auto'
+        )
+        
+        # Check if source exists
         try:
-            new_blob.patch()
-        except Exception as patch_e:
-            logger.warning(f"⚠️ Could not patch metadata for {dest_path}: {patch_e}")
-        new_blob.make_public()
+            s3_client.head_object(Bucket=r2_bucket_name, Key=src_path)
+        except Exception:
+            logger.warning(f"⚠️ Source object does not exist in R2: {src_path}")
+            return None
+        
+        # Copy object
+        copy_source = {'Bucket': r2_bucket_name, 'Key': src_path}
+        extra_args = {}
+        if content_type:
+            extra_args['ContentType'] = content_type
+        if metadata:
+            extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
+        
+        s3_client.copy_object(
+            CopySource=copy_source,
+            Bucket=r2_bucket_name,
+            Key=dest_path,
+            **extra_args
+        )
+        
         # Delete original
         try:
-            src_blob.delete()
+            s3_client.delete_object(Bucket=r2_bucket_name, Key=src_path)
         except Exception as del_e:
-            logger.warning(f"⚠️ Could not delete original blob {src_path}: {del_e}")
-        logger.info(f"✅ Renamed {src_path} → {dest_path}")
-        return new_blob.public_url
+            logger.warning(f"⚠️ Could not delete original R2 object {src_path}: {del_e}")
+        
+        logger.info(f"✅ Renamed in R2: {src_path} → {dest_path}")
+        
+        # Return public URL if available
+        if r2_public_url:
+            return f"{r2_public_url.rstrip('/')}/{dest_path}"
+        return dest_path
+        
     except Exception as e:
-        logger.error(f"❌ Rename failed {src_path} → {dest_path}: {e}")
+        logger.error(f"❌ R2 rename failed {src_path} → {dest_path}: {e}")
         import traceback
-        logger.error(f"❌ Rename traceback: {traceback.format_exc()}")
+        logger.error(f"❌ R2 rename traceback: {traceback.format_exc()}")
         return None
 
 def list_files_for_debug():
@@ -1140,7 +938,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
 
 def handler(event, responseFormat="base64"):
     """Pure API orchestration: Handle TTS generation requests"""
-    global tts_model, bucket
+    global tts_model
     
     ensure_disk_headroom()
 
@@ -1173,10 +971,7 @@ def handler(event, responseFormat="base64"):
         logger.info(f"📥 Top-level metadata keys: {list(event['metadata'].keys()) if isinstance(event['metadata'], dict) else 'Not a dict'}")
         logger.info(f"📥 Top-level metadata: {event['metadata']}")
     
-    # Initialize Firebase at the start
-    if not initialize_firebase():
-        logger.error("❌ Failed to initialize Firebase, cannot proceed")
-        return _return_with_cleanup({"status": "error", "error": "Failed to initialize Firebase storage"})
+    # R2 storage is used directly - no initialization needed
     
     # Check if TTS model is available
     if tts_model is None:
@@ -1391,52 +1186,24 @@ def handler(event, responseFormat="base64"):
                     else:
                         # Store under audio/stories/{language}/user/{user_id}/{file}
                         target_path = f"audio/stories/{language}/user/{(user_id or 'user')}/{final_filename}"
+                    # Removed: R2 rename logic - files are uploaded directly to correct R2 path
+                    # TTS model uploads directly to R2 with correct path, no rename needed
                     if target_path != firebase_path:
-                        # Include bucket_name and country_code from api_metadata for bucket resolution
-                        rename_metadata = {
-                            'user_id': (user_id or ''),
-                            'story_id': (story_id or ''),
-                            'voice_id': (voice_id or ''),
-                            'voice_name': (voice_name or ''),
-                            'language': (language or ''),
-                            'story_type': (story_type or ''),
-                            'story_name': (safe_story or ''),
-                        }
-                        # Add bucket info from api_metadata if available
-                        if api_metadata:
-                            if 'bucket_name' in api_metadata:
-                                rename_metadata['bucket_name'] = api_metadata['bucket_name']
-                            if 'country_code' in api_metadata:
-                                rename_metadata['country_code'] = api_metadata['country_code']
-                        new_url = rename_in_firebase(
-                            firebase_path,
-                            target_path,
-                            metadata=rename_metadata,
-                            content_type='audio/mpeg' if ext == 'mp3' else 'audio/wav'
-                        )
-                        if new_url:
-                            result['firebase_path'] = target_path
-                            result['firebase_url'] = new_url
-                            result['audio_url'] = new_url
-                        else:
-                            # Persist metadata on the original blob as a fallback
-                            try:
-                                if bucket is None:
-                                    initialize_firebase()
-                                if bucket is not None:
-                                    b = bucket.blob(firebase_path)
-                                    if b.exists():
-                                        b.metadata = {
-                                            'user_id': (user_id or ''),
-                                            'story_id': (story_id or ''),
-                                            'voice_id': (voice_id or ''),
-                                            'voice_name': (voice_name or ''),
-                                            'language': (language or ''),
-                                            'story_type': (story_type or ''),
-                                            'story_name': (safe_story or ''),
-                                        }
-                                        try:
-                                            b.patch()
+                        logger.info(f"📝 Path mismatch detected but rename skipped (R2-only): {firebase_path} -> {target_path}")
+                        logger.info(f"   Using original R2 path from model: {firebase_path}")
+                        # Keep the original path from the model (already in R2)
+                        result['storage_path'] = firebase_path
+                        result['r2_path'] = firebase_path
+                        if result.get('firebase_url') or result.get('audio_url'):
+                            result['storage_url'] = result.get('firebase_url') or result.get('audio_url')
+                            result['r2_url'] = result.get('firebase_url') or result.get('audio_url')
+                    else:
+                        # Paths match - update result with R2 naming
+                        result['storage_path'] = target_path
+                        result['r2_path'] = target_path
+                        if result.get('firebase_url') or result.get('audio_url'):
+                            result['storage_url'] = result.get('firebase_url') or result.get('audio_url')
+                            result['r2_url'] = result.get('firebase_url') or result.get('audio_url')
                                         except Exception:
                                             pass
                             except Exception as meta_e:

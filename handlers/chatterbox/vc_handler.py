@@ -1,7 +1,6 @@
 import runpod
 import time  
 import os
-import tempfile
 import base64
 import logging
 import sys
@@ -11,54 +10,13 @@ import shutil
 import hmac
 import hashlib
 import json
-from urllib.parse import urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.parse import urlparse, urlunparse, urljoin
+from urllib.request import Request, HTTPRedirectHandler, build_opener
 from urllib.error import HTTPError
 from pathlib import Path
 from datetime import datetime
-from google.cloud import storage
-from typing import Optional
+from typing import Optional, Dict, Any
 import torch
-
-def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
-    """
-    Normalize and resolve the target GCS bucket name for uploads.
-    Priority:
-      1) Explicit bucket_name (strip gs:// prefix and Firebase Storage domain suffixes)
-      2) AU if country_code == 'AU' and AU env present
-      3) US default
-    
-    Normalizes Firebase Storage domain formats to actual GCS bucket names:
-    - godnathistorie-a25fa.firebasestorage.app -> godnathistorie-a25fa
-    - godnathistorie-a25fa.appspot.com -> godnathistorie-a25fa
-    - australia-a25fa -> australia-a25fa
-    """
-    if bucket_name:
-        bn = str(bucket_name).replace('gs://', '')
-    elif (country_code or '').upper() == 'AU':
-        bn = os.getenv('GCS_BUCKET_AU') or os.getenv('FIREBASE_STORAGE_BUCKET_AU') or ''
-    else:
-        bn = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-    bn = (bn or '').strip()
-    # Basic validation: forbid slashes and stray prefixes
-    if bn.startswith('gs://'):
-        bn = bn.replace('gs://', '')
-    # Strip protocol if present
-    if bn.startswith('https://') or bn.startswith('http://'):
-        bn = bn.split('://', 1)[1]
-    # If URL-like, take host part only
-    if '/' in bn:
-        bn = bn.split('/')[0]
-    # Strip Firebase Storage domain suffixes (GCS client needs actual bucket name)
-    if bn.endswith('.firebasestorage.app'):
-        bn = bn.replace('.firebasestorage.app', '')
-    if bn.endswith('.appspot.com'):
-        bn = bn.replace('.appspot.com', '')
-    if '/' in bn or '\\' in bn:
-        raise ValueError(f"Invalid bucket name (contains slash): {bn}")
-    if not bn:
-        raise ValueError("Bucket name could not be resolved from inputs or environment")
-    return bn
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
@@ -149,8 +107,11 @@ def _directory_size_bytes(path: Path) -> int:
         return 0
 
 def log_disk_usage_summary(context: str = "") -> None:
+    """Log disk usage summary. Only logs when VERBOSE_LOGS is enabled."""
+    if not _VERBOSE_LOGS:
+        return
     try:
-        logger.info(f"🧭 Disk usage summary {('(' + context + ')') if context else ''}:")
+        logger.info(f"Disk usage summary {('(' + context + ')') if context else ''}:")
         points = [
             ("/", Path("/")),
             ("/cache", Path("/cache")),
@@ -177,7 +138,7 @@ def log_disk_usage_summary(context: str = "") -> None:
                 rows.append((label, 0, str(p)))
         rows.sort(key=lambda r: r[1], reverse=True)
         for label, size_b, pstr in rows:
-            logger.info(f"  {label:28} { _bytes_human(size_b):>10 }  -> {pstr}")
+            logger.info(f"  {label:28} {_bytes_human(size_b):>10}  -> {pstr}")
     except Exception:
         pass
 
@@ -242,9 +203,7 @@ def cleanup_runtime_storage(force: bool = False, *, temp_age_seconds: int = 60 *
 
         # Log free space after cleanup
         free_after = _disk_free_bytes("/")
-        logger.info(
-            f"🧹 Cleanup done. Free space: { _bytes_human(free_after) }"
-        )
+        logger.info(f"Cleanup done. Free space: {_bytes_human(free_after)}")
         # Log summary again after cleanup
         log_disk_usage_summary("after_cleanup")
     except Exception:
@@ -260,11 +219,10 @@ def ensure_disk_headroom(min_free_gb: float = None) -> None:
         if min_free_gb is None:
             min_free_gb = float(os.getenv("MIN_FREE_GB", "2"))
         free_before = _disk_free_bytes("/")
-        logger.info(f"💽 Free disk before check: { _bytes_human(free_before) }")
+        if _VERBOSE_LOGS:
+            logger.info(f"Free disk before check: {_bytes_human(free_before)}")
         if free_before < int(min_free_gb * (1024 ** 3)):
-            logger.warning(
-                f"⚠️ Low disk space detected (<{min_free_gb} GB). Running cleanup..."
-            )
+            logger.warning(f"Low disk space detected (<{min_free_gb} GB). Running cleanup...")
             cleanup_runtime_storage(force=True)
     except Exception:
         pass
@@ -276,10 +234,11 @@ _ensure_cache_env_dirs()
 try:
     if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() == "true":
         _pre_free = _disk_free_bytes("/")
-        logger.info(f"💽 Free disk early preflight: { _bytes_human(_pre_free) }")
+        if _VERBOSE_LOGS:
+            logger.info(f"Free disk early preflight: {_bytes_human(_pre_free)}")
         _min_gb = float(os.getenv("MIN_FREE_GB", "10"))
         if _pre_free < int(_min_gb * (1024 ** 3)):
-            logger.warning(f"⚠️ Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
+            logger.warning(f"Low disk space detected in preflight (<{_min_gb} GB). Running cleanup...")
             log_disk_usage_summary("preflight_before_cleanup")
             cleanup_runtime_storage(force=True)
             log_disk_usage_summary("preflight_after_cleanup")
@@ -311,17 +270,15 @@ def clear_python_cache():
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
 
-# Keep model downloads simple: no monkey patches to huggingface_hub
-
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
     from chatterbox.tts import ChatterboxTTS
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("✅ Successfully imported ChatterboxVC and ChatterboxTTS from forked repository")
+    logger.info("Successfully imported ChatterboxVC and ChatterboxTTS from forked repository")
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
-    logger.warning(f"⚠️ Could not import models from forked repository: {e}")
+    logger.warning(f"Could not import models from forked repository: {e}")
 
 # Initialize models once at startup
 vc_model = None
@@ -340,14 +297,11 @@ TEMP_VOICE_DIR.mkdir(exist_ok=True)
 # Ensure generic temp dir is under our managed directory
 os.environ.setdefault("TMPDIR", str(TEMP_VOICE_DIR))
 
-logger.info(f"Using directories:")
-logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
-logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
-logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
-
-# Initialize Firebase storage client
-storage_client = None
-bucket = None
+if _VERBOSE_LOGS:
+    logger.info(f"Using directories:")
+    logger.info(f"  VOICE_PROFILES_DIR: {VOICE_PROFILES_DIR}")
+    logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
+    logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 # -------------------------------------------------------------
 # Device selection with robust fallback
@@ -379,279 +333,272 @@ def _select_device() -> str:
 
 # Initialize models
 ensure_disk_headroom()
-logger.info("🔧 Initializing models...")
+logger.info("Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
         _device = _select_device()
-        logger.info(f"🖥️ Selected device: {_device}")
+        logger.info(f"Selected device: {_device}")
         try:
             tts_model = ChatterboxTTS.from_pretrained(device=_device)
-            logger.info("✅ ChatterboxTTS ready")
+            logger.info("ChatterboxTTS ready")
             vc_model = ChatterboxVC.from_pretrained(device=_device)
-            logger.info("✅ ChatterboxVC ready")
+            logger.info("ChatterboxVC ready")
         except Exception as dev_e:
-            logger.error(f"❌ Init failed on {_device}: {dev_e}. Retrying on CPU…")
+            logger.error(f"Init failed on {_device}: {dev_e}. Retrying on CPU…")
             try:
                 tts_model = ChatterboxTTS.from_pretrained(device='cpu')
                 vc_model = ChatterboxVC.from_pretrained(device='cpu')
-                logger.info("✅ Models initialized on CPU")
+                logger.info("Models initialized on CPU")
             except Exception as cpu_e:
-                logger.error(f"❌ CPU fallback init failed: {cpu_e}")
+                logger.error(f"CPU fallback init failed: {cpu_e}")
                 vc_model = None
                 tts_model = None
-
-        
-        
     else:
-        logger.error("❌ Forked repository models not available")
+        logger.error("Forked repository models not available")
         vc_model = None
         tts_model = None
         
 except Exception as e:
-    logger.error(f"❌ Failed to initialize models: {e}")
+    logger.error(f"Failed to initialize models: {e}")
     vc_model = None
     tts_model = None
 
 # -------------------------------------------------------------------
-# 🐞  Firebase / GCS credential debug helper
+# R2 download helper
 # -------------------------------------------------------------------
-def _debug_gcs_creds():
-    """Comprehensive Firebase credential check and validation."""
-    logger.info("🔍 ===== FIREBASE CREDENTIAL VALIDATION =====")
-    try:
-        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        logger.info(f"🔑 Firebase secret present: {bool(firebase_secret_path)}")
-        logger.info(f"🔑 Firebase secret length: {len(firebase_secret_path) if firebase_secret_path else 0}")
-        
-        if firebase_secret_path:
-            # Check if it's JSON content
-            if firebase_secret_path.startswith('{'):
-                logger.info("🔑 Firebase secret appears to be JSON content")
-                try:
-                    import json
-                    cred_data = json.loads(firebase_secret_path)
-                    logger.info(f"🔑 JSON validation: SUCCESS")
-                    logger.info(f"🔑 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
-                    logger.info(f"🔑 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
-                    logger.info(f"🔑 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
-                    logger.info(f"🔑 Type: {cred_data.get('type', 'NOT FOUND')}")
-                    
-                    # Check for required fields
-                    required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
-                    missing_fields = [field for field in required_fields if field not in cred_data]
-                    if missing_fields:
-                        logger.error(f"❌ Missing required credential fields: {missing_fields}")
-                    else:
-                        logger.info("✅ All required credential fields present")
-                        
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ Firebase secret JSON is invalid: {e}")
-                except Exception as e:
-                    logger.error(f"❌ Error parsing Firebase secret: {e}")
-            else:
-                logger.info("🔑 Firebase secret appears to be a file path")
-                if os.path.exists(firebase_secret_path):
-                    logger.info(f"✅ Firebase secret file exists: {firebase_secret_path}")
-                    try:
-                        with open(firebase_secret_path, 'r') as f:
-                            content = f.read()
-                            logger.info(f"🔑 File content length: {len(content)}")
-                            logger.info(f"🔑 File content preview: {content[:100]}...")
-                    except Exception as e:
-                        logger.error(f"❌ Error reading Firebase secret file: {e}")
-                else:
-                    logger.error(f"❌ Firebase secret file does not exist: {firebase_secret_path}")
-        else:
-            logger.error("❌ RUNPOD_SECRET_Firebase environment variable not set")
-            
-        # Check bucket identifier
-        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-        bucket_name = bucket_name_raw if bucket_name_raw else 'not-set'
-        logger.info(f"🔑 Bucket identifier: {bucket_name}")
-        if bucket_name != 'not-set':
-            # Normalize to show project ID
-            normalized = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
-            logger.info(f"🔑 Bucket project ID: {normalized}")
-        
-    except Exception as e:
-        logger.error(f"❌ Firebase credential validation failed: {e}")
+def download_from_r2(source_key: str) -> Optional[bytes]:
+    """
+    Download data from Cloudflare R2 using boto3 S3 client.
     
-    logger.info("🔍 ===== END FIREBASE CREDENTIAL VALIDATION =====")
-
-def initialize_firebase():
-    """Initialize Firebase storage client"""
-    global storage_client, bucket
-    
-    try:
-        firebase_secret = os.getenv('RUNPOD_SECRET_Firebase')
-        firebase_secret_path = firebase_secret
-        if firebase_secret and firebase_secret.startswith('{'):
-            import json
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
-                json.dump(json.loads(firebase_secret), tmp_file)
-                firebase_secret_path = tmp_file.name
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = firebase_secret_path
-        if firebase_secret_path and os.path.exists(firebase_secret_path):
-            client = storage.Client.from_service_account_json(firebase_secret_path)
-        else:
-            client = storage.Client()
-        storage_client = client
-        # Normalize bucket name: strip .firebasestorage.app suffix for GCS client
-        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-        if not bucket_name_raw:
-            raise ValueError("GCS_BUCKET_US or FIREBASE_STORAGE_BUCKET environment variable must be set")
-        # Normalize: strip gs://, https://, .firebasestorage.app, .appspot.com
-        bucket_name = bucket_name_raw.replace('gs://', '').replace('https://', '').replace('http://', '')
-        if '/' in bucket_name:
-            bucket_name = bucket_name.split('/')[0]
-        bucket_name = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
-        bucket = storage_client.bucket(bucket_name)
-        logger.info(f"✅ Firebase storage client ready (bucket: {bucket_name})")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Firebase storage: {e}")
-        return False
-
-def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
-    """
-    Upload data directly to Firebase Storage with metadata
-    
-    :param data: Binary data to upload
-    :param destination_blob_name: Destination path in Firebase
-    :param content_type: MIME type of the file
-    :param metadata: Optional metadata to store with the file
-    :return: Public URL or None if failed
+    :param source_key: Source key/path in R2 (e.g., "private/users/{user_id}/voices/{lang}/recorded/{file}.wav")
+    :return: Binary data or None if failed
     """
     try:
-        from google.cloud import storage
+        import boto3
+        from botocore.exceptions import ClientError
         
-        # Resolve region-aware bucket from metadata hints
-        bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
-        country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
-        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
+        # Get R2 credentials from environment
+        r2_account_id = os.getenv('R2_ACCOUNT_ID')
+        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+        r2_endpoint = os.getenv('R2_ENDPOINT')
+        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
         
-        logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
-        
-        # Initialize Firebase storage client and bucket
-        storage_client = storage.Client()
-        bucket = storage_client.bucket(resolved_bucket)
-        
-        logger.info(f"🔍 Creating blob: {destination_blob_name}")
-        logger.info(f"🔍 Uploading {len(data)} bytes to bucket {resolved_bucket}...")
-        
-        blob = bucket.blob(destination_blob_name)
-        
-        # Set metadata if provided
-        if metadata:
-            blob.metadata = metadata
-            logger.info(f"🔍 Set metadata: {metadata}")
-        
-        # Set content type
-        blob.content_type = content_type
-        logger.info(f"🔍 Set content type: {content_type}")
-        
-        # Upload the data
-        blob.upload_from_string(data, content_type=content_type)
-        logger.info(f"🔍 Upload completed, making public...")
-        
-        # Make the blob publicly accessible
-        blob.make_public()
-        
-        # CRITICAL: Patch metadata to ensure persistence
-        if metadata:
-            try:
-                blob.patch()
-                logger.info(f"✅ Metadata patched successfully for: {destination_blob_name}")
-            except Exception as patch_e:
-                logger.error(f"❌ Failed to patch metadata for {destination_blob_name}: {patch_e}")
-        
-        public_url = blob.public_url
-        logger.info(f"✅ Uploaded to Firebase: {destination_blob_name} -> {public_url} (bucket: {resolved_bucket})")
-        return public_url
-        
-    except Exception as e:
-        logger.error(f"❌ Firebase upload failed: {e}")
-        import traceback
-        logger.error(f"❌ Firebase upload traceback: {traceback.format_exc()}")
-        return None
-
-def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict] = None, content_type: Optional[str] = None) -> Optional[str]:
-    """
-    Copy a blob to a new destination (rename), set metadata, make public, then delete the old blob.
-    Returns new public URL or None.
-    """
-    global bucket
-    try:
-        if bucket is None and not initialize_firebase():
-            logger.error("❌ Firebase not initialized, cannot rename")
+        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+            logger.error("R2 credentials not configured")
             return None
-        src_blob = bucket.blob(src_path)
-        if not src_blob.exists():
-            logger.warning(f"⚠️ Source blob does not exist: {src_path}")
-            return None
-        # Perform copy
-        new_blob = bucket.copy_blob(src_blob, bucket, dest_path)
-        # Set metadata if provided
-        if metadata:
-            new_blob.metadata = metadata
-            logger.info(f"🔍 Set metadata on renamed blob: {metadata}")
-        # Set content type if provided
-        if content_type:
-            new_blob.content_type = content_type
-        new_blob.make_public()
         
-        # CRITICAL: Patch metadata to ensure persistence
-        if metadata:
-            try:
-                new_blob.patch()
-                logger.info(f"✅ Metadata patched successfully for renamed blob: {dest_path}")
-            except Exception as patch_e:
-                logger.error(f"❌ Failed to patch metadata for renamed blob {dest_path}: {patch_e}")
+        # Create S3 client for R2
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=r2_endpoint,
+            aws_access_key_id=r2_access_key_id,
+            aws_secret_access_key=r2_secret_access_key,
+            region_name='auto'
+        )
         
-        # Delete original
-        try:
-            src_blob.delete()
-        except Exception as del_e:
-            logger.warning(f"⚠️ Could not delete original blob {src_path}: {del_e}")
-        logger.info(f"✅ Renamed {src_path} → {dest_path}")
-        return new_blob.public_url
+        # Download from R2
+        response = s3_client.get_object(
+            Bucket=r2_bucket_name,
+            Key=source_key
+        )
+        
+        data = response['Body'].read()
+        logger.info(f"Downloaded from R2: {source_key} ({len(data)} bytes)")
+        return data
+        
     except Exception as e:
-        logger.error(f"❌ Rename failed {src_path} → {dest_path}: {e}")
+        logger.error(f"R2 download failed: {e}")
+        if _VERBOSE_LOGS:
+            import traceback
+            logger.error(f"R2 download traceback: {traceback.format_exc()}")
         return None
 
 def get_voice_id(name):
     """Generate a unique ID for a voice based on the name"""
-    # Create a clean, filesystem-safe voice ID from the name
     import re
     clean_name = re.sub(r'[^a-zA-Z0-9_-]', '', name.lower().replace(' ', '_'))
     return f"voice_{clean_name}"
 
-def list_files_for_debug():
-    """List files in our directories for debugging"""
-    logger.info("📂 Directory contents:")
-    for directory in [VOICE_PROFILES_DIR, VOICE_SAMPLES_DIR, TEMP_VOICE_DIR]:
-        if directory.exists():
-            files = list(directory.glob("*"))
-            logger.info(f"  {directory}: {[f.name for f in files]} ({len(files)} files)")
-        else:
-            logger.info(f"  {directory}: [DIRECTORY NOT FOUND]")
+# -------------------------------------------------------------------
+# Callback helpers
+# -------------------------------------------------------------------
+def send_error_callback(callback_url: Optional[str], user_id: Optional[str], voice_id: str,
+                       voice_name: str, language: str, error: str) -> None:
+    """Send error callback if URL is provided. Silently fails on errors."""
+    if not callback_url:
+        return
+    
+    try:
+        payload = {
+            'status': 'error',
+            'user_id': user_id,
+            'voice_id': voice_id,
+            'voice_name': voice_name,
+            'language': language,
+            'error': error,
+        }
+        _post_signed_callback(callback_url, payload)
+        if _VERBOSE_LOGS:
+            logger.info(f"Error callback sent for voice_id={voice_id}")
+    except Exception as e:
+        logger.warning(f"Failed to send error callback: {e}")
 
-def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, language="en", is_kids_voice=False, api_metadata=None):
+def send_success_callback(callback_url: Optional[str], result: Dict[str, Any], user_id: Optional[str],
+                         voice_id: str, voice_name: str, language: str, is_kids_voice: bool,
+                         input_data: Dict[str, Any], audio_path: Optional[str] = None) -> None:
+    """Send success callback if URL is provided. Silently fails on errors."""
+    if not callback_url or not isinstance(result, dict) or result.get("status") == "error":
+        return
+    
+    try:
+        profile_storage_path = result.get('profile_storage_path')
+        sample_storage_path = result.get('sample_storage_path')
+        
+        # Build storage paths - use R2 paths if available, otherwise fallback to old format
+        kids_segment = 'kids/' if is_kids_voice else ''
+        target_profile_name = result.get('profile_filename') or f"{voice_id}.npy"
+        target_sample_name = result.get('sample_filename') or f"{voice_id}.mp3"
+        
+        profile_path = profile_storage_path or f"audio/voices/{language}/{kids_segment}profiles/{target_profile_name}"
+        sample_path = sample_storage_path or f"audio/voices/{language}/{kids_segment}samples/{target_sample_name}"
+        
+        payload = {
+            'status': 'success',
+            'user_id': user_id,
+            'voice_id': voice_id,
+            'voice_name': voice_name,
+            'language': language,
+            'is_kids_voice': bool(is_kids_voice),
+            'model_type': input_data.get('model_type') or 'chatterbox',
+            'profile_path': profile_path,
+            'sample_path': sample_path,
+            'r2_profile_path': profile_storage_path,
+            'r2_sample_path': sample_storage_path,
+            'recorded_path': audio_path or result.get('recorded_audio_path', ''),
+        }
+        _post_signed_callback(callback_url, payload)
+        if _VERBOSE_LOGS:
+            logger.info(f"Success callback sent for voice_id={voice_id}")
+    except Exception as e:
+        logger.warning(f"Failed to send success callback: {e}")
+
+# -------------------------------------------------------------------
+# Metadata extraction
+# -------------------------------------------------------------------
+def extract_request_metadata(input_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract and normalize all request metadata."""
+    meta_top = input_data.get('metadata', {}) if isinstance(input_data.get('metadata'), dict) else {}
+    
+    return {
+        'callback_url': input_data.get('callback_url') or meta_top.get('callback_url'),
+        'user_id': input_data.get('user_id') or meta_top.get('user_id'),
+        'voice_id': input_data.get('voice_id') or meta_top.get('voice_id'),
+        'profile_filename': input_data.get('profile_filename') or meta_top.get('profile_filename'),
+        'sample_filename': input_data.get('sample_filename') or meta_top.get('sample_filename'),
+    }
+
+# -------------------------------------------------------------------
+# Audio file preparation
+# -------------------------------------------------------------------
+def _download_audio_file(audio_path: str, voice_id: str) -> Path:
+    """Download audio from R2. Returns Path to temp file."""
+    # Infer extension from path
+    lower = str(audio_path).lower()
+    ext = ".wav"
+    if lower.endswith(".mp3"):
+        ext = ".mp3"
+    elif lower.endswith(".ogg"):
+        ext = ".ogg"
+    elif lower.endswith(".m4a"):
+        ext = ".m4a"
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}{ext}"
+    
+    if _VERBOSE_LOGS:
+        logger.info(f"Downloading audio from R2: {audio_path}")
+    
+    # Download from R2
+    audio_data = download_from_r2(audio_path)
+    if audio_data is None:
+        raise RuntimeError(f"Failed to download audio from R2: {audio_path}")
+    
+    # Write to temp file
+    with open(temp_voice_file, 'wb') as f:
+        f.write(audio_data)
+    
+    logger.info(f"Downloaded audio from R2 and saved to temp file")
+    return temp_voice_file
+
+def _prepare_audio_file(input_data: Dict[str, Any], voice_id: str) -> Path:
+    """Prepare audio file from either base64 or R2 path."""
+    audio_data = input_data.get('audio_data')
+    audio_path = input_data.get('audio_path')
+    audio_format = input_data.get('audio_format', 'wav')
+    
+    if audio_path:
+        # Download from R2
+        return _download_audio_file(audio_path, voice_id)
+    else:
+        # Decode base64 data
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
+        audio_bytes = base64.b64decode(audio_data)
+        with open(temp_voice_file, 'wb') as f:
+            f.write(audio_bytes)
+        logger.info(f"Saved temporary voice file from base64 data")
+        return temp_voice_file
+
+# -------------------------------------------------------------------
+# API metadata preparation
+# -------------------------------------------------------------------
+def _build_api_metadata(input_data: Dict[str, Any], voice_id: str, name: str,
+                       language: str, is_kids_voice: bool, audio_path: Optional[str],
+                       metadata: Dict[str, Any], target_profile_name: str,
+                       target_sample_name: str) -> Dict[str, Any]:
+    """Build API metadata for VC model. Uploads go to R2 at:
+    - daezend-public-content/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
+    - daezend-public-content/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
+    """
+    return {
+        'user_id': input_data.get('user_id'),
+        'project_id': input_data.get('project_id'),
+        'voice_type': input_data.get('voice_type'),
+        'quality': input_data.get('quality'),
+        'language': language,
+        'is_kids_voice': is_kids_voice,
+        'recorded_path': audio_path if audio_path else None,
+        'profile_filename': target_profile_name,
+        'sample_filename': target_sample_name,
+        'storage_metadata': {
+            'user_id': input_data.get('user_id') or '',
+            'voice_id': voice_id,
+            'voice_name': name,
+            'language': language,
+            'is_kids_voice': str(is_kids_voice).lower(),
+            'model_type': input_data.get('model_type') or 'chatterbox',
+        }
+    }
+
+# -------------------------------------------------------------------
+# VC model call
+# -------------------------------------------------------------------
+def call_vc_model_create_voice_clone(audio_file_path: Path, voice_id: str, voice_name: str,
+                                    api_metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
     Implement voice cloning using available model methods.
     
-    Uses the TTS model's save_voice_clone method to create voice profiles.
+    Uses the VC model's create_voice_clone method to create voice profiles.
     """
     global vc_model, tts_model
-    
-    logger.info("VC clone: voice_id=%s, name=%s, lang=%s, kids=%s", voice_id, voice_name, language, is_kids_voice)
     
     start_time = time.time()
     
     try:
         # Check if models are available
         if vc_model is None or tts_model is None:
-            logger.error("❌ Models not available")
+            logger.error("Models not available")
             return {
                 "status": "error",
                 "error": "Models not available",
@@ -664,6 +611,7 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
                 "error": "VC model missing create_voice_clone",
                 "generation_time": time.time() - start_time
             }
+        
         result = vc_model.create_voice_clone(
             audio_file_path=str(audio_file_path),
             voice_id=voice_id,
@@ -671,23 +619,156 @@ def call_vc_model_create_voice_clone(audio_file_path, voice_id, voice_name, lang
             metadata=api_metadata
         )
         generation_time = time.time() - start_time
-        logger.info("✅ Voice clone completed in %.2fs", generation_time)
+        logger.info(f"Voice clone completed in {generation_time:.2f}s")
         return result
         
     except Exception as e:
         generation_time = time.time() - start_time
-        logger.error(f"❌ Voice clone failed after {generation_time:.2f}s: {e}")
+        logger.error(f"Voice clone failed after {generation_time:.2f}s: {e}")
         return {
             "status": "error",
             "error": str(e),
             "generation_time": generation_time
         }
 
+# -------------------------------------------------------------------
+# Main handler
+# -------------------------------------------------------------------
+def handle_voice_clone_request(input_data: Dict[str, Any], response_format: str) -> Dict[str, Any]:
+    """Handle voice cloning requests - orchestrates the flow.
+    
+    Flow:
+    1. User sends request with audio_path (R2 path) or audio_data (base64)
+    2. RunPod downloads audio from R2 if audio_path provided
+    3. Creates voice profile (.npy) and audio sample
+    4. VC model uploads to R2 at:
+       - daezend-public-content/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
+       - daezend-public-content/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
+    """
+    global vc_model
+    
+    # Ensure we have disk headroom before doing any significant work
+    ensure_disk_headroom()
+    
+    if _VERBOSE_LOGS:
+        logger.debug("VC handler input", extra={"input_keys": list(input_data.keys())})
+    
+    # Extract metadata once
+    metadata = extract_request_metadata(input_data)
+    
+    # Validate inputs
+    name = input_data.get('name')
+    audio_data = input_data.get('audio_data')
+    audio_path = input_data.get('audio_path')
+    
+    if not name or (not audio_data and not audio_path):
+        return {"status": "error", "error": "name and either audio_data or audio_path are required"}
+    
+    # Check if VC model is available
+    if vc_model is None:
+        logger.error("VC model not available")
+        send_error_callback(
+            metadata['callback_url'], metadata['user_id'],
+            input_data.get('voice_id', 'unknown'), name or 'unknown',
+            input_data.get('language', 'en'), "VC model not available"
+        )
+        return {"status": "error", "error": "VC model not available"}
+    
+    language = input_data.get('language', 'en')
+    is_kids_voice = input_data.get('is_kids_voice', False)
+    
+    logger.info(f"Voice clone request: name={name}, language={language}, kids_voice={is_kids_voice}")
+    
+    try:
+        # Determine voice_id
+        voice_id = metadata['voice_id'] or get_voice_id(name)
+        
+        # Determine target filenames
+        target_profile_name = metadata['profile_filename'] or f"{voice_id}.npy"
+        target_sample_name = metadata['sample_filename'] or f"{voice_id}.mp3"
+        
+        # Prepare audio file (downloads from R2 if audio_path provided, otherwise decodes base64)
+        temp_audio_file = _prepare_audio_file(input_data, voice_id)
+        
+        # Build API metadata
+        api_metadata = _build_api_metadata(
+            input_data, voice_id, name, language, is_kids_voice,
+            audio_path, metadata, target_profile_name, target_sample_name
+        )
+        
+        # Call VC model
+        result = call_vc_model_create_voice_clone(
+            audio_file_path=temp_audio_file,
+            voice_id=voice_id,
+            voice_name=name,
+            api_metadata=api_metadata
+        )
+        
+        # Cleanup temp file
+        try:
+            temp_audio_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+        
+        # Store callback_url in result for reliable access
+        if isinstance(result, dict):
+            result["callback_url"] = metadata['callback_url']
+        
+        # Handle callbacks
+        if isinstance(result, dict) and result.get("status") == "error":
+            send_error_callback(
+                metadata['callback_url'], metadata['user_id'], voice_id,
+                name, language, result.get('error', 'Unknown error')
+            )
+        else:
+            # Post-process result: if caller supplied audio_path, ensure recorded_audio_path reflects it
+            if isinstance(result, dict) and audio_path:
+                result.setdefault('metadata', {})
+                result['recorded_audio_path'] = audio_path
+            
+            send_success_callback(
+                metadata['callback_url'], result, metadata['user_id'],
+                voice_id, name, language, is_kids_voice, input_data, audio_path
+            )
+        
+        # Opportunistic cleanup after job
+        try:
+            cleanup_runtime_storage(force=False)
+        except Exception:
+            pass
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Voice clone request failed: {e}", exc_info=True)
+        
+        # Cleanup temp file if it exists
+        if 'temp_audio_file' in locals():
+            try:
+                temp_audio_file.unlink(missing_ok=True)
+            except Exception:
+                pass
+        
+        send_error_callback(
+            metadata['callback_url'], metadata['user_id'],
+            metadata.get('voice_id', ''), name or 'unknown',
+            language, str(e)
+        )
+        
+        try:
+            cleanup_runtime_storage(force=False)
+        except Exception:
+            pass
+        
+        return {"status": "error", "error": str(e)}
+
 def handler(event, responseFormat="base64"):
-    input = event['input']    
+    """RunPod handler entry point."""
+    input_data = event['input']
     
     # This handler is for voice cloning only
-    result = handle_voice_clone_request(input, responseFormat)
+    result = handle_voice_clone_request(input_data, responseFormat)
+    
     try:
         # Emit a structured error line for system log collectors if error
         if isinstance(result, dict) and result.get("status") == "error":
@@ -700,558 +781,62 @@ def handler(event, responseFormat="base64"):
             print(json.dumps(msg, ensure_ascii=False))
     except Exception:
         pass
+    
     return result
 
-def handle_voice_clone_request(input, responseFormat):
-    """Pure API orchestration: Handle voice cloning requests"""
-    global vc_model, storage_client
-    
-    # Ensure we have disk headroom before doing any significant work
-    ensure_disk_headroom()
-
-    # ===== COMPREHENSIVE INPUT PARAMETER LOGGING =====
-    logger.info("🔍 ===== VC HANDLER INPUT PARAMETERS =====")
-    logger.info(f"📥 Raw input keys: {list(input.keys())}")
-    logger.info(f"📥 Input type: {type(input)}")
-    
-    # Log all input parameters
-    for key, value in input.items():
-        if key == 'audio_data' and value:
-            logger.info(f"📥 {key}: [BASE64 DATA] Length: {len(value)} chars")
-        elif isinstance(value, dict):
-            logger.info(f"📥 {key}: {type(value)} with keys: {list(value.keys())}")
-        else:
-            logger.info(f"📥 {key}: {value}")
-    
-    # ===== FIREBASE CREDENTIAL VALIDATION =====
-    _debug_gcs_creds()
-    
-    # Initialize Firebase at the start
-    if not initialize_firebase():
-        logger.error("❌ Failed to initialize Firebase, cannot proceed")
-        return {"status": "error", "error": "Failed to initialize Firebase storage"}
-    
-    # Extract callback_url early so we can send error callbacks for early failures
-    meta_top = input.get('metadata', {}) if isinstance(input.get('metadata'), dict) else {}
-    callback_url = input.get('callback_url') or meta_top.get('callback_url')
-    user_id = input.get('user_id') or meta_top.get('user_id')
-    
-    # Check if VC model is available
-    if vc_model is None:
-        logger.error("❌ VC model not available")
-        
-        # Send error callback if callback_url is available
-        if callback_url:
-            try:
-                # Send error callback
-                payload = {
-                    'status': 'error',
-                    'user_id': user_id,
-                    'voice_id': input.get('voice_id', 'unknown'),
-                    'voice_name': input.get('name', 'unknown'),
-                    'language': input.get('language', 'en'),
-                    'error': 'VC model not available',
-                }
-                
-                logger.info(f"📤 Error callback URL: {callback_url}")
-                logger.info(f"📤 Error callback payload: {payload}")
-                
-                _post_signed_callback(callback_url, payload)
-                logger.info("✅ Error callback sent successfully")
-            except Exception as callback_error:
-                logger.error(f"❌ Failed to send error callback: {callback_error}")
-        
-        return {"status": "error", "error": "VC model not available"}
-    
-    logger.info("✅ Using pre-initialized VC model")
-    
-    # Handle voice generation request only
-    name = input.get('name')
-    audio_data = input.get('audio_data')  # Base64 encoded audio data
-    audio_path = input.get('audio_path')  # Firebase Storage path e.g. audio/voices/en/recorded/uid_ts.wav
-    audio_format = input.get('audio_format', 'wav')  # Format of the input audio
-    responseFormat = input.get('responseFormat', 'base64')  # Response format from frontend
-    language = input.get('language', 'en')  # Language for storage organization
-    is_kids_voice = input.get('is_kids_voice', False)  # Kids voice flag
-    # Naming hints (optional)
-    profile_filename_hint = input.get('profile_filename') or meta_top.get('profile_filename')
-    sample_filename_hint = input.get('sample_filename') or meta_top.get('sample_filename')
-    output_basename_hint = input.get('output_basename') or meta_top.get('output_basename')
-    
-    # Debug: Log callback_url immediately after extraction
-    logger.info(f"🔍 EXTRACTED callback_url: {callback_url}")
-    logger.info(f"🔍 EXTRACTED callback_url type: {type(callback_url)}")
-    logger.info(f"🔍 EXTRACTED callback_url from input: {input.get('callback_url')}")
-    logger.info(f"🔍 EXTRACTED callback_url from meta_top: {meta_top.get('callback_url')}")
-    
-    # ===== METADATA BREAKDOWN LOGGING =====
-    logger.info("🔍 ===== METADATA BREAKDOWN =====")
-    logger.info(f"📋 Top-level metadata: {meta_top}")
-    logger.info(f"📋 Top-level metadata type: {type(meta_top)}")
-    logger.info(f"📋 Top-level metadata keys: {list(meta_top.keys()) if isinstance(meta_top, dict) else 'Not a dict'}")
-    
-    # Log nested metadata if it exists
-    nested_metadata = input.get('metadata', {})
-    if isinstance(nested_metadata, dict):
-        logger.info(f"📋 Nested metadata: {nested_metadata}")
-        logger.info(f"📋 Nested metadata keys: {list(nested_metadata.keys())}")
-        for key, value in nested_metadata.items():
-            logger.info(f"📋   {key}: {value} (type: {type(value)})")
-    else:
-        logger.info(f"📋 Nested metadata: {nested_metadata} (type: {type(nested_metadata)})")
-    
-    logger.info("🔍 ===== END METADATA BREAKDOWN =====")
-
-    if not name or (not audio_data and not audio_path):
-        return {"status": "error", "error": "name and either audio_data or audio_path are required"}
-
-    logger.info(f"New request. Voice clone name: {name}")
-    logger.info(f"Response format requested: {responseFormat}")
-    logger.info(f"Language: {language}, Kids voice: {is_kids_voice}")
-    
+# -------------------------------------------------------------------
+# Callback POST implementation
+# -------------------------------------------------------------------
+def _canonicalize_callback_url(url: str) -> str:
+    """Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)."""
     try:
-        # Honor server-provided voice_id; fallback to legacy generation only if missing
-        voice_id = input.get('voice_id') or meta_top.get('voice_id')
-        if not voice_id:
-            voice_id = get_voice_id(name)
-            logger.info(f"No voice_id provided; generated legacy id: {voice_id}")
-        else:
-            logger.info(f"Using provided voice_id: {voice_id}")
+        p = urlparse(url)
+        scheme = p.scheme or 'https'
+        netloc = p.netloc
+        if netloc == 'daezend.app':
+            netloc = 'www.daezend.app'
+        if not netloc and p.path:
+            return f'https://www.daezend.app{p.path}'
+        return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+    except Exception:
+        return url
 
-        # Enforce deterministic filenames: {voiceId}.npy|.mp3; recorded filename is only a local temp hint
-        try:
-            target_profile_name = profile_filename_hint or f"{voice_id}.npy"
-            target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
-        except Exception:
-            target_profile_name = profile_filename_hint or f"{voice_id}.npy"
-            target_sample_name = sample_filename_hint or f"{voice_id}.mp3"
-        
-        # Prepare a local temp file from either base64 data or Firebase path
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        temp_voice_file = None
-        if audio_path:
-            # Infer extension from path
-            lower = str(audio_path).lower()
-            ext = ".wav"
-            if lower.endswith(".mp3"): ext = ".mp3"
-            elif lower.endswith(".ogg"): ext = ".ogg"
-            elif lower.endswith(".m4a"): ext = ".m4a"
-            temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}{ext}"
-            try:
-                # Resolve region-aware bucket from metadata hints (same as upload_to_firebase)
-                bucket_hint = meta_top.get('bucket_name') or input.get('bucket_name')
-                country_hint = meta_top.get('country_code') or input.get('country_code')
-                resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
-                
-                logger.info(f"🔍 Attempting to download audio from bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
-                logger.info(f"🔍 Audio path: {audio_path}")
-                
-                # Reuse global storage client (initialized with credentials) or create new one if needed
-                if storage_client is None:
-                    logger.warning("⚠️ Global storage_client not initialized, creating new client")
-                    storage_client = storage.Client()
-                download_bucket = storage_client.bucket(resolved_bucket)
-                blob = download_bucket.blob(audio_path)
-                
-                # Try to download from user's regional bucket first
-                try:
-                    blob.download_to_filename(str(temp_voice_file))
-                    logger.info(f"✅ Downloaded audio from Firebase {audio_path} to {temp_voice_file} (bucket: {resolved_bucket})")
-                except Exception as dl_e:
-                    # If download fails, try US bucket as fallback (for legacy recordings)
-                    logger.warning(f"⚠️ Failed to download from {resolved_bucket}, trying US bucket fallback: {dl_e}")
-                    us_bucket_name = resolve_bucket_name(None, None)  # Resolves to US default
-                    if us_bucket_name != resolved_bucket:  # Only try if different bucket
-                        us_bucket = storage_client.bucket(us_bucket_name)
-                        us_blob = us_bucket.blob(audio_path)
-                        us_blob.download_to_filename(str(temp_voice_file))
-                        logger.info(f"✅ Downloaded audio from US fallback bucket: {us_bucket_name}")
-                    else:
-                        # Same bucket or fallback failed - re-raise original error
-                        raise dl_e
-            except Exception as dl_e:
-                logger.error(f"❌ Failed to download audio_path {audio_path}: {dl_e}")
-                
-                # Send error callback before returning
-                error_message = f"Failed to download audio_path: {dl_e}"
-                try:
-                    if callback_url:
-                        # Extract voice_id if available
-                        voice_id_for_error = input.get('voice_id') or meta_top.get('voice_id')
-                        name_for_error = input.get('name') or meta_top.get('name', 'unknown')
-                        language_for_error = input.get('language') or meta_top.get('language', 'en')
-                        
-                        # Send error callback
-                        payload = {
-                            'status': 'error',
-                            'user_id': user_id,
-                            'voice_id': voice_id_for_error,
-                            'voice_name': name_for_error,
-                            'language': language_for_error,
-                            'error': error_message,
-                        }
-                        
-                        logger.info(f"📤 Sending error callback for download failure: {callback_url}")
-                        logger.info(f"📤 Error callback payload: {payload}")
-                        
-                        _post_signed_callback(callback_url, payload)
-                        logger.info("✅ Error callback sent successfully for download failure")
-                except Exception as callback_error:
-                    logger.error(f"❌ Failed to send error callback for download failure: {callback_error}")
-                
-                return {"status": "error", "error": error_message}
-        else:
-            temp_voice_file = TEMP_VOICE_DIR / f"{voice_id}_{timestamp}.{audio_format}"
-            audio_bytes = base64.b64decode(audio_data)
-            with open(temp_voice_file, 'wb') as f:
-                f.write(audio_bytes)
-            logger.info(f"Saved temporary voice file to {temp_voice_file}")
-
-        # Call the VC model's create_voice_clone method
-        logger.info("🔄 Calling VC model's create_voice_clone method...")
-        
-        # ===== API METADATA PREPARATION LOGGING =====
-        logger.info("🔍 ===== API METADATA PREPARATION =====")
-        
-        # Prepare API metadata including language and kids voice flag
-        # Include bucket_name and country_code from top-level metadata for bucket resolution
-        bucket_name = meta_top.get('bucket_name') or input.get('bucket_name')
-        country_code = meta_top.get('country_code') or input.get('country_code')
-        
-        api_metadata = {
-            'user_id': input.get('user_id'),
-            'project_id': input.get('project_id'),
-            'voice_type': input.get('voice_type'),
-            'quality': input.get('quality'),
-            'language': language,
-            'is_kids_voice': is_kids_voice,
-            # If request was pointer-based, pass the recorded_path to VC so it skips re-upload
-            'recorded_path': audio_path if audio_path else None,
-            # Explicit filenames (if provided/derived) so model uploads with the exact names
-            'profile_filename': target_profile_name,
-            'sample_filename': target_sample_name,
-            # Bucket information for region-aware uploads
-            'bucket_name': bucket_name,
-            'country_code': country_code,
-            # Strong metadata contract for Storage uploads downstream
-            'storage_metadata': {
-                'user_id': input.get('user_id') or '',
-                'voice_id': voice_id,
-                'voice_name': name,
-                'language': language,
-                'is_kids_voice': str(is_kids_voice).lower(),
-                'model_type': input.get('model_type') or 'chatterbox',
-                # Include bucket info in storage_metadata as well for upload functions
-                'bucket_name': bucket_name,
-                'country_code': country_code,
-            }
-        }
-        
-        logger.info(f"📋 API metadata prepared: {api_metadata}")
-        logger.info(f"📋 API metadata type: {type(api_metadata)}")
-        logger.info(f"📋 API metadata keys: {list(api_metadata.keys())}")
-        
-        # Log nested metadata structure
-        nested_metadata = api_metadata.get('storage_metadata', {})
-        logger.info(f"📋 Nested storage metadata: {nested_metadata}")
-        logger.info(f"📋 Nested storage metadata type: {type(nested_metadata)}")
-        logger.info(f"📋 Nested storage metadata keys: {list(nested_metadata.keys())}")
-        
-        # Log each metadata field with type information
-        for key, value in nested_metadata.items():
-            logger.info(f"📋   Storage metadata {key}: {value} (type: {type(value)})")
-        
-        logger.info("🔍 ===== END API METADATA PREPARATION =====")
-        
-        # Call the VC model - it handles everything!
-        result = call_vc_model_create_voice_clone(
-            audio_file_path=temp_voice_file,
-            voice_id=voice_id,
-            voice_name=name,
-            api_metadata=api_metadata
-        )
-        
-        # Store callback_url in result for reliable access
-        if isinstance(result, dict):
-            result["callback_url"] = callback_url
-            logger.info(f"🔍 STORED callback_url in result: {callback_url}")
-            logger.info(f"🔍 STORED callback_url type: {type(callback_url)}")
-            logger.info(f"🔍 STORED callback_url in result keys: {list(result.keys())}")
-        else:
-            logger.warning(f"⚠️ Result is not a dict, cannot store callback_url. Result type: {type(result)}")
-        
-        # Clean up temporary voice file
-        try:
-            os.unlink(temp_voice_file)
-        except Exception as cleanup_error:
-            logger.warning(f"⚠️ Failed to clean up temp file: {cleanup_error}")
-
-        # Check if the voice clone operation failed
-        if isinstance(result, dict) and result.get("status") == "error":
-            logger.error(f"❌ Voice clone failed: {result.get('error', 'Unknown error')}")
-            
-            # Send error callback if callback_url is available
-            try:
-                if callback_url:
-                    # Send error callback
-                    payload = {
-                        'status': 'error',
-                        'user_id': user_id,
-                        'voice_id': voice_id,
-                        'voice_name': name,
-                        'language': language,
-                        'error': result.get('error', 'Unknown error'),
-                    }
-                    
-                    logger.info(f"📤 Error callback URL: {callback_url}")
-                    logger.info(f"📤 Error callback payload: {payload}")
-                    
-                    _post_signed_callback(callback_url, payload)
-                    logger.info("✅ Error callback sent successfully")
-            except Exception as callback_error:
-                logger.error(f"❌ Failed to send error callback: {callback_error}")
-            
-            return result
-
-        # Post-process result: if caller supplied audio_path, avoid duplicate recorded upload
-        # and ensure recorded_audio_path reflects the original pointer
-        try:
-            if isinstance(result, dict) and audio_path:
-                result.setdefault('metadata', {})
-                result['recorded_audio_path'] = audio_path
-        except Exception:
-            pass
-        logger.info(f"📤 Voice clone completed successfully")
-        
-        # No post-process renaming: model now uploads with standardized names directly
-
-        # ===== SUCCESS CALLBACK LOGGING =====
-        logger.info("🔍 ===== SUCCESS CALLBACK PAYLOAD =====")
-        
-        # Get callback_url from result (more reliable than variable scope)
-        result_callback_url = result.get("callback_url") if isinstance(result, dict) else None
-        logger.info(f"🔍 EXTRACTED callback_url from result: {result_callback_url}")
-        logger.info(f"🔍 EXTRACTED callback_url from result type: {type(result_callback_url)}")
-        logger.info(f"🔍 EXTRACTED callback_url from result exists: {bool(result_callback_url)}")
-        if isinstance(result, dict):
-            logger.info(f"🔍 EXTRACTED callback_url from result keys: {list(result.keys())}")
-            logger.info(f"🔍 EXTRACTED callback_url from result has callback_url key: {'callback_url' in result}")
-        
-        # Attempt callback on success (only for successful operations)
-        try:
-            # More flexible callback condition: send callback if we have a callback_url and the result doesn't indicate an error
-            should_send_callback = (
-                result_callback_url and 
-                isinstance(result, dict) and 
-                result.get("status") != "error"  # Send callback unless explicitly an error
-            )
-            
-            logger.info(f"🔍 CALLBACK CONDITION EVALUATION:")
-            logger.info(f"🔍   result_callback_url: {result_callback_url}")
-            logger.info(f"🔍   result_callback_url is truthy: {bool(result_callback_url)}")
-            logger.info(f"🔍   result is dict: {isinstance(result, dict)}")
-            logger.info(f"🔍   result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
-            logger.info(f"🔍   result status != 'error': {result.get('status') != 'error' if isinstance(result, dict) else 'N/A'}")
-            logger.info(f"🔍   Should send callback: {should_send_callback}")
-            
-            # Break down the condition for debugging
-            condition1 = bool(result_callback_url)
-            condition2 = isinstance(result, dict)
-            condition3 = result.get("status") != "error" if isinstance(result, dict) else False
-            
-            logger.info(f"🔍 CALLBACK CONDITION BREAKDOWN:")
-            logger.info(f"🔍   Condition 1 (callback_url exists): {condition1}")
-            logger.info(f"🔍   Condition 2 (result is dict): {condition2}")
-            logger.info(f"🔍   Condition 3 (status != error): {condition3}")
-            logger.info(f"🔍   Final result (all conditions): {condition1 and condition2 and condition3}")
-            
-            if should_send_callback:
-                try:
-                    # Extract R2 paths from result (new R2 upload flow)
-                    profile_storage_path = result.get('profile_storage_path') if isinstance(result, dict) else None
-                    sample_storage_path = result.get('sample_storage_path') if isinstance(result, dict) else None
-                    
-                    # Build storage paths - use R2 paths if available, otherwise fallback to old format
-                    kids_segment = 'kids/' if is_kids_voice else ''
-                    profile_path = profile_storage_path or f"audio/voices/{language}/{kids_segment}profiles/{target_profile_name}"
-                    sample_path = sample_storage_path or f"audio/voices/{language}/{kids_segment}samples/{target_sample_name}"
-                    
-                    payload = {
-                        'status': 'success',
-                        'user_id': user_id,
-                        'voice_id': voice_id,
-                        'voice_name': name,
-                        'language': language,
-                        'is_kids_voice': bool(is_kids_voice),
-                        'model_type': input.get('model_type') or 'chatterbox',
-                        'profile_path': profile_path,
-                        'sample_path': sample_path,
-                        'r2_profile_path': profile_storage_path,  # Explicit R2 path for callback validation
-                        'r2_sample_path': sample_storage_path,  # Explicit R2 path for callback validation
-                        'recorded_path': audio_path or (result.get('recorded_audio_path') if isinstance(result, dict) else ''),
-                    }
-                    
-                    logger.info(f"📤 Success callback URL: {result_callback_url}")
-                    logger.info(f"📤 Success callback payload: {payload}")
-                    logger.info(f"📤 Success callback payload type: {type(payload)}")
-                    logger.info(f"📤 Success callback payload keys: {list(payload.keys())}")
-                    
-                    try:
-                        logger.info(f"🔍 CALLBACK SENDING:")
-                        logger.info(f"🔍   URL: {result_callback_url}")
-                        logger.info(f"🔍   Payload keys: {list(payload.keys())}")
-                        logger.info(f"🔍   Payload size: {len(str(payload))} characters")
-                        
-                        _post_signed_callback(result_callback_url, payload)
-                        logger.info(f"✅ VC callback POST {result_callback_url} -> signed and sent")
-                    except Exception as cb_e:
-                        logger.warning(f"⚠️ VC callback POST failed: {cb_e}")
-                        logger.warning(f"⚠️ VC callback exception type: {type(cb_e)}")
-                        logger.warning(f"⚠️ VC callback exception details: {str(cb_e)}")
-                        import traceback
-                        logger.warning(f"⚠️ VC callback traceback: {traceback.format_exc()}")
-                except Exception as cb_e:
-                    logger.warning(f"⚠️ Success callback failed: {cb_e}")
-                    logger.warning(f"⚠️ Success callback exception type: {type(cb_e)}")
-        except Exception as e:
-            logger.warning(f"⚠️ Success callback preparation failed: {e}")
-        
-        logger.info("🔍 ===== END SUCCESS CALLBACK PAYLOAD =====")
-        
-        # Final callback status summary
-        logger.info(f"🔍 CALLBACK SUMMARY:")
-        logger.info(f"🔍   Original callback_url: {callback_url}")
-        logger.info(f"🔍   Result callback_url: {result_callback_url}")
-        logger.info(f"🔍   Callback sent: {should_send_callback if 'should_send_callback' in locals() else 'Unknown'}")
-        logger.info(f"🔍   Result status: {result.get('status') if isinstance(result, dict) else 'N/A'}")
-
-        # Opportunistic cleanup after job
-        try:
-            cleanup_runtime_storage(force=False)
-        except Exception:
-            pass
-        return result
-
-    except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
-        if 'temp_voice_file' in locals():
-            try:
-                os.unlink(temp_voice_file)
-            except:
-                pass
-        # ===== ERROR CALLBACK LOGGING =====
-        logger.info("🔍 ===== ERROR CALLBACK PAYLOAD =====")
-        
-        # Attempt error-callback
-        try:
-            if 'callback_url' in locals() and callback_url:
-                try:
-                    payload = {
-                        'status': 'error',
-                        'user_id': user_id,
-                        'voice_id': input.get('voice_id') or meta_top.get('voice_id') or '',
-                        'voice_name': name,
-                        'language': language,
-                        'error': str(e),
-                    }
-                    
-                    logger.info(f"📤 Error callback URL: {callback_url}")
-                    logger.info(f"📤 Error callback payload: {payload}")
-                    logger.info(f"📤 Error callback payload type: {type(payload)}")
-                    logger.info(f"📤 Error callback payload keys: {list(payload.keys())}")
-                    
-                    _post_signed_callback(callback_url, payload)
-                    logger.info("✅ Error callback sent successfully")
-                except Exception as cb_e:
-                    logger.warning(f"⚠️ Error callback failed: {cb_e}")
-                    logger.warning(f"⚠️ Error callback exception type: {type(cb_e)}")
-        except Exception as callback_prep_e:
-            logger.warning(f"⚠️ Error callback preparation failed: {callback_prep_e}")
-        
-        logger.info("🔍 ===== END ERROR CALLBACK PAYLOAD =====")
-        try:
-            cleanup_runtime_storage(force=False)
-        except Exception:
-            pass
-        return {"status": "error", "error": str(e)}
-
-
-def _post_signed_callback(callback_url: str, payload: dict):
+def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
     """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
-    logger.info(f"🔍 _post_signed_callback called with URL: {callback_url}")
-    logger.info(f"🔍 _post_signed_callback payload keys: {list(payload.keys())}")
-    
-    # Create a clean version of payload for logging (without raw data)
-    clean_payload = {k: v for k, v in payload.items() if k not in ['audio_data']}
-    if 'audio_data' in payload:
-        clean_payload['audio_data'] = f"[BASE64 DATA] Length: {len(payload['audio_data'])} chars"
-    logger.info(f"🔍 _post_signed_callback clean payload: {clean_payload}")
+    if _VERBOSE_LOGS:
+        logger.debug(f"Posting callback to {callback_url}")
     
     secret = os.getenv('DAEZEND_API_SHARED_SECRET')
     if not secret:
-        logger.warning("⚠️ DAEZEND_API_SHARED_SECRET not set; proceeding with UNSIGNED callback POST")
-
-    # Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)
-    def _canonicalize_callback_url(url: str) -> str:
-        try:
-            p = urlparse(url)
-            scheme = p.scheme or 'https'
-            netloc = p.netloc
-            if netloc == 'daezend.app':
-                netloc = 'www.daezend.app'
-            if not netloc and p.path:
-                return f'https://www.daezend.app{p.path}'
-            return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
-        except Exception:
-            return url
-
+        logger.warning("DAEZEND_API_SHARED_SECRET not set; unsigned callback")
+    
     canonical_url = _canonicalize_callback_url(callback_url)
-
     parsed = urlparse(canonical_url)
-    # Default to voices success callback for signing if path is missing
     path_for_signing = parsed.path or '/api/voices/callback'
     ts = str(int(time.time() * 1000))
     
-    logger.info(f"🔍 Parsed URL: {parsed}")
-    logger.info(f"🔍 Path for signing: {path_for_signing}")
-    logger.info(f"🔍 Timestamp: {ts}")
-    
     body_bytes = json.dumps(payload).encode('utf-8')
-    headers = {
-        'Content-Type': 'application/json',
-    }
+    headers = {'Content-Type': 'application/json'}
+    
     if secret:
         prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
         message = prefix + body_bytes
         sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
-        logger.info(f"🔍 Body size: {len(body_bytes)} bytes")
-        logger.info(f"🔍 Message size: {len(message)} bytes")
-        logger.info(f"🔍 Signature: {sig[:20]}...")
         headers.update({
             'X-Daezend-Timestamp': ts,
             'X-Daezend-Signature': sig,
         })
     
-    logger.info(f"🔍 Headers: {headers}")
-    logger.info(f"🔍 Making POST request to: {canonical_url}")
-
     # Configure HTTP opener to follow redirects
-    from urllib.request import HTTPRedirectHandler, build_opener
-    
-    # Create an opener that follows redirects
     redirect_handler = HTTPRedirectHandler()
     opener = build_opener(redirect_handler)
-    
     req = Request(canonical_url, data=body_bytes, headers=headers, method='POST')
     
     try:
         resp = opener.open(req, timeout=15)
         response_data = resp.read()
-        logger.info(f"🔍 Response status: {resp.status}")
-        logger.info(f"🔍 Response headers: {dict(resp.headers)}")
-        logger.info(f"🔍 Final URL after request: {getattr(resp, 'geturl', lambda: 'unknown')()}")
-        logger.info(f"🔍 Response text: {response_data.decode('utf-8')[:200]}...")
-        logger.info(f"✅ VC Callback POST successful: {resp.status}")
+        if _VERBOSE_LOGS:
+            logger.debug(f"Callback response status: {resp.status}")
         resp.close()
     except HTTPError as http_err:
         # Explicitly handle 307/308 by re-posting to Location
@@ -1261,35 +846,27 @@ def _post_signed_callback(callback_url: str, payload: dict):
             loc = http_err.headers.get('Location') if hasattr(http_err, 'headers') and http_err.headers else None
         except Exception:
             loc = None
-        logger.warning(f"🔁 HTTPError encountered: code={code}, will inspect for redirect. Location={loc}")
+        
         if code in (307, 308) and loc:
             try:
-                # Build absolute URL if relative
-                from urllib.parse import urljoin
                 follow_url = urljoin(canonical_url, loc)
-                logger.info(f"🔁 Following {code} redirect to: {follow_url}")
-                # Reuse same signed headers and body (signature uses only path + body + timestamp)
+                logger.info(f"Following {code} redirect to: {follow_url}")
                 req2 = Request(follow_url, data=body_bytes, headers=headers, method='POST')
                 resp2 = opener.open(req2, timeout=15)
-                response_data2 = resp2.read()
-                logger.info(f"🔍 Redirected response status: {resp2.status}")
-                logger.info(f"🔍 Redirected response headers: {dict(resp2.headers)}")
-                logger.info(f"🔍 Final URL after redirect: {getattr(resp2, 'geturl', lambda: 'unknown')()}")
-                logger.info(f"🔍 Redirected response text: {response_data2.decode('utf-8')[:200]}...")
-                logger.info(f"✅ VC Callback POST successful after redirect: {resp2.status}")
+                resp2.read()
                 resp2.close()
                 return
             except Exception as follow_e:
-                logger.error(f"❌ Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
+                logger.error(f"Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
                 raise
         else:
-            logger.error(f"❌ HTTP request failed (no redirect follow): {type(http_err).__name__}: {http_err}")
+            logger.error(f"HTTP request failed: {type(http_err).__name__}: {http_err}")
             raise
     except Exception as e:
-        logger.error(f"❌ HTTP request failed: {e}")
+        logger.error(f"HTTP request failed: {e}")
         raise
 
 if __name__ == '__main__':
-    logger.info("🚀 Voice Clone Handler starting...")
-    logger.info("✅ Voice Clone Handler ready")
-    runpod.serverless.start({'handler': handler })
+    logger.info("Voice Clone Handler starting...")
+    logger.info("Voice Clone Handler ready")
+    runpod.serverless.start({'handler': handler})

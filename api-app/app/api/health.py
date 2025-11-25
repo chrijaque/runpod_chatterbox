@@ -39,12 +39,12 @@ async def health_check():
 
 @router.get("/api/debug/directories", response_model=DebugResponse)
 async def debug_directories():
-    """Debug endpoint to check Firebase storage status"""
+    """Debug endpoint to check R2 status"""
     try:
         service = firebase_service or get_firebase_service()
         firebase_connected = service.is_connected() if service else False
         
-        # Get Firebase storage usage
+        # Get R2 usage
         storage_usage = {}
         if firebase_connected and service:
             storage_usage = service.get_storage_usage()

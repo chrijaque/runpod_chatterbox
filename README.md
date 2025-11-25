@@ -14,7 +14,7 @@ runpod_chatterbox/
 │   │   │   ├── tts.py         ← TTS generation endpoints
 │   │   │   └── health.py      ← Health and debug endpoints
 │   │   ├── services/
-│   │   │   ├── firebase.py    ← Firebase Storage operations
+│   │   │   ├── firebase.py    ← R2 operations
 │   │   │   └── runpod_client.py ← RunPod API client
 │   │   ├── models/
 │   │   │   └── schemas.py     ← Pydantic models and schemas
@@ -91,7 +91,7 @@ export TTS_CB_ENDPOINT_ID="your-chatterbox-tts-endpoint"
 
 1. Place your `firebase_creds.json` in the root directory
 2. Update the bucket name in environment variables
-3. The API will automatically upload files to Firebase Storage
+3. The API will automatically upload files to R2
 
 ## 🧪 Testing
 

@@ -1,5 +1,5 @@
 import firebase_admin
-from firebase_admin import credentials, storage
+from firebase_admin import credentials, storage, firestore
 from pathlib import Path
 import logging
 from typing import Optional, Dict, List, Any
@@ -9,12 +9,13 @@ import shutil
 logger = logging.getLogger(__name__)
 
 class FirebaseService:
-    """Firebase Storage service for file operations"""
+    """R2 service for file operations"""
     
     def __init__(self, credentials_json: str, bucket_name: str):
         self.credentials_json = credentials_json
         self.bucket_name = bucket_name
         self.bucket = None
+        self.db = None  # Firestore database
         self._initialize()
     
     def _initialize(self):
@@ -66,7 +67,15 @@ class FirebaseService:
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to clean up temporary credentials file: {e}")
             
-            # Try to get the bucket
+            # Initialize Firestore database
+            try:
+                self.db = firestore.client()
+                logger.info("✅ Firestore client initialized")
+            except Exception as firestore_error:
+                logger.warning(f"⚠️ Firestore initialization failed: {firestore_error}")
+                self.db = None
+            
+            # Try to get the bucket (for backward compatibility, but we're migrating to R2)
             try:
                 self.bucket = storage.bucket(self.bucket_name)
                 
@@ -104,7 +113,7 @@ class FirebaseService:
             self.bucket = None
     
     def _create_bucket(self) -> bool:
-        """Create Firebase Storage bucket if it doesn't exist"""
+        """Create R2 bucket if it doesn't exist"""
         try:
             from google.cloud import storage as gcs_storage
             
@@ -156,7 +165,7 @@ class FirebaseService:
     
     def upload_file(self, file_path: Path, destination_blob_name: str) -> Optional[str]:
         """
-        Upload file to Firebase Storage and return public URL
+        Upload file to R2 and return public URL
         
         :param file_path: Local file path
         :param destination_blob_name: Destination path in Firebase
@@ -181,7 +190,7 @@ class FirebaseService:
     
     def download_file(self, blob_name: str, local_path: Path) -> bool:
         """
-        Download file from Firebase Storage
+        Download file from R2
         
         :param blob_name: Firebase blob name
         :param local_path: Local file path to save to
@@ -203,7 +212,7 @@ class FirebaseService:
     
     def file_exists(self, blob_name: str) -> bool:
         """
-        Check if file exists in Firebase Storage
+        Check if file exists in R2
         
         :param blob_name: Firebase blob name
         :return: True if exists, False otherwise
@@ -220,7 +229,7 @@ class FirebaseService:
     
     def get_public_url(self, blob_name: str) -> Optional[str]:
         """
-        Get public URL for a file in Firebase Storage
+        Get public URL for a file in R2
         
         :param blob_name: Firebase blob name
         :return: Public URL or None if not found
@@ -239,7 +248,7 @@ class FirebaseService:
     
     def delete_file(self, blob_name: str) -> bool:
         """
-        Delete file from Firebase Storage
+        Delete file from R2
         
         :param blob_name: Firebase blob name
         :return: True if successful, False otherwise
@@ -264,7 +273,7 @@ class FirebaseService:
 
     def upload_from_runpod_directory(self, runpod_file_path: str, firebase_path: str) -> Optional[str]:
         """
-        Upload file from RunPod directory to Firebase Storage
+        Upload file from RunPod directory to R2
         
         :param runpod_file_path: Path to file in RunPod container (e.g., /voice_samples/file.wav)
         :param firebase_path: Destination path in Firebase (e.g., voices/samples/file.wav)
@@ -507,7 +516,7 @@ class FirebaseService:
     
     def _ensure_directory_structure(self, firebase_path: str):
         """
-        Ensure the directory structure exists in Firebase Storage
+        Ensure the directory structure exists in R2
         Creates placeholder files to establish the directory structure
         
         :param firebase_path: Full path to the file (e.g., 'audio/voices/en/samples/file.wav')
@@ -559,7 +568,7 @@ class FirebaseService:
 
     def get_shared_access_url(self, firebase_path: str) -> Optional[str]:
         """
-        Get shared access URL for a file in Firebase Storage
+        Get shared access URL for a file in R2
         
         :param firebase_path: Path in Firebase (e.g., voices/voice_123/samples/sample.wav)
         :return: Public URL that both apps can access
@@ -947,42 +956,73 @@ class FirebaseService:
             return False
 
     def get_voice_profile_base64(self, voice_id: str, language: str = "en", is_kids_voice: bool = False) -> Optional[str]:
-        """Get voice profile as base64 from Firebase"""
+        """Get voice profile as base64 from R2 (R2 removed)"""
         try:
-            if not self.is_connected():
-                logger.error("Not connected to Firebase")
+            # Get user_id from Firestore voice_profiles collection
+            user_id = None
+            if self.db:
+                try:
+                    voice_doc = self.db.collection("voice_profiles").document(voice_id).get()
+                    if voice_doc.exists:
+                        voice_data = voice_doc.to_dict()
+                        user_id = voice_data.get("userId") or voice_data.get("user_id")
+                        logger.info(f"🔍 Found user_id for voice {voice_id}: {user_id}")
+                    else:
+                        logger.warning(f"⚠️ Voice profile document not found in Firestore: {voice_id}")
+                except Exception as firestore_error:
+                    logger.warning(f"⚠️ Failed to get user_id from Firestore: {firestore_error}")
+            
+            if not user_id:
+                logger.error(f"❌ Cannot determine user_id for voice {voice_id}. Cannot construct R2 path.")
                 return None
             
-            # First, let's list all files in the profiles directory to see what's available
-            profiles_prefix = f"audio/voices/{language}/profiles/"
-            if is_kids_voice:
-                profiles_prefix = f"audio/voices/{language}/kids/profiles/"
+            # Construct R2 path: private/users/{user_id}/voices/{language}/profiles/{voice_id}.npy
+            kids_prefix = "kids/" if is_kids_voice else ""
+            r2_path = f"private/users/{user_id}/voices/{language}/{kids_prefix}profiles/{voice_id}.npy"
+            logger.info(f"🔍 Downloading voice profile from R2: {r2_path}")
             
-            logger.info(f"🔍 Listing files in profiles directory: {profiles_prefix}")
-            blobs = list(self.bucket.list_blobs(prefix=profiles_prefix))
+            # Download from R2 using boto3
+            import boto3
+            import os
             
-            # Log all available profile files
-            for blob in blobs:
-                if blob.name.endswith('.npy'):
-                    logger.info(f"📁 Found profile file: {blob.name}")
+            r2_account_id = os.getenv('R2_ACCOUNT_ID')
+            r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
+            r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
+            r2_endpoint = os.getenv('R2_ENDPOINT')
+            r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
             
-            # Try to find the voice profile with the correct pattern
-            # The voice profile is stored as: {voice_id}.npy
-            target_filename = f"{profiles_prefix}{voice_id}.npy"
-            logger.info(f"🔍 Looking for voice profile: {target_filename}")
-            
-            matching_blobs = [blob for blob in blobs if blob.name == target_filename]
-            
-            if not matching_blobs:
-                logger.warning(f"No voice profile found for {voice_id} in {profiles_prefix}")
+            if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+                logger.error("❌ R2 credentials not configured")
                 return None
             
-            # Use the first matching profile file
-            blob = matching_blobs[0]
-            logger.info(f"🔍 Using voice profile: {blob.name}")
+            # Create S3 client for R2
+            s3_client = boto3.client(
+                's3',
+                endpoint_url=r2_endpoint,
+                aws_access_key_id=r2_access_key_id,
+                aws_secret_access_key=r2_secret_access_key,
+                region_name='auto'
+            )
             
-            # Download the file content
-            profile_data = blob.download_as_bytes()
+            # Download from R2
+            try:
+                from botocore.exceptions import ClientError
+                response = s3_client.get_object(
+                    Bucket=r2_bucket_name,
+                    Key=r2_path
+                )
+                profile_data = response['Body'].read()
+                logger.info(f"✅ Downloaded voice profile from R2: {r2_path} ({len(profile_data)} bytes)")
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                if error_code == 'NoSuchKey':
+                    logger.warning(f"⚠️ Voice profile not found in R2: {r2_path}")
+                else:
+                    logger.error(f"❌ R2 download failed: {e}")
+                return None
+            except Exception as r2_error:
+                logger.error(f"❌ R2 download failed: {r2_error}")
+                return None
             
             # Convert to base64
             import base64
@@ -992,7 +1032,9 @@ class FirebaseService:
             return profile_base64
             
         except Exception as e:
-            logger.error(f"Error getting voice profile for {voice_id}: {e}")
+            logger.error(f"❌ Error getting voice profile for {voice_id}: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return None
 
     def get_storage_usage(self) -> Dict[str, int]:
@@ -1048,7 +1090,7 @@ class FirebaseService:
 
     def upload_to_firebase(self, data: bytes, destination_blob_name: str, content_type: str = "application/octet-stream", metadata: dict = None) -> Optional[str]:
         """
-        Upload data directly to Firebase Storage
+        Upload data directly to R2
         
         :param data: Binary data to upload
         :param destination_blob_name: Destination path in Firebase

@@ -37,7 +37,7 @@ app.include_router(health.router, prefix="/api/health", tags=["health"])
 async def startup_event():
     """Application startup event"""
     logger.info("🎵 Voice Library API Server Starting...")
-    logger.info(f"🔥 Firebase Storage: {'Enabled' if settings.FIREBASE_STORAGE_ENABLED else 'Disabled'}")
+    logger.info(f"🔥 R2: {'Enabled' if settings.FIREBASE_STORAGE_ENABLED else 'Disabled'}")
     logger.info(f"🌐 API will be available at: http://{settings.API_HOST}:{settings.API_PORT}")
     logger.info(f"📚 API Documentation: http://{settings.API_HOST}:{settings.API_PORT}/docs")
 

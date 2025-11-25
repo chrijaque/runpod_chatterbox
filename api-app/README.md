@@ -2,7 +2,7 @@
 
 Base URL (production): `https://runpod-chatterbox.fly.dev`
 
-This API brokers between your main app, Redis queue, RunPod workers, and Firebase Storage. Some endpoints are public read-only for listing, while job-creating endpoints are internal-only and require HMAC authentication. Client-facing endpoints can additionally enforce Firebase Auth and App Check (feature flags).
+This API brokers between your main app, Redis queue, RunPod workers, and R2. Some endpoints are public read-only for listing, while job-creating endpoints are internal-only and require HMAC authentication. Client-facing endpoints can additionally enforce Firebase Auth and App Check (feature flags).
 
 ### Security overview
 - HMAC for internal-only routes (main app → API):
@@ -168,7 +168,7 @@ TTSGenerateRequest (body):
 
 ### Queueing model (Redis Streams)
 - If `REDIS_URL` is set, job-creating endpoints enqueue and return immediately with `{status:"queued"}` and `job_id`.
-- A worker consumes jobs, calls RunPod, uploads outputs to Firebase Storage and updates Firestore docs:
+- A worker consumes jobs, calls RunPod, uploads outputs to R2 and updates Firestore docs:
   - Clone: writes `voice_profiles/{profile_id}` with status and paths
   - TTS: updates `stories/{story_id}` with `audioStatus`, `audioUrl`, and appends `audioVersions` entry
 - Recommended: Use idempotency keys and track job state in Redis hashes under the configured namespace.
@@ -209,7 +209,7 @@ api-app/
 │   │   ├── tts.py            ← TTS generation endpoints
 │   │   └── health.py         ← Health and debug endpoints
 │   ├── services/
-│   │   ├── firebase.py       ← Firebase Storage operations
+│   │   ├── firebase.py       ← R2 operations
 │   │   └── runpod_client.py  ← RunPod API client
 │   ├── models/
 │   │   └── schemas.py        ← Pydantic models and schemas
@@ -325,7 +325,7 @@ The API manages these directories:
 ## 🔧 Configuration
 
 Key configuration options in `app/config.py`:
-- `FIREBASE_STORAGE_BUCKET` - Firebase Storage bucket name
+- `FIREBASE_STORAGE_BUCKET` - R2 bucket name
 - `API_HOST` - API server host (default: 0.0.0.0)
 - `API_PORT` - API server port (default: 8000)
 - `CORS_ORIGINS` - Allowed CORS origins
@@ -335,7 +335,7 @@ Key configuration options in `app/config.py`:
 ## 🔐 Environment Variables
 
 Required environment variables:
-- `FIREBASE_STORAGE_BUCKET` - Firebase Storage bucket
+- `FIREBASE_STORAGE_BUCKET` - R2 bucket
 - `RUNPOD_API_KEY` - RunPod API key
 - `VC_CB_ENDPOINT_ID` - ChatterboxTTS Voice cloning endpoint ID
 - `TTS_CB_ENDPOINT_ID` - ChatterboxTTS TTS generation endpoint ID
@@ -346,7 +346,7 @@ Optional:
 - `API_PORT` - Server port (default: 8000)
 - `DEBUG` - Debug mode (default: False)
 - `LOCAL_STORAGE_ENABLED` - Enable local storage (default: True)
-- `FIREBASE_STORAGE_ENABLED` - Enable Firebase storage (default: True)
+- `FIREBASE_STORAGE_ENABLED` - Enable R2 (default: True)
 
 ## 📚 API Documentation
 

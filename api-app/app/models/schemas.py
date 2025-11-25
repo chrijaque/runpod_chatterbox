@@ -5,7 +5,7 @@ class VoiceCloneRequest(BaseModel):
     user_id: str
     name: str
     audio_data: Optional[str] = None  # Base64 encoded audio
-    audio_path: Optional[str] = None  # Firebase Storage path (audio/voices/.../recorded/...)
+    audio_path: Optional[str] = None  # R2 path (audio/voices/.../recorded/...)
     audio_format: str = "wav"
     language: str = "en"
     is_kids_voice: bool = False
