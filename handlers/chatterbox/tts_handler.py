@@ -68,7 +68,7 @@ def _ensure_cache_env_dirs():
         except Exception:
             pass
     except Exception:
-        # Non-fatal: proceed without centralized caches
+        # Non-fatal: proceed without caches
         pass
 
 def _bytes_human(n: int) -> str:
