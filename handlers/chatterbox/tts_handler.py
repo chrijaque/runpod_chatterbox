@@ -1204,10 +1204,6 @@ def handler(event, responseFormat="base64"):
                         if result.get('firebase_url') or result.get('audio_url'):
                             result['storage_url'] = result.get('firebase_url') or result.get('audio_url')
                             result['r2_url'] = result.get('firebase_url') or result.get('audio_url')
-                                        except Exception:
-                                            pass
-                            except Exception as meta_e:
-                                logger.warning(f"⚠️ Could not set metadata on original blob: {meta_e}")
         except Exception as post_e:
             logger.warning(f"⚠️ TTS post-process rename failed: {post_e}")
         # ===== TTS SUCCESS CALLBACK LOGGING =====
