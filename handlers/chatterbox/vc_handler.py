@@ -388,8 +388,9 @@ def get_voice_id(name):
 # -------------------------------------------------------------------
 def send_error_callback(callback_url: Optional[str], user_id: Optional[str], voice_id: str,
                        voice_name: str, language: str, error: str) -> None:
-    """Send error callback if URL is provided. Silently fails on errors."""
+    """Send error callback if URL is provided. Logs errors but doesn't raise."""
     if not callback_url:
+        logger.debug(f"No callback URL provided for error callback, voice_id={voice_id}")
         return
     
     try:
@@ -401,17 +402,21 @@ def send_error_callback(callback_url: Optional[str], user_id: Optional[str], voi
             'language': language,
             'error': error,
         }
-        _post_signed_callback(callback_url, payload)
-        if _VERBOSE_LOGS:
-            logger.info(f"Error callback sent for voice_id={voice_id}")
+        _post_signed_callback(callback_url, payload, retries=3)
+        logger.info(f"✅ Error callback sent for voice_id={voice_id}")
     except Exception as e:
-        logger.warning(f"Failed to send error callback: {e}")
+        logger.error(f"❌ Failed to send error callback for voice_id={voice_id}: {type(e).__name__}: {e}")
+        logger.error(f"❌ Callback URL was: {callback_url}")
+        import traceback
+        logger.error(f"❌ Callback error traceback: {traceback.format_exc()}")
 
 def send_success_callback(callback_url: Optional[str], result: Dict[str, Any], user_id: Optional[str],
                          voice_id: str, voice_name: str, language: str, is_kids_voice: bool,
                          input_data: Dict[str, Any], audio_path: Optional[str] = None) -> None:
-    """Send success callback if URL is provided. Silently fails on errors."""
+    """Send success callback if URL is provided. Logs errors but doesn't raise."""
     if not callback_url or not isinstance(result, dict) or result.get("status") == "error":
+        if not callback_url:
+            logger.debug(f"No callback URL provided for voice_id={voice_id}")
         return
     
     try:
@@ -440,11 +445,13 @@ def send_success_callback(callback_url: Optional[str], result: Dict[str, Any], u
             'r2_sample_path': sample_storage_path,
             'recorded_path': audio_path or result.get('recorded_audio_path', ''),
         }
-        _post_signed_callback(callback_url, payload)
-        if _VERBOSE_LOGS:
-            logger.info(f"Success callback sent for voice_id={voice_id}")
+        _post_signed_callback(callback_url, payload, retries=3)
+        logger.info(f"✅ Success callback sent for voice_id={voice_id}")
     except Exception as e:
-        logger.warning(f"Failed to send success callback: {e}")
+        logger.error(f"❌ Failed to send success callback for voice_id={voice_id}: {type(e).__name__}: {e}")
+        logger.error(f"❌ Callback URL was: {callback_url}")
+        import traceback
+        logger.error(f"❌ Callback error traceback: {traceback.format_exc()}")
 
 # -------------------------------------------------------------------
 # Metadata extraction
@@ -764,8 +771,11 @@ def _canonicalize_callback_url(url: str) -> str:
     except Exception:
         return url
 
-def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
-    """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
+def _post_signed_callback(callback_url: str, payload: Dict[str, Any], *, retries: int = 3, base_delay: float = 2.0):
+    """POST JSON payload to callback_url with HMAC headers compatible with app callback.
+    
+    Includes retry logic with exponential backoff for transient failures.
+    """
     logger.info(f"📤 Posting callback to {callback_url}")
     if _VERBOSE_LOGS:
         logger.debug(f"Posting callback to {callback_url}")
@@ -778,61 +788,95 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any]):
     parsed = urlparse(canonical_url)
     path_for_signing = parsed.path or '/api/voice-clone/callback'  # Fixed default path
     logger.info(f"📤 Callback signing path: {path_for_signing}, canonical URL: {canonical_url}")
-    ts = str(int(time.time() * 1000))
     
     body_bytes = json.dumps(payload).encode('utf-8')
-    headers = {'Content-Type': 'application/json'}
-    
-    if secret:
-        prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
-        message = prefix + body_bytes
-        sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
-        headers.update({
-            'X-Daezend-Timestamp': ts,
-            'X-Daezend-Signature': sig,
-        })
     
     # Configure HTTP opener to follow redirects
     redirect_handler = HTTPRedirectHandler()
     opener = build_opener(redirect_handler)
-    req = Request(canonical_url, data=body_bytes, headers=headers, method='POST')
     
-    try:
-        resp = opener.open(req, timeout=15)
-        response_data = resp.read()
-        logger.info(f"✅ Callback response status: {resp.status}, URL: {canonical_url}")
-        if _VERBOSE_LOGS:
-            logger.debug(f"Callback response status: {resp.status}")
-        resp.close()
-    except HTTPError as http_err:
-        # Explicitly handle 307/308 by re-posting to Location
-        code = getattr(http_err, 'code', None)
-        loc = None
+    last_exception = None
+    for attempt in range(1, retries + 1):
         try:
-            loc = http_err.headers.get('Location') if hasattr(http_err, 'headers') and http_err.headers else None
-        except Exception:
-            loc = None
-        
-        logger.error(f"❌ Callback HTTP error: {code} for URL: {canonical_url}, Location: {loc}")
-        if code in (307, 308) and loc:
+            ts = str(int(time.time() * 1000))
+            headers = {'Content-Type': 'application/json'}
+            
+            if secret:
+                prefix = f"POST\n{path_for_signing}\n{ts}\n".encode('utf-8')
+                message = prefix + body_bytes
+                sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
+                headers.update({
+                    'X-Daezend-Timestamp': ts,
+                    'X-Daezend-Signature': sig,
+                })
+            
+            req = Request(canonical_url, data=body_bytes, headers=headers, method='POST')
+            
             try:
-                follow_url = urljoin(canonical_url, loc)
-                logger.info(f"Following {code} redirect to: {follow_url}")
-                req2 = Request(follow_url, data=body_bytes, headers=headers, method='POST')
-                resp2 = opener.open(req2, timeout=15)
-                resp2.read()
-                resp2.close()
-                logger.info(f"✅ Callback redirect succeeded: {follow_url}")
-                return
-            except Exception as follow_e:
-                logger.error(f"Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
-                raise
-        else:
-            logger.error(f"HTTP request failed: {type(http_err).__name__}: {http_err}, URL: {canonical_url}")
+                resp = opener.open(req, timeout=15)
+                response_data = resp.read()
+                logger.info(f"✅ Callback response status: {resp.status}, URL: {canonical_url}")
+                if _VERBOSE_LOGS:
+                    logger.debug(f"Callback response status: {resp.status}")
+                resp.close()
+                return  # Success - exit retry loop
+            except HTTPError as http_err:
+                # Explicitly handle 307/308 by re-posting to Location
+                code = getattr(http_err, 'code', None)
+                loc = None
+                try:
+                    loc = http_err.headers.get('Location') if hasattr(http_err, 'headers') and http_err.headers else None
+                except Exception:
+                    loc = None
+                
+                logger.error(f"❌ Callback HTTP error: {code} for URL: {canonical_url}, Location: {loc}, Attempt: {attempt}/{retries}")
+                
+                # Don't retry on 4xx errors (except 408, 429) - these are client errors
+                if code and 400 <= code < 500 and code not in (408, 429):
+                    logger.error(f"❌ Client error {code} - not retrying. URL: {canonical_url}")
+                    raise
+                
+                # Handle redirects
+                if code in (307, 308) and loc:
+                    try:
+                        follow_url = urljoin(canonical_url, loc)
+                        logger.info(f"Following {code} redirect to: {follow_url}")
+                        req2 = Request(follow_url, data=body_bytes, headers=headers, method='POST')
+                        resp2 = opener.open(req2, timeout=15)
+                        resp2.read()
+                        resp2.close()
+                        logger.info(f"✅ Callback redirect succeeded: {follow_url}")
+                        return  # Success - exit retry loop
+                    except Exception as follow_e:
+                        logger.error(f"Redirect follow failed: {type(follow_e).__name__}: {follow_e}")
+                        last_exception = follow_e
+                        if attempt < retries:
+                            time.sleep(base_delay * (2 ** (attempt - 1)))
+                            continue
+                        raise
+                else:
+                    last_exception = http_err
+                    if attempt < retries:
+                        delay = base_delay * (2 ** (attempt - 1))
+                        logger.warning(f"⚠️ Retrying callback in {delay}s (attempt {attempt}/{retries})")
+                        time.sleep(delay)
+                        continue
+                    raise
+        except Exception as e:
+            last_exception = e
+            logger.error(f"❌ Callback request failed (attempt {attempt}/{retries}): {type(e).__name__}: {e}, URL: {canonical_url}")
+            if attempt < retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.warning(f"⚠️ Retrying callback in {delay}s")
+                time.sleep(delay)
+                continue
+            # Last attempt failed
             raise
-    except Exception as e:
-        logger.error(f"❌ Callback request failed: {e}, URL: {canonical_url}")
-        raise
+    
+    # If we get here, all retries failed
+    if last_exception:
+        raise last_exception
+    raise RuntimeError(f"Callback failed after {retries} attempts")
 
 if __name__ == '__main__':
     logger.info("Voice Clone Handler starting...")

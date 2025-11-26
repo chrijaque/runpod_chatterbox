@@ -422,7 +422,7 @@ clear_python_cache()
 
 # Import storage utilities (always available)
 try:
-    from chatterbox.storage import resolve_bucket_name, is_r2_bucket, upload_to_r2, download_from_r2
+    from chatterbox.storage import resolve_bucket_name, is_r2_bucket, upload_to_r2, download_from_r2, _encode_metadata_value
     logger.info("✅ Successfully imported storage utilities from chatterbox")
 except ImportError as e:
     logger.warning(f"⚠️ Could not import storage utilities: {e}")
@@ -666,7 +666,26 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
         if content_type:
             extra_args['ContentType'] = content_type
         if metadata:
-            extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
+            # R2 metadata must be ASCII-compatible - encode non-ASCII values
+            try:
+                from chatterbox.storage import _encode_metadata_value
+            except ImportError:
+                # Fallback: define encoding function locally if import fails
+                import base64
+                def _encode_metadata_value(value: str) -> str:
+                    try:
+                        value.encode('ascii')
+                        return value
+                    except UnicodeEncodeError:
+                        encoded = base64.b64encode(value.encode('utf-8')).decode('ascii')
+                        return f"base64:{encoded}"
+            
+            encoded_metadata = {}
+            for k, v in metadata.items():
+                key_str = str(k)
+                value_str = str(v)
+                encoded_metadata[key_str] = _encode_metadata_value(value_str)
+            extra_args['Metadata'] = encoded_metadata
         
         s3_client.copy_object(
             CopySource=copy_source,
