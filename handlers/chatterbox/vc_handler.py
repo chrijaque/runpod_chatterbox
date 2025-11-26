@@ -270,6 +270,17 @@ def clear_python_cache():
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
 
+# Import storage utilities (always available)
+try:
+    from chatterbox.storage import download_from_r2
+    logger.info("✅ Successfully imported storage utilities from chatterbox")
+except ImportError as e:
+    logger.warning(f"⚠️ Could not import storage utilities: {e}")
+    # Fallback: define download_from_r2 locally if import fails
+    def download_from_r2(source_key: str) -> Optional[bytes]:
+        logger.error("Storage utilities not available - download_from_r2 not implemented")
+        return None
+
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
@@ -364,56 +375,8 @@ except Exception as e:
     tts_model = None
 
 # -------------------------------------------------------------------
-# R2 download helper
+# Voice ID generation
 # -------------------------------------------------------------------
-def download_from_r2(source_key: str) -> Optional[bytes]:
-    """
-    Download data from Cloudflare R2 using boto3 S3 client.
-    
-    :param source_key: Source key/path in R2 (e.g., "private/users/{user_id}/voices/{lang}/recorded/{file}.wav")
-    :return: Binary data or None if failed
-    """
-    try:
-        import boto3
-        from botocore.exceptions import ClientError
-        
-        # Get R2 credentials from environment
-        r2_account_id = os.getenv('R2_ACCOUNT_ID')
-        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
-        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
-        r2_endpoint = os.getenv('R2_ENDPOINT')
-        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
-        
-        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
-            logger.error("R2 credentials not configured")
-            return None
-        
-        # Create S3 client for R2
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=r2_endpoint,
-            aws_access_key_id=r2_access_key_id,
-            aws_secret_access_key=r2_secret_access_key,
-            region_name='auto'
-        )
-        
-        # Download from R2
-        response = s3_client.get_object(
-            Bucket=r2_bucket_name,
-            Key=source_key
-        )
-        
-        data = response['Body'].read()
-        logger.info(f"Downloaded from R2: {source_key} ({len(data)} bytes)")
-        return data
-        
-    except Exception as e:
-        logger.error(f"R2 download failed: {e}")
-        if _VERBOSE_LOGS:
-            import traceback
-            logger.error(f"R2 download traceback: {traceback.format_exc()}")
-        return None
-
 def get_voice_id(name):
     """Generate a unique ID for a voice based on the name"""
     import re

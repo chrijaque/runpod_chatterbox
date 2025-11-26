@@ -16,44 +16,6 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
-    """
-    Resolve R2 bucket name. Only R2 storage is supported.
-    
-    Returns the R2 bucket name (defaults to 'daezend-public-content').
-    The country_code parameter is ignored as we only use a single R2 bucket.
-    Non-R2 bucket names are ignored and the default R2 bucket is returned.
-    
-    :param bucket_name: Optional explicit bucket name (will be validated as R2, ignored if not R2)
-    :param country_code: Ignored (kept for API compatibility)
-    :return: R2 bucket name
-    """
-    # Default R2 bucket
-    default_r2_bucket = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
-    
-    if bucket_name:
-        # Clean up the bucket name
-        bn = str(bucket_name).replace('r2://', '').replace('gs://', '').strip()
-        # Strip protocol if present
-        if bn.startswith('https://') or bn.startswith('http://'):
-            bn = bn.split('://', 1)[1]
-        # If URL-like, take host part only
-        if '/' in bn:
-            bn = bn.split('/')[0]
-        # Validate it's an R2 bucket
-        if is_r2_bucket(bn):
-            return bn
-        else:
-            # Non-R2 bucket name provided (likely old Firebase bucket) - ignore and use default R2 bucket
-            logger.warning(f"⚠️ Non-R2 bucket name '{bn}' provided (likely legacy Firebase bucket). Ignoring and using default R2 bucket '{default_r2_bucket}'.")
-    
-    # Return default R2 bucket
-    return default_r2_bucket
-
-def is_r2_bucket(bucket_name: str) -> bool:
-    """Check if bucket name indicates R2 storage."""
-    return bucket_name == 'daezend-public-content' or bucket_name.startswith('r2://')
-
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
 _LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
@@ -458,6 +420,24 @@ def clear_python_cache():
 # Clear cache BEFORE importing any chatterbox modules
 clear_python_cache()
 
+# Import storage utilities (always available)
+try:
+    from chatterbox.storage import resolve_bucket_name, is_r2_bucket, upload_to_r2, download_from_r2
+    logger.info("✅ Successfully imported storage utilities from chatterbox")
+except ImportError as e:
+    logger.warning(f"⚠️ Could not import storage utilities: {e}")
+    # Fallback: define functions locally if import fails
+    def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
+        return os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+    def is_r2_bucket(bucket_name: str) -> bool:
+        return bucket_name == 'daezend-public-content' or bucket_name.startswith('r2://')
+    def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None, bucket_name: Optional[str] = None) -> Optional[str]:
+        logger.error("Storage utilities not available - upload_to_r2 not implemented")
+        return None
+    def download_from_r2(source_key: str) -> Optional[bytes]:
+        logger.error("Storage utilities not available - download_from_r2 not implemented")
+        return None
+
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
@@ -605,124 +585,6 @@ def validate_storage_path(path: str) -> str:
     
     # Normalize the path by removing any trailing slashes (already handled by rstrip in usage)
     return path.strip()
-
-def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None, bucket_name: Optional[str] = None) -> Optional[str]:
-    """
-    Upload data to Cloudflare R2 using boto3 S3 client.
-    
-    :param data: Binary data to upload
-    :param destination_key: Destination key/path in R2
-    :param content_type: MIME type of the file
-    :param metadata: Optional metadata dict (will be stored as R2 metadata)
-    :param bucket_name: Optional bucket name (defaults to R2_BUCKET_NAME env var)
-    :return: Public URL or None if failed
-    """
-    try:
-        import boto3
-        from botocore.exceptions import ClientError
-        
-        # Get R2 credentials from environment
-        r2_account_id = os.getenv('R2_ACCOUNT_ID')
-        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
-        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
-        r2_endpoint = os.getenv('R2_ENDPOINT')
-        # Use provided bucket_name or fall back to environment variable
-        r2_bucket_name = bucket_name or os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
-        r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
-        
-        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
-            logger.error("❌ R2 credentials not configured")
-            return None
-        
-        logger.info(f"🔍 Uploading to R2 bucket: {r2_bucket_name}, key: {destination_key}")
-        
-        # Create S3 client for R2
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=r2_endpoint,
-            aws_access_key_id=r2_access_key_id,
-            aws_secret_access_key=r2_secret_access_key,
-            region_name='auto'
-        )
-        
-        # Prepare metadata for R2
-        extra_args = {
-            'ContentType': content_type,
-        }
-        if metadata:
-            # R2 metadata must be strings
-            extra_args['Metadata'] = {str(k): str(v) for k, v in metadata.items()}
-        
-        # Upload to R2
-        s3_client.put_object(
-            Bucket=r2_bucket_name,
-            Key=destination_key,
-            Body=data,
-            **extra_args
-        )
-        
-        logger.info(f"✅ Uploaded to R2: {destination_key} ({len(data)} bytes)")
-        
-        # Return public URL if available
-        if r2_public_url:
-            public_url = f"{r2_public_url.rstrip('/')}/{destination_key}"
-            return public_url
-        
-        # Fallback: return R2 path
-        return destination_key
-        
-    except Exception as e:
-        logger.error(f"❌ R2 upload failed: {e}")
-        import traceback
-        logger.error(f"❌ R2 upload traceback: {traceback.format_exc()}")
-        return None
-
-def download_from_r2(source_key: str) -> Optional[bytes]:
-    """
-    Download data from Cloudflare R2 using boto3 S3 client.
-    
-    :param source_key: Source key/path in R2
-    :return: Binary data or None if failed
-    """
-    try:
-        import boto3
-        from botocore.exceptions import ClientError
-        
-        # Get R2 credentials from environment
-        r2_account_id = os.getenv('R2_ACCOUNT_ID')
-        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
-        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
-        r2_endpoint = os.getenv('R2_ENDPOINT')
-        r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
-        
-        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
-            logger.error("❌ R2 credentials not configured")
-            return None
-        
-        # Create S3 client for R2
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=r2_endpoint,
-            aws_access_key_id=r2_access_key_id,
-            aws_secret_access_key=r2_secret_access_key,
-            region_name='auto'
-        )
-        
-        # Download from R2
-        response = s3_client.get_object(
-            Bucket=r2_bucket_name,
-            Key=source_key
-        )
-        
-        data = response['Body'].read()
-        logger.info(f"✅ Downloaded from R2: {source_key} ({len(data)} bytes)")
-        return data
-        
-    except Exception as e:
-        logger.error(f"❌ R2 download failed: {e}")
-        import traceback
-        logger.error(f"❌ R2 download traceback: {traceback.format_exc()}")
-        return None
 
 # Removed: initialize_firebase() - R2 is no longer used, only R2
 
