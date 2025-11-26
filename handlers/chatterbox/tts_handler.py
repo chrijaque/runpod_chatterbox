@@ -22,8 +22,9 @@ def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optiona
     
     Returns the R2 bucket name (defaults to 'daezend-public-content').
     The country_code parameter is ignored as we only use a single R2 bucket.
+    Non-R2 bucket names are ignored and the default R2 bucket is returned.
     
-    :param bucket_name: Optional explicit bucket name (will be validated as R2)
+    :param bucket_name: Optional explicit bucket name (will be validated as R2, ignored if not R2)
     :param country_code: Ignored (kept for API compatibility)
     :return: R2 bucket name
     """
@@ -40,9 +41,11 @@ def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optiona
         if '/' in bn:
             bn = bn.split('/')[0]
         # Validate it's an R2 bucket
-        if not is_r2_bucket(bn):
-            raise ValueError(f"Only R2 storage is supported. Bucket '{bn}' is not an R2 bucket. Expected 'daezend-public-content'.")
-        return bn
+        if is_r2_bucket(bn):
+            return bn
+        else:
+            # Non-R2 bucket name provided (likely old Firebase bucket) - ignore and use default R2 bucket
+            logger.warning(f"⚠️ Non-R2 bucket name '{bn}' provided (likely legacy Firebase bucket). Ignoring and using default R2 bucket '{default_r2_bucket}'.")
     
     # Return default R2 bucket
     return default_r2_bucket
@@ -734,19 +737,14 @@ def upload_to_firebase(data: bytes, destination_blob_name: str, content_type: st
     :return: Public URL or None if failed
     """
     try:
-        # Resolve bucket from metadata hints
+        # Resolve bucket from metadata hints (non-R2 bucket names are ignored)
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
         
         logger.info(f"🔍 Resolved bucket: {resolved_bucket} (from bucket_hint={bucket_hint}, country_hint={country_hint})")
         
-        # Only R2 is supported - verify bucket is R2
-        if not is_r2_bucket(resolved_bucket):
-            error_msg = f"Only R2 storage is supported. Bucket '{resolved_bucket}' is not an R2 bucket. Expected 'daezend-public-content'."
-            logger.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
-        
+        # resolve_bucket_name() always returns an R2 bucket (ignores non-R2 bucket names)
         logger.info(f"✅ Using R2 upload for bucket: {resolved_bucket}")
         return upload_to_r2(data, destination_blob_name, content_type, metadata, bucket_name=resolved_bucket)
         
@@ -762,18 +760,12 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
     Returns new public URL or None.
     """
     try:
-        # Resolve bucket from metadata hints
+        # Resolve bucket from metadata hints (non-R2 bucket names are ignored)
         bucket_hint = (metadata or {}).get('bucket_name') if isinstance(metadata, dict) else None
         country_hint = (metadata or {}).get('country_code') if isinstance(metadata, dict) else None
         
-        # Resolve bucket name (should be R2)
-        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint) if (bucket_hint or country_hint) else 'daezend-public-content'
-        
-        # Only R2 is supported
-        if not is_r2_bucket(resolved_bucket):
-            error_msg = f"Only R2 storage is supported. Bucket '{resolved_bucket}' is not an R2 bucket."
-            logger.error(f"❌ {error_msg}")
-            raise ValueError(error_msg)
+        # resolve_bucket_name() always returns an R2 bucket (ignores non-R2 bucket names)
+        resolved_bucket = resolve_bucket_name(bucket_hint, country_hint)
         
         logger.info(f"✅ Rename: Using R2 copy/delete for bucket: {resolved_bucket}")
         

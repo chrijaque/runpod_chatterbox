@@ -17,9 +17,9 @@ class VoiceCloneRequest(BaseModel):
     sample_filename: Optional[str] = None
     output_basename: Optional[str] = None
     callback_url: Optional[str] = None
-    # Geo/bucket routing (optional)
-    bucket_name: Optional[str] = None
-    country_code: Optional[str] = None
+    # Deprecated: Geo/bucket routing - no longer used (all storage is R2)
+    bucket_name: Optional[str] = None  # Deprecated - ignored
+    country_code: Optional[str] = None  # Deprecated - ignored
 
 class VoiceCloneResponse(BaseModel):
     status: str

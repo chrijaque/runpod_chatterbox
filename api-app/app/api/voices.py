@@ -138,9 +138,6 @@ async def clone_voice(request: VoiceCloneRequest, http_req: Request, job_id: str
             output_basename=request.output_basename or request.voice_id,
             voice_id=request.voice_id,
             callback_url=(request.callback_url or default_cb),
-            # Geo/bucket hints
-            bucket_name=getattr(request, 'bucket_name', None),
-            country_code=getattr(request, 'country_code', None),
         )
         
         logger.info(f"🔍 RunPod result type: {type(result)}")
