@@ -8,18 +8,20 @@ from urllib.parse import urlparse, urlunparse
 logger = logging.getLogger(__name__)
 
 class RunPodClient:
-    """RunPod API client for voice cloning and TTS operations"""
+    """RunPod API client for voice cloning, TTS, and LLM operations"""
     
-    def __init__(self, api_key: str, voice_endpoint_id: str, tts_endpoint_id: str):
+    def __init__(self, api_key: str, voice_endpoint_id: str, tts_endpoint_id: str, llm_endpoint_id: Optional[str] = None):
         logger.info("🔍 ===== RUNPOD CLIENT INITIALIZATION =====")
         logger.info(f"📞 API Key provided: {bool(api_key)}")
         logger.info(f"📞 API Key length: {len(api_key) if api_key else 0}")
         logger.info(f"📞 Voice Endpoint ID: {voice_endpoint_id}")
         logger.info(f"📞 TTS Endpoint ID: {tts_endpoint_id}")
+        logger.info(f"📞 LLM Endpoint ID: {llm_endpoint_id}")
         
         self.api_key = api_key
         self.voice_endpoint_id = voice_endpoint_id  # Default ChatterboxTTS
         self.tts_endpoint_id = tts_endpoint_id      # Default ChatterboxTTS
+        self.llm_endpoint_id = llm_endpoint_id      # Optional LLM endpoint
         self.base_url = "https://api.runpod.ai/v2"
         self.headers = {
             "Authorization": f"Bearer {api_key}",
@@ -30,11 +32,13 @@ class RunPodClient:
         from ..config import settings
         self.vc_cb_endpoint_id = settings.VC_CB_ENDPOINT_ID
         self.tts_cb_endpoint_id = settings.TTS_CB_ENDPOINT_ID
+        self.llm_cb_endpoint_id = settings.LLM_CB_ENDPOINT_ID
         
         logger.info(f"📞 Base URL: {self.base_url}")
         logger.info(f"📞 Headers configured: {bool(self.headers)}")
         logger.info(f"📞 ChatterboxTTS VC Endpoint: {self.vc_cb_endpoint_id}")
         logger.info(f"📞 ChatterboxTTS TTS Endpoint: {self.tts_cb_endpoint_id}")
+        logger.info(f"📞 ChatterboxTTS LLM Endpoint: {self.llm_cb_endpoint_id}")
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
     def create_voice_clone(self, name: str, audio_base64: str | None, audio_format: str = "wav", response_format: str = "base64", 
@@ -442,6 +446,123 @@ class RunPodClient:
             "message": f"Job timed out after {timeout} seconds",
             "job_id": job_id
         }
+    
+    def generate_llm_completion(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+        language: Optional[str] = None,
+        genre: Optional[str] = None,
+        age_range: Optional[str] = None,
+        user_id: Optional[str] = None,
+        story_id: Optional[str] = None,
+        callback_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate LLM completion using RunPod Qwen 2.5 instruct model
+        
+        :param messages: List of message dicts with 'role' and 'content'
+        :param temperature: Sampling temperature
+        :param max_tokens: Maximum tokens to generate
+        :param language: Language code (optional)
+        :param genre: Genre name (optional)
+        :param age_range: Age range (optional)
+        :param user_id: User ID (optional)
+        :param story_id: Story ID (optional)
+        :param callback_url: Callback URL for async completion (optional)
+        :return: RunPod response with status and content/job_id
+        """
+        try:
+            if not self.llm_cb_endpoint_id:
+                raise Exception("LLM endpoint ID not configured")
+            
+            endpoint_id = self.llm_cb_endpoint_id
+            url = f"{self.base_url}/{endpoint_id}/run"
+            
+            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            cb_url = callback_url
+            if cb_url:
+                try:
+                    p = urlparse(cb_url)
+                    scheme = p.scheme or 'https'
+                    netloc = p.netloc
+                    if netloc == 'daezend.app':
+                        netloc = 'www.daezend.app'
+                    cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
+                except Exception:
+                    pass
+            
+            payload = {
+                "metadata": {
+                    "user_id": user_id,
+                    "story_id": story_id,
+                    "language": language,
+                    "genre": genre,
+                    "age_range": age_range,
+                    "callback_url": cb_url,
+                },
+                "input": {
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "language": language,
+                    "genre": genre,
+                    "age_range": age_range,
+                    "user_id": user_id,
+                    "story_id": story_id,
+                    "metadata": {
+                        "user_id": user_id,
+                        "story_id": story_id,
+                        "language": language,
+                        "genre": genre,
+                        "age_range": age_range,
+                        "callback_url": cb_url,
+                    },
+                }
+            }
+            
+            logger.info(f"🤖 Generating LLM completion for story: {story_id}")
+            logger.info(f"📡 Calling RunPod LLM API: {url}")
+            logger.info(f"📊 Messages count: {len(messages)}")
+            logger.info(f"🌡️ Temperature: {temperature}")
+            logger.info(f"🔢 Max tokens: {max_tokens}")
+            
+            response = requests.post(url, json=payload, headers=self.headers)
+            
+            logger.info(f"📡 Response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                logger.error(f"❌ RunPod LLM API error: {response.status_code} - {response.text}")
+                raise Exception(f"RunPod LLM API error: {response.text}")
+            
+            result = response.json()
+            logger.info(f"📊 Response type: {type(result)}")
+            logger.info(f"📊 Response keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+            
+            # Check if handler returned content directly (synchronous) or queued job (async)
+            if isinstance(result, dict):
+                if result.get('status') == 'error':
+                    error_message = result.get('error', result.get('message', 'Unknown error from LLM handler'))
+                    logger.error(f"❌ LLM handler returned error: {error_message}")
+                    return result
+                elif result.get('status') == 'success' and 'content' in result:
+                    logger.info(f"✅ LLM generation completed synchronously")
+                    return result
+                elif result.get('id'):
+                    logger.info(f"⏳ LLM job queued with ID: {result.get('id')}")
+                    return {"status": "IN_QUEUE", "id": result.get('id')}
+                elif 'content' in result:
+                    # Handler returned content directly without status
+                    logger.info(f"✅ LLM generation completed (implicit success)")
+                    return {"status": "success", "content": result.get('content'), "metadata": result.get('metadata')}
+            
+            logger.warning(f"⚠️ Unexpected response format: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating LLM completion: {e}")
+            raise
     
     def is_configured(self) -> bool:
         """Check if RunPod is properly configured"""

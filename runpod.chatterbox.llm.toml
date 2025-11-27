@@ -1,0 +1,29 @@
+name = "chatterbox-llm"
+description = "Chatterbox LLM Story Generation Handler (Qwen 2.5 Instruct)"
+repository = "https://github.com/chrijaque/runpod_chatterbox"
+docker_image_name = "chatterbox-llm"
+docker_image_tag = "prod"
+
+[env]
+RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
+DAEZEND_API_SHARED_SECRET = "{{ DAEZEND_API_SHARED_SECRET }}"
+MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+CACHE_BUST = "prod-{{ timestamp }}"
+
+[build]
+dockerfile = "dockerfiles/chatterbox/Dockerfile.llm"
+context = "."
+build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}", "HF_TOKEN={{ HF_TOKEN }}"]
+
+[deploy]
+gpu_type = "RTX 3090"  # Can use smaller GPU than TTS since no audio processing
+container_disk_in_gb = 30  # Model size dependent (~20-30GB for Qwen 2.5)
+volume_in_gb = 50  # Smaller volume than TTS
+ports = "8000/http"
+envs = [
+    "RUNPOD_API_KEY",
+    "DAEZEND_API_SHARED_SECRET",
+    "MODEL_NAME",
+    "VERBOSE_LOGS"
+]
+

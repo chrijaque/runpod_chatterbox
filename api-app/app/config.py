@@ -13,6 +13,7 @@ class Settings:
     RUNPOD_API_KEY: str = os.getenv("RUNPOD_API_KEY", "")
     VC_CB_ENDPOINT_ID: str = os.getenv("VC_CB_ENDPOINT_ID", "")
     TTS_CB_ENDPOINT_ID: str = os.getenv("TTS_CB_ENDPOINT_ID", "")
+    LLM_CB_ENDPOINT_ID: str = os.getenv("LLM_CB_ENDPOINT_ID", "")
     RUNPOD_MAX_CONCURRENCY_VC: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_VC", "2"))
     RUNPOD_MAX_CONCURRENCY_TTS: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_TTS", "2"))
 
@@ -91,6 +92,7 @@ class Settings:
             cls.RUNPOD_API_KEY,
             cls.VC_CB_ENDPOINT_ID,
             cls.TTS_CB_ENDPOINT_ID
+            # LLM_CB_ENDPOINT_ID is optional - only required if using LLM endpoint
         ])
 
     @classmethod
@@ -108,6 +110,7 @@ class Settings:
                 missing.append("VC_CB_ENDPOINT_ID")
             if not cls.TTS_CB_ENDPOINT_ID:
                 missing.append("TTS_CB_ENDPOINT_ID")
+            # LLM_CB_ENDPOINT_ID is optional - only required if using LLM endpoint
         
         return missing
 
@@ -122,6 +125,7 @@ logger.info("🔍 ===== CONFIGURATION DEBUG =====")
 logger.info(f"📋 RUNPOD_API_KEY: {'SET' if settings.RUNPOD_API_KEY else 'NOT SET'}")
 logger.info(f"📋 VC_CB_ENDPOINT_ID: {settings.VC_CB_ENDPOINT_ID}")
 logger.info(f"📋 TTS_CB_ENDPOINT_ID: {settings.TTS_CB_ENDPOINT_ID}")
+logger.info(f"📋 LLM_CB_ENDPOINT_ID: {settings.LLM_CB_ENDPOINT_ID}")
 logger.info(f"📋 FIREBASE_STORAGE_BUCKET: {settings.FIREBASE_STORAGE_BUCKET}")
 logger.info(f"📋 FIREBASE_CREDENTIALS: {'SET' if settings.FIREBASE_CREDENTIALS else 'NOT SET'}")
 if settings.FIREBASE_CREDENTIALS:

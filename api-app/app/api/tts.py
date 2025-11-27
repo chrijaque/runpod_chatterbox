@@ -22,7 +22,8 @@ router = APIRouter()
 runpod_client = RunPodClient(
     api_key=settings.RUNPOD_API_KEY,
     voice_endpoint_id=settings.VC_CB_ENDPOINT_ID,
-    tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID
+    tts_endpoint_id=settings.TTS_CB_ENDPOINT_ID,
+    llm_endpoint_id=settings.LLM_CB_ENDPOINT_ID
 )
 # Import the get_firebase_service function
 from .voices import get_firebase_service

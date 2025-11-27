@@ -148,3 +148,43 @@ class DebugResponse(BaseModel):
     timestamp: Optional[str] = None
     firebase_connected: Optional[bool] = None
     firebase_storage_usage: Optional[Dict[str, Any]] = None
+
+# LLM Generation Schemas
+class LLMGenerateRequest(BaseModel):
+    user_id: str
+    story_id: str
+    messages: List[Dict[str, str]]  # List of message dicts with 'role' and 'content'
+    temperature: float = 0.7
+    max_tokens: int = 4000
+    language: Optional[str] = None
+    genre: Optional[str] = None
+    age_range: Optional[str] = None
+    callback_url: Optional[str] = None
+
+class LLMGenerateResponse(BaseModel):
+    status: str  # 'queued', 'success', 'error'
+    job_id: Optional[str] = None
+    content: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class LLMSuccessCallbackRequest(BaseModel):
+    story_id: str
+    user_id: Optional[str] = None
+    content: str
+    metadata: Optional[Dict[str, Any]] = None
+
+class LLMSuccessCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None
+
+class LLMErrorCallbackRequest(BaseModel):
+    story_id: str
+    user_id: Optional[str] = None
+    error: str
+    error_details: Optional[str] = None
+    job_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+class LLMErrorCallbackResponse(BaseModel):
+    success: bool
+    error: Optional[str] = None

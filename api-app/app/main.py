@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .config import settings
 from .middleware.security import verify_hmac, verify_firebase_auth, verify_app_check
-from .api import voices, tts, health
+from .api import voices, tts, health, llm
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +30,7 @@ app.add_middleware(
 # Include routers (no enforcement yet; security will be added per-route later)
 app.include_router(voices.router, prefix="/api/voices", tags=["voices"])
 app.include_router(tts.router, prefix="/api/tts", tags=["tts"])
+app.include_router(llm.router, prefix="/api/llm", tags=["llm"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
 
 # Startup event

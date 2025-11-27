@@ -1,0 +1,76 @@
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+
+# Set environment variables for logging
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONFAULTHANDLER=1
+ENV PYTHON_UNBUFFERED="true"
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Optional HF token for private models (pass at build time)
+ARG HF_TOKEN=""
+
+# Setup environment for Hugging Face model cache baked into the image
+ENV HF_HOME=/models/hf \
+    HF_HUB_CACHE=/models/hf/hub \
+    TRANSFORMERS_CACHE=/models/hf
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y \
+    git \
+    wget \
+    curl && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set git global config to avoid warnings
+RUN git config --global --add safe.directory '*'
+
+# Create requirements file for LLM handler
+RUN echo "runpod>=1.5.0" > /requirements_llm.txt && \
+    echo "transformers>=4.35.0" >> /requirements_llm.txt && \
+    echo "accelerate>=0.24.0" >> /requirements_llm.txt && \
+    echo "requests>=2.31.0" >> /requirements_llm.txt
+
+# Add build argument to force cache invalidation
+ARG CACHE_BUST=1
+ARG BUILD_TIME
+ARG RUNPOD_CACHE_BUST=1
+
+# Cache-bust layer
+RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
+
+# Install requirements (PyTorch is already in base image)
+RUN echo "🔧 Installing LLM requirements..." && \
+    pip install -r /requirements_llm.txt && \
+    echo "✅ LLM requirements installed"
+
+# Pre-download Qwen 2.5 Instruct model from HuggingFace
+RUN echo "🔧 Preparing HF cache for predownload..." && \
+    mkdir -p /models/hf/hub && \
+    if [ -n "$HF_TOKEN" ]; then \
+      echo "🔑 Using HF token for non-interactive login" && \
+      huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
+    else \
+      echo "ℹ️ No HF token provided; assuming public repo" ; \
+    fi && \
+    python - <<'PY'
+from huggingface_hub import snapshot_download
+import os
+model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
+print(f"🔽 Pre-downloading {model_name}...")
+snapshot_download(
+    repo_id=model_name,
+    revision="main",
+)
+print("✅ Pre-download complete.")
+PY
+
+# Copy LLM handler script
+COPY handlers/chatterbox/llm_handler.py /
+
+# Expose port (if needed for health checks)
+EXPOSE 8000
+
+# Set the entrypoint to the LLM handler
+CMD ["python3", "-u", "llm_handler.py"]
+
