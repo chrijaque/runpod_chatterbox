@@ -27,9 +27,12 @@ RUN git config --global --add safe.directory '*'
 
 # Create requirements file for LLM handler
 RUN echo "runpod>=1.5.0" > /requirements_llm.txt && \
+    echo "vllm>=0.6.0" >> /requirements_llm.txt && \
     echo "transformers>=4.35.0" >> /requirements_llm.txt && \
     echo "accelerate>=0.24.0" >> /requirements_llm.txt && \
-    echo "requests>=2.31.0" >> /requirements_llm.txt
+    echo "requests>=2.31.0" >> /requirements_llm.txt && \
+    echo "autoawq>=0.2.0" >> /requirements_llm.txt && \
+    echo "firebase-admin>=6.2.0" >> /requirements_llm.txt
 
 # Add build argument to force cache invalidation
 ARG CACHE_BUST=1
@@ -44,26 +47,10 @@ RUN echo "🔧 Installing LLM requirements..." && \
     pip install -r /requirements_llm.txt && \
     echo "✅ LLM requirements installed"
 
-# Pre-download Qwen 2.5 Instruct model from HuggingFace
-RUN echo "🔧 Preparing HF cache for predownload..." && \
-    mkdir -p /models/hf/hub && \
-    if [ -n "$HF_TOKEN" ]; then \
-      echo "🔑 Using HF token for non-interactive login" && \
-      huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
-    else \
-      echo "ℹ️ No HF token provided; assuming public repo" ; \
-    fi && \
-    python - <<'PY'
-from huggingface_hub import snapshot_download
-import os
-model_name = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-7B-Instruct")
-print(f"🔽 Pre-downloading {model_name}...")
-snapshot_download(
-    repo_id=model_name,
-    revision="main",
-)
-print("✅ Pre-download complete.")
-PY
+# Pre-download is optional - model will be loaded from network volume at runtime
+# Only pre-download if MODEL_NAME is explicitly set and MODEL_PATH is not set
+RUN echo "ℹ️ Model will be loaded from network volume at runtime (MODEL_PATH)" && \
+    echo "ℹ️ Set MODEL_NAME environment variable to enable HuggingFace pre-download fallback"
 
 # Copy LLM handler script
 COPY handlers/chatterbox/llm_handler.py /
