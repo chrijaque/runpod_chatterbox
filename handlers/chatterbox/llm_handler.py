@@ -109,7 +109,7 @@ def _initialize_firebase():
         return None
 
 def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata: Dict[str, Any]):
-    """Save story directly to Firestore."""
+    """Save story directly to Firestore. Detects if it's a default story and saves to the correct collection."""
     try:
         db = _initialize_firebase()
         if not db:
@@ -125,6 +125,15 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
         title_match = content.split('\n')[0].strip() if content else None
         title = title_match[:120] if title_match else "Untitled Story"
         
+        # Check if this is a default story by checking defaultStories collection
+        is_default_story = False
+        try:
+            default_story_ref = db.collection("defaultStories").document(story_id)
+            default_snap = default_story_ref.get()
+            is_default_story = default_snap.exists
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check defaultStories collection: {e}")
+        
         # Prepare story document (matching OpenAI story structure)
         story_data = {
             "title": title,
@@ -137,20 +146,31 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
             "language": language,
             "promptVersion": "12-beat@2025-01-09",
             "genre": [genre.lower()] if genre else [],
-            "status": "ready",
             "updatedAt": firestore.SERVER_TIMESTAMP,
             "provider": "runpod",  # Mark as Runpod-generated
         }
+        
+        # For default stories, use generationStatus instead of status
+        if is_default_story:
+            story_data["generationStatus"] = "ready"
+        else:
+            story_data["status"] = "ready"
         
         # Add user_id if available
         if user_id:
             story_data["userId"] = user_id
         
-        # Save to Firestore
-        story_ref = db.collection("stories").document(story_id)
+        # Save to the correct collection
+        if is_default_story:
+            story_ref = db.collection("defaultStories").document(story_id)
+            logger.info(f"💾 Saving default story {story_id} to defaultStories collection")
+        else:
+            story_ref = db.collection("stories").document(story_id)
+            logger.info(f"💾 Saving user story {story_id} to stories collection")
+        
         story_ref.set(story_data, merge=True)
         
-        logger.info(f"✅ Story {story_id} saved to Firestore")
+        logger.info(f"✅ Story {story_id} saved to Firestore ({'defaultStories' if is_default_story else 'stories'} collection)")
         return True
         
     except Exception as e:

@@ -102,6 +102,7 @@ async def llm_success_callback(request: LLMSuccessCallbackRequest):
     """
     Handle LLM success callbacks from RunPod worker. Update Firestore story document
     with the generated content and mark status as 'ready'.
+    Note: Handler already saves to Firestore, but this callback ensures updates are applied.
     """
     try:
         logger.info(f"✅ LLM Success callback received for story: {request.story_id}")
@@ -114,21 +115,42 @@ async def llm_success_callback(request: LLMSuccessCallbackRequest):
             from firebase_admin import firestore
 
             db = firestore.client()
-            story_ref = db.collection("stories").document(request.story_id)
+            
+            # Check if this is a default story
+            default_story_ref = db.collection("defaultStories").document(request.story_id)
+            default_snap = default_story_ref.get()
+            is_default_story = default_snap.exists
+            
+            if is_default_story:
+                # Update defaultStories collection
+                update_data = {
+                    "content": request.content,
+                    "generationStatus": "ready",
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                }
+                
+                # Merge in metadata if present
+                if request.metadata:
+                    update_data["llmMetadata"] = request.metadata
+                
+                default_story_ref.update(update_data)
+                logger.info(f"✅ Default story {request.story_id} updated with LLM content in Firestore")
+            else:
+                # Update stories collection
+                story_ref = db.collection("stories").document(request.story_id)
+                update_data = {
+                    "content": request.content,
+                    "status": "ready",
+                    "updatedAt": firestore.SERVER_TIMESTAMP,
+                }
+                
+                # Merge in metadata if present
+                if request.metadata:
+                    update_data["llmMetadata"] = request.metadata
+                
+                story_ref.update(update_data)
+                logger.info(f"✅ Story {request.story_id} updated with LLM content in Firestore")
 
-            update_data = {
-                "content": request.content,
-                "status": "ready",
-                "updatedAt": firestore.SERVER_TIMESTAMP,
-            }
-
-            # Merge in metadata if present
-            if request.metadata:
-                update_data["llmMetadata"] = request.metadata
-
-            story_ref.update(update_data)
-
-            logger.info(f"✅ Story {request.story_id} updated with LLM content in Firestore")
             return LLMSuccessCallbackResponse(success=True)
         except Exception as firestore_error:
             logger.error(f"❌ Failed to update Firestore for story {request.story_id}: {firestore_error}")
@@ -155,23 +177,45 @@ async def llm_error_callback(request: LLMErrorCallbackRequest):
             from firebase_admin import firestore
             
             db = firestore.client()
-            story_ref = db.collection('stories').document(request.story_id)
             
-            update_data = {
-                'status': 'failed',
-                'failureReason': request.error,
-                'llmErrorDetails': request.error_details,
-                'llmJobId': request.job_id,
-                'updatedAt': firestore.SERVER_TIMESTAMP
-            }
+            # Check if this is a default story
+            default_story_ref = db.collection("defaultStories").document(request.story_id)
+            default_snap = default_story_ref.get()
+            is_default_story = default_snap.exists
             
-            # Add metadata if provided
-            if request.metadata:
-                update_data['llmErrorMetadata'] = request.metadata
-            
-            story_ref.update(update_data)
-            
-            logger.info(f"✅ Story {request.story_id} updated with error status in Firestore")
+            if is_default_story:
+                # Update defaultStories collection
+                update_data = {
+                    'generationStatus': 'failed',
+                    'failureReason': request.error,
+                    'llmErrorDetails': request.error_details,
+                    'llmJobId': request.job_id,
+                    'updatedAt': firestore.SERVER_TIMESTAMP
+                }
+                
+                # Add metadata if provided
+                if request.metadata:
+                    update_data['llmErrorMetadata'] = request.metadata
+                
+                default_story_ref.update(update_data)
+                logger.info(f"✅ Default story {request.story_id} updated with error status in Firestore")
+            else:
+                # Update stories collection
+                story_ref = db.collection('stories').document(request.story_id)
+                update_data = {
+                    'status': 'failed',
+                    'failureReason': request.error,
+                    'llmErrorDetails': request.error_details,
+                    'llmJobId': request.job_id,
+                    'updatedAt': firestore.SERVER_TIMESTAMP
+                }
+                
+                # Add metadata if provided
+                if request.metadata:
+                    update_data['llmErrorMetadata'] = request.metadata
+                
+                story_ref.update(update_data)
+                logger.info(f"✅ Story {request.story_id} updated with error status in Firestore")
             
             return LLMErrorCallbackResponse(success=True)
             
