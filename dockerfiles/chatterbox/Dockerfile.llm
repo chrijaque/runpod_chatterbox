@@ -14,13 +14,16 @@ ENV HF_HOME=/models/hf \
     HF_HUB_CACHE=/models/hf/hub \
     TRANSFORMERS_CACHE=/models/hf
 
-# Install system dependencies
+# Install system dependencies (including build tools for vLLM compilation)
 RUN apt-get update && \
     apt-get install -y \
     git \
     wget \
-    curl && \
-    rm -rf /var/lib/apt/lists/*
+    curl \
+    build-essential \
+    ninja-build \
+    cmake \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
@@ -53,18 +56,20 @@ RUN echo "🔧 Installing AutoAWQ..." && \
     pip install --no-cache-dir "autoawq>=0.2.0" && \
     echo "✅ AutoAWQ installed"
 
-# Install vLLM - try to use pre-built wheels only to avoid compilation
-# If no wheels available, skip vLLM (handler will use AutoAWQ fallback)
-# Using --only-binary forces wheel-only installation (no source compilation)
-RUN echo "🔧 Attempting to install vLLM from pre-built wheels..." && \
+# Install vLLM - try pre-built wheels first, then compile from source if needed
+# This ensures vLLM is always available (preferred over AutoAWQ fallback)
+RUN echo "🔧 Installing vLLM..." && \
     export CUDA_HOME=/usr/local/cuda && \
     export PATH=${CUDA_HOME}/bin:${PATH} && \
     export LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH} && \
-    (pip install --no-cache-dir --only-binary :all: --timeout=300 "vllm>=0.6.0,<0.7.0" && \
-     echo "✅ vLLM installed from pre-built wheel") || \
-    (echo "⚠️ No pre-built vLLM wheel available for this platform" && \
-     echo "⚠️ Will use AutoAWQ fallback at runtime (vLLM requires source compilation)" && \
-     echo "⚠️ To enable vLLM, build may need longer timeout or use different base image")
+    export VLLM_USE_TRITON_FLASH_ATTN=1 && \
+    (echo "🚀 Attempting to install vLLM from pre-built wheels..." && \
+     pip install --no-cache-dir --timeout=300 "vllm>=0.6.0,<0.7.0" && \
+     echo "✅ vLLM installed successfully") || \
+    (echo "⚠️ Pre-built wheel not available, compiling from source..." && \
+     echo "⏳ This may take 10-30 minutes..." && \
+     pip install --no-cache-dir --timeout=3600 "vllm>=0.6.0,<0.7.0" && \
+     echo "✅ vLLM compiled and installed successfully from source")
 
 # Pre-download is optional - model will be loaded from network volume at runtime
 # Only pre-download if MODEL_NAME is explicitly set and MODEL_PATH is not set
