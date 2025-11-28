@@ -108,6 +108,297 @@ def _initialize_firebase():
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return None
 
+def _generate_title_and_preview(content: str, genre: str, age_range: str) -> Dict[str, str]:
+    """Generate title and preview using the loaded LLM model."""
+    global _vllm_engine, _model, _tokenizer, _use_vllm
+    
+    try:
+        model_or_engine, tokenizer, device = _load_model()
+        use_vllm = _use_vllm
+        
+        # For Qwen3 (adult-oriented), adjust the prompt
+        age_guidance = "for adult audiences" if age_range == "+18" else f"for children aged {age_range}"
+        
+        prompt = f"""You are a creative storyteller and editor.
+
+Read the story below and generate:
+1. A short, engaging title (2–6 words) {age_guidance}.
+   - Reflect the {genre} genre and story mood.
+   - Keep vocabulary appropriate for the target audience.
+   - Make it memorable and reflect the story's core theme.
+
+2. A 2–3 sentence preview that entices the reader to read or hear the story.
+   - Keep it spoiler-free.
+   - Focus on tone, setup, and themes, not outcomes.
+   - 180–240 characters.
+
+Output ONLY valid JSON (no markdown, no code blocks):
+{{
+  "title": "...",
+  "preview": "..."
+}}
+
+Genre: {genre}
+Story:
+{content[:2000]}
+
+Generate title and preview for this {genre} story."""
+
+        if use_vllm:
+            from vllm import SamplingParams
+            sampling_params = SamplingParams(temperature=0.6, top_p=0.9, max_tokens=300)
+            outputs = model_or_engine.generate([prompt], sampling_params)
+            response = outputs[0].outputs[0].text.strip()
+        else:
+            import torch
+            model_inputs = tokenizer([prompt], return_tensors="pt")
+            model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+            with torch.no_grad():
+                generated_ids = model_or_engine.generate(
+                    **model_inputs,
+                    max_new_tokens=300,
+                    temperature=0.6,
+                    do_sample=True,
+                    top_p=0.9,
+                )
+            response = tokenizer.batch_decode(generated_ids[:, model_inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
+        
+        # Parse JSON response
+        import json
+        import re
+        # Extract JSON from response (handle markdown code blocks)
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                return {
+                    "title": str(parsed.get("title", "Untitled Story")).strip()[:120],
+                    "preview": str(parsed.get("preview", "")).strip()[:500]
+                }
+            except json.JSONDecodeError:
+                pass
+        
+        # Fallback: extract title from first line, preview from response
+        lines = [l.strip() for l in response.split('\n') if l.strip()]
+        title = lines[0].replace('"', '').replace("'", "").strip()[:120] if lines else "Untitled Story"
+        preview = ' '.join(lines[1:]).strip()[:500] if len(lines) > 1 else content[:200] + "..."
+        return {"title": title, "preview": preview}
+    except Exception as e:
+        logger.warning(f"⚠️ Title/preview generation failed: {e}")
+        # Fallback: extract title from first line of content
+        title_match = content.split('\n')[0].strip() if content else None
+        title = title_match[:120] if title_match else "Untitled Story"
+        preview = content[:200] + "..." if len(content) > 200 else content
+        return {"title": title, "preview": preview}
+
+def _generate_cover_hook(content: str, title: str, genre: str, age_range: str) -> Dict[str, str]:
+    """Generate cover hook and essence using the loaded LLM model."""
+    global _vllm_engine, _model, _tokenizer, _use_vllm
+    
+    try:
+        model_or_engine, tokenizer, device = _load_model()
+        use_vllm = _use_vllm
+        
+        prompt = f"""Extract the focal visual hook and emotional essence for a storybook cover illustration.
+
+Story Title: {title}
+Genre: {genre}
+Age Range: {age_range}
+
+Story (first 1500 chars for context):
+{content[:1500]}
+
+Output ONLY valid JSON (no markdown, no code blocks):
+{{
+  "coverHook": "a brief visual focal point (e.g., 'a magical key glowing in moonlight')",
+  "coverEssence": "the emotional mood/essence (e.g., 'mysterious wonder')"
+}}"""
+
+        if use_vllm:
+            from vllm import SamplingParams
+            sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=200)
+            outputs = model_or_engine.generate([prompt], sampling_params)
+            response = outputs[0].outputs[0].text.strip()
+        else:
+            import torch
+            model_inputs = tokenizer([prompt], return_tensors="pt")
+            model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+            with torch.no_grad():
+                generated_ids = model_or_engine.generate(
+                    **model_inputs,
+                    max_new_tokens=200,
+                    temperature=0.7,
+                    do_sample=True,
+                    top_p=0.9,
+                )
+            response = tokenizer.batch_decode(generated_ids[:, model_inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
+        
+        import json
+        import re
+        json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group())
+                return {
+                    "coverHook": str(parsed.get("coverHook", "")).strip(),
+                    "coverEssence": str(parsed.get("coverEssence", "")).strip()
+                }
+            except json.JSONDecodeError:
+                pass
+        return {"coverHook": "", "coverEssence": ""}
+    except Exception as e:
+        logger.warning(f"⚠️ Cover hook generation failed: {e}")
+        return {"coverHook": "", "coverEssence": ""}
+
+def _generate_cover_prompt(content: str, title: str, genre: str, age_range: str, coverHook: str, coverEssence: str) -> str:
+    """Generate cover prompt using the loaded LLM model."""
+    global _vllm_engine, _model, _tokenizer, _use_vllm
+    
+    try:
+        model_or_engine, tokenizer, device = _load_model()
+        use_vllm = _use_vllm
+        
+        hook_text = f"Visual Hook: {coverHook}\nEmotional Essence: {coverEssence}" if coverHook and coverEssence else ""
+        age_guidance = "adult-oriented" if age_range == "+18" else f"suitable for children aged {age_range}"
+        
+        prompt = f"""Create a detailed cover image prompt for a storybook illustration.
+
+Title: {title}
+Genre: {genre}
+Age Range: {age_range}
+{hook_text}
+
+Story context (first 1000 chars):
+{content[:1000]}
+
+Generate a detailed, vivid prompt for a storybook cover illustration (2-3 sentences, 100-200 words). Focus on the visual hook and emotional essence. Make it {age_guidance}."""
+
+        if use_vllm:
+            from vllm import SamplingParams
+            sampling_params = SamplingParams(temperature=0.8, top_p=0.9, max_tokens=250)
+            outputs = model_or_engine.generate([prompt], sampling_params)
+            response = outputs[0].outputs[0].text.strip()
+        else:
+            import torch
+            model_inputs = tokenizer([prompt], return_tensors="pt")
+            model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+            with torch.no_grad():
+                generated_ids = model_or_engine.generate(
+                    **model_inputs,
+                    max_new_tokens=250,
+                    temperature=0.8,
+                    do_sample=True,
+                    top_p=0.9,
+                )
+            response = tokenizer.batch_decode(generated_ids[:, model_inputs["input_ids"].shape[1]:], skip_special_tokens=True)[0].strip()
+        
+        return response[:500]  # Limit length
+    except Exception as e:
+        logger.warning(f"⚠️ Cover prompt generation failed: {e}")
+        return ""
+
+def _extract_beats(content: str) -> list:
+    """Extract beats from story content using separators."""
+    beats = []
+    try:
+        # Try new format with beat labels first
+        if '### Beat' in content or 'Beat' in content:
+            import re
+            # Match patterns like "### Beat 1:", "Beat 1:", etc.
+            beat_pattern = r'(?:###\s*)?Beat\s*\d+\s*:'
+            parts = re.split(beat_pattern, content, flags=re.IGNORECASE)
+            beats = [beat.strip() for beat in parts if beat.strip()]
+        else:
+            # Fallback to old separator
+            beats = content.split('\n\n⁂\n\n')
+            beats = [beat.strip() for beat in beats if beat.strip()]
+        
+        # Filter out empty beats and very short ones (likely not actual beats)
+        beats = [beat for beat in beats if len(beat) > 50]
+        
+        return beats
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to extract beats: {e}")
+        return []
+
+def _log_story_generation_details(story_id: str, title: str, content: str, preview: str, 
+                                  coverPrompt: str, coverHook: str, coverEssence: str, 
+                                  genre: str, age_range: str):
+    """Log comprehensive details about the generated story."""
+    try:
+        # Extract beats
+        beats = _extract_beats(content)
+        
+        # Calculate content statistics
+        word_count = len(content.split())
+        char_count = len(content)
+        preview_length = len(preview) if preview else 0
+        
+        # Log comprehensive story details
+        logger.info("=" * 80)
+        logger.info(f"📖 STORY GENERATION COMPLETE - Story ID: {story_id}")
+        logger.info("=" * 80)
+        
+        # Title
+        logger.info(f"📌 TITLE: {title}")
+        logger.info(f"   Length: {len(title)} characters")
+        
+        # Content statistics
+        logger.info(f"📝 CONTENT STATISTICS:")
+        logger.info(f"   Total characters: {char_count:,}")
+        logger.info(f"   Total words: {word_count:,}")
+        logger.info(f"   Estimated reading time: ~{word_count // 200} minutes")
+        
+        # Content preview
+        content_preview = content[:500] + "..." if len(content) > 500 else content
+        logger.info(f"📄 CONTENT PREVIEW (first 500 chars):")
+        logger.info(f"   {content_preview}")
+        
+        # Preview text
+        if preview:
+            logger.info(f"📋 PREVIEW TEXT:")
+            logger.info(f"   {preview}")
+            logger.info(f"   Length: {preview_length} characters")
+        else:
+            logger.warning(f"⚠️ Preview text is empty")
+        
+        # Beats
+        logger.info(f"🎬 BEATS EXTRACTED: {len(beats)} beats found")
+        if beats:
+            for i, beat in enumerate(beats[:12], 1):  # Log first 12 beats
+                beat_preview = beat[:200] + "..." if len(beat) > 200 else beat
+                logger.info(f"   Beat {i}: {len(beat)} chars - {beat_preview}")
+            if len(beats) > 12:
+                logger.info(f"   ... and {len(beats) - 12} more beats")
+            if len(beats) != 12:
+                logger.warning(f"⚠️ Expected 12 beats, found {len(beats)}")
+        else:
+            logger.warning(f"⚠️ No beats extracted from content")
+        
+        # Cover metadata
+        if coverHook:
+            logger.info(f"🎨 COVER HOOK: {coverHook}")
+        if coverEssence:
+            logger.info(f"💫 COVER ESSENCE: {coverEssence}")
+        if coverPrompt:
+            cover_preview = coverPrompt[:200] + "..." if len(coverPrompt) > 200 else coverPrompt
+            logger.info(f"🖼️ COVER PROMPT ({len(coverPrompt)} chars):")
+            logger.info(f"   {cover_preview}")
+        else:
+            logger.warning(f"⚠️ Cover prompt is empty")
+        
+        # Metadata
+        logger.info(f"🏷️ METADATA:")
+        logger.info(f"   Genre: {genre}")
+        logger.info(f"   Age Range: {age_range}")
+        
+        logger.info("=" * 80)
+        
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to log story generation details: {e}")
+        import traceback
+        logger.warning(f"⚠️ Traceback: {traceback.format_exc()}")
+
 def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata: Dict[str, Any]):
     """Save story directly to Firestore. Detects if it's a default story and saves to the correct collection."""
     try:
@@ -121,9 +412,44 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
         genre = metadata.get("genre", "")
         age_range = metadata.get("age_range", "")
         
-        # Extract title from content (first line)
-        title_match = content.split('\n')[0].strip() if content else None
-        title = title_match[:120] if title_match else "Untitled Story"
+        # Qwen3 is adult-oriented, not age-specific - use +18 as default
+        if genre and genre.lower() in ['qwen3', 'qwen']:
+            age_range = "+18"
+        
+        # Generate title, preview, and coverPrompt using the same LLM
+        # This matches the OpenAI worker flow
+        logger.info(f"🎨 Generating title, preview, and cover metadata for story {story_id}...")
+        title = "Untitled Story"
+        preview = ""
+        coverPrompt = ""
+        coverHook = ""
+        coverEssence = ""
+        
+        try:
+            # Generate title and preview
+            title_preview_result = _generate_title_and_preview(content, genre, age_range)
+            title = title_preview_result.get("title", "Untitled Story")
+            preview = title_preview_result.get("preview", "")
+            logger.info(f"✅ Generated title: {title[:50]}...")
+            logger.info(f"✅ Generated preview: {preview[:50] if preview else 'empty'}...")
+            
+            # Generate cover hook and essence
+            hook_result = _generate_cover_hook(content, title, genre, age_range)
+            coverHook = hook_result.get("coverHook", "")
+            coverEssence = hook_result.get("coverEssence", "")
+            logger.info(f"✅ Generated coverHook: {coverHook[:50] if coverHook else 'empty'}...")
+            
+            # Generate cover prompt
+            coverPrompt = _generate_cover_prompt(content, title, genre, age_range, coverHook, coverEssence)
+            logger.info(f"✅ Generated coverPrompt: {coverPrompt[:50] if coverPrompt else 'empty'}...")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate title/preview/coverPrompt: {e}")
+            import traceback
+            logger.warning(f"⚠️ Traceback: {traceback.format_exc()}")
+            # Fallback: extract title from first line
+            title_match = content.split('\n')[0].strip() if content else None
+            title = title_match[:120] if title_match else "Untitled Story"
+            preview = content[:200] + "..." if len(content) > 200 else content
         
         # Check if this is a default story by checking defaultStories collection
         is_default_story = False
@@ -138,10 +464,10 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
         story_data = {
             "title": title,
             "content": content,
-            "preview": "",  # Will be generated by worker if needed
-            "coverPrompt": "",  # Will be generated by worker if needed
-            "coverHook": "",
-            "coverEssence": "",
+            "preview": preview,
+            "coverPrompt": coverPrompt,
+            "coverHook": coverHook,
+            "coverEssence": coverEssence,
             "ageRange": age_range,
             "language": language,
             "promptVersion": "12-beat@2025-01-09",
@@ -171,6 +497,21 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
         story_ref.set(story_data, merge=True)
         
         logger.info(f"✅ Story {story_id} saved to Firestore ({'defaultStories' if is_default_story else 'stories'} collection)")
+        logger.info(f"📊 Story fields saved: title={title[:50]}..., preview={len(preview)} chars, coverPrompt={len(coverPrompt)} chars")
+        
+        # Log comprehensive story generation details
+        _log_story_generation_details(
+            story_id=story_id,
+            title=title,
+            content=content,
+            preview=preview,
+            coverPrompt=coverPrompt,
+            coverHook=coverHook,
+            coverEssence=coverEssence,
+            genre=genre,
+            age_range=age_range
+        )
+        
         return True
         
     except Exception as e:
@@ -600,16 +941,35 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         language = input_data.get("language")
         genre = input_data.get("genre")
         age_range = input_data.get("age_range")
+        
+        # Qwen3 is adult-oriented, not age-specific - use +18 as default
+        if genre and genre.lower() in ['qwen3', 'qwen']:
+            age_range = "+18"
+        
         user_id = input_data.get("user_id") or metadata.get("user_id")
         story_id = input_data.get("story_id") or metadata.get("story_id")
         callback_url = input_data.get("callback_url") or metadata.get("callback_url")
         
-        logger.info(f"📖 LLM generation request received")
+        logger.info("=" * 80)
+        logger.info(f"📖 LLM GENERATION REQUEST RECEIVED")
+        logger.info("=" * 80)
         logger.info(f"📊 Story ID: {story_id}")
         logger.info(f"👤 User ID: {user_id}")
         logger.info(f"📝 Messages count: {len(messages)}")
         logger.info(f"🌡️ Temperature: {temperature}")
         logger.info(f"🔢 Max tokens: {max_tokens}")
+        logger.info(f"🏷️ Genre: {genre}")
+        logger.info(f"👶 Age Range: {age_range}")
+        logger.info(f"🌍 Language: {language}")
+        
+        # Log message preview
+        if messages:
+            logger.info(f"📝 Message preview:")
+            for i, msg in enumerate(messages[:2], 1):  # Log first 2 messages
+                content_preview = msg.get("content", "")[:200] + "..." if len(msg.get("content", "")) > 200 else msg.get("content", "")
+                logger.info(f"   Message {i} ({msg.get('role', 'unknown')}): {content_preview}")
+            if len(messages) > 2:
+                logger.info(f"   ... and {len(messages) - 2} more messages")
         
         if not messages:
             raise ValueError("messages is required")
@@ -646,10 +1006,33 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             )
             
             # Generate
+            logger.info(f"⏳ Starting story generation (vLLM)...")
+            start_time = time.time()
             outputs = model_or_engine.generate([prompt], sampling_params)
             generated_text = outputs[0].outputs[0].text
+            generation_time = time.time() - start_time
+            
+            # Extract beats for logging
+            beats = _extract_beats(generated_text)
             
             logger.info(f"✅ Generated content length: {len(generated_text)} characters (vLLM)")
+            logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
+            logger.info(f"📊 Content statistics: {len(generated_text.split())} words, {len(generated_text)} chars")
+            logger.info(f"🎬 Beats detected: {len(beats)} beats")
+            
+            # Log content preview
+            content_preview = generated_text[:300] + "..." if len(generated_text) > 300 else generated_text
+            logger.info(f"📄 Generated content preview (first 300 chars):")
+            logger.info(f"   {content_preview}")
+            
+            # Log beats preview
+            if beats:
+                logger.info(f"🎬 Beats preview:")
+                for i, beat in enumerate(beats[:3], 1):  # Log first 3 beats
+                    beat_preview = beat[:150] + "..." if len(beat) > 150 else beat
+                    logger.info(f"   Beat {i} ({len(beat)} chars): {beat_preview}")
+                if len(beats) > 3:
+                    logger.info(f"   ... and {len(beats) - 3} more beats")
         else:
             # Use transformers/AutoAWQ API
             logger.info("🤖 Generating story content with transformers/AutoAWQ...")
@@ -683,7 +1066,26 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 skip_special_tokens=True
             )[0]
             
+            # Extract beats for logging
+            beats = _extract_beats(generated_text)
+            
             logger.info(f"✅ Generated content length: {len(generated_text)} characters (transformers/AutoAWQ)")
+            logger.info(f"📊 Content statistics: {len(generated_text.split())} words, {len(generated_text)} chars")
+            logger.info(f"🎬 Beats detected: {len(beats)} beats")
+            
+            # Log content preview
+            content_preview = generated_text[:300] + "..." if len(generated_text) > 300 else generated_text
+            logger.info(f"📄 Generated content preview (first 300 chars):")
+            logger.info(f"   {content_preview}")
+            
+            # Log beats preview
+            if beats:
+                logger.info(f"🎬 Beats preview:")
+                for i, beat in enumerate(beats[:3], 1):  # Log first 3 beats
+                    beat_preview = beat[:150] + "..." if len(beat) > 150 else beat
+                    logger.info(f"   Beat {i} ({len(beat)} chars): {beat_preview}")
+                if len(beats) > 3:
+                    logger.info(f"   ... and {len(beats) - 3} more beats")
         
         # Save story directly to Firestore
         if story_id and user_id:
