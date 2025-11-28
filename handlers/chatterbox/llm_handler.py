@@ -27,7 +27,7 @@ logging.basicConfig(level=_LOG_LEVEL)
 logger = logging.getLogger(__name__)
 logger.setLevel(_LOG_LEVEL)
 
-"""LLM handler for RunPod runtime using Qwen3-32B-AWQ model."""
+"""LLM handler for RunPod runtime using Qwen2.5-32B-Instruct-AWQ model."""
 
 # Model initialization (lazy loading)
 _vllm_engine = None  # vLLM engine (primary)
@@ -196,8 +196,8 @@ def _load_model():
         from pathlib import Path
         
         # Check for network volume path first
-        model_path = os.getenv("MODEL_PATH", "/runpod-volume/models/Qwen3-32B-AWQ")
-        model_name = os.getenv("MODEL_NAME", "Qwen3-32B-AWQ")  # Fallback model name
+        model_path = os.getenv("MODEL_PATH", "/runpod-volume/models/Qwen2.5-32B-Instruct-AWQ")
+        model_name = os.getenv("MODEL_NAME", "Qwen2.5-32B-Instruct-AWQ")  # Fallback model name
         
         _device = "cuda" if torch.cuda.is_available() else "cpu"
         

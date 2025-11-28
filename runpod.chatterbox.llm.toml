@@ -1,5 +1,5 @@
 name = "chatterbox-llm"
-description = "Chatterbox LLM Story Generation Handler (Qwen3-32B-AWQ with vLLM)"
+description = "Chatterbox LLM Story Generation Handler (Qwen2.5-32B-Instruct-AWQ with vLLM)"
 repository = "https://github.com/chrijaque/runpod_chatterbox"
 docker_image_name = "chatterbox-llm"
 docker_image_tag = "prod"
@@ -8,8 +8,8 @@ docker_image_tag = "prod"
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
 DAEZEND_API_SHARED_SECRET = "{{ DAEZEND_API_SHARED_SECRET }}"
 FIREBASE_SERVICE_ACCOUNT = "{{ FIREBASE_SERVICE_ACCOUNT }}"  # Firebase service account JSON
-MODEL_PATH = "/runpod-volume/models/Qwen3-32B-AWQ"  # Network volume path
-MODEL_NAME = "Qwen3-32B-AWQ"  # Fallback HuggingFace model if MODEL_PATH not found
+MODEL_PATH = "/runpod-volume/models/Qwen2.5-32B-Instruct-AWQ"  # Network volume path
+MODEL_NAME = "Qwen2.5-32B-Instruct-AWQ"  # Fallback HuggingFace model if MODEL_PATH not found
 CACHE_BUST = "prod-{{ timestamp }}"
 
 [build]
