@@ -179,8 +179,34 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         return False
 
+def _ensure_cuda_ready(max_retries=5, delay=2):
+    """Ensure CUDA is ready before loading model. Retry if device is busy."""
+    import torch
+    if not torch.cuda.is_available():
+        return False
+    
+    for attempt in range(max_retries):
+        try:
+            # Try to create a small tensor to check if CUDA is ready
+            test_tensor = torch.zeros(1).cuda()
+            del test_tensor
+            torch.cuda.synchronize()
+            logger.info(f"✅ CUDA is ready (attempt {attempt + 1})")
+            return True
+        except RuntimeError as e:
+            if "busy" in str(e).lower() or "unavailable" in str(e).lower():
+                if attempt < max_retries - 1:
+                    logger.warning(f"⚠️ CUDA device busy, waiting {delay}s before retry (attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"❌ CUDA device still busy after {max_retries} attempts")
+                    raise
+            else:
+                raise
+    return False
+
 def _load_model():
-    """Lazy load the model from network volume or HuggingFace using vLLM (primary) or AutoAWQ (fallback)."""
+    """Lazy load the model from network volume or HuggingFace using vLLM (primary method for AWQ models)."""
     global _vllm_engine, _model, _tokenizer, _device, _use_vllm
     
     # Return already loaded model
@@ -191,7 +217,7 @@ def _load_model():
             return _model, _tokenizer, _device
     
     try:
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
         import torch
         from pathlib import Path
         
@@ -200,6 +226,10 @@ def _load_model():
         model_name = os.getenv("MODEL_NAME", "Qwen2.5-32B-Instruct-AWQ")  # Fallback model name
         
         _device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Ensure CUDA is ready before attempting to load model
+        if _device == "cuda":
+            _ensure_cuda_ready()
         
         # Check if network volume path exists
         model_path_obj = Path(model_path)
@@ -225,65 +255,69 @@ def _load_model():
                 for f in model_files
             )
             
-            # Try vLLM first (primary method for AWQ models)
-            if VLLM_AVAILABLE and is_awq:
-                try:
-                    logger.info("🚀 Attempting to load model with vLLM (primary method)...")
-                    logger.info(f"📦 Loading AWQ model from {model_path} using vLLM...")
-                    
-                    _vllm_engine = LLM(
-                        model=model_path,
-                        quantization="awq",
-                        trust_remote_code=True,
-                        tensor_parallel_size=1,  # Adjust based on GPU count
-                        gpu_memory_utilization=0.9,  # Use 90% of GPU memory
-                    )
-                    
-                    # Load tokenizer separately for vLLM
-                    _tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-                    _use_vllm = True
-                    logger.info("✅ Model loaded successfully with vLLM")
-                    return _vllm_engine, _tokenizer, _device
-                    
-                except Exception as vllm_error:
-                    logger.warning(f"⚠️ vLLM loading failed: {vllm_error}")
-                    logger.info("🔄 Falling back to AutoAWQ...")
-                    # Continue to fallback
-            
-            # Fallback to AutoAWQ if vLLM failed or not available
+            # For AWQ models, vLLM is the only supported method (AutoAWQ is deprecated)
             if is_awq:
-                logger.info("🔧 Loading AWQ model with AutoAWQ (fallback)...")
-                # Load tokenizer from local path
-                logger.info(f"🔧 Loading tokenizer from {model_path}...")
-                _tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                if not VLLM_AVAILABLE:
+                    raise RuntimeError(
+                        "AWQ model requires vLLM, but vLLM is not available. "
+                        "Please ensure vLLM is installed in the container."
+                    )
                 
-                try:
-                    from awq import AutoAWQForCausalLM
-                    logger.info("✅ Using AutoAWQForCausalLM.from_quantized() for AWQ model")
-                    _model = AutoAWQForCausalLM.from_quantized(
-                        model_path,
-                        fuse_layers=True,
-                        trust_remote_code=True,
-                        device_map="auto" if _device == "cuda" else None,
-                    )
-                    _use_vllm = False
-                    logger.info("✅ AWQ model loaded successfully with AutoAWQ")
-                    return _model, _tokenizer, _device
-                except ImportError as e:
-                    logger.warning(f"⚠️ AutoAWQ not available ({e}), trying standard loading...")
-                    # Fallback to standard loading
-                    _model = AutoModelForCausalLM.from_pretrained(
-                        model_path,
-                        torch_dtype=torch.float16 if _device == "cuda" else torch.float32,
-                        device_map="auto" if _device == "cuda" else None,
-                        trust_remote_code=True,
-                    )
-                    _use_vllm = False
-                    logger.info("✅ Model loaded with standard transformers")
-                    return _model, _tokenizer, _device
-                except Exception as e:
-                    logger.error(f"❌ Failed to load AWQ model: {e}")
-                    raise
+                # Retry vLLM loading with exponential backoff for CUDA busy errors
+                max_retries = 3
+                base_delay = 5
+                
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(f"🚀 Attempting to load AWQ model with vLLM (attempt {attempt + 1}/{max_retries})...")
+                        logger.info(f"📦 Loading AWQ model from {model_path} using vLLM...")
+                        
+                        # Use awq_marlin quantization (as detected by vLLM automatically)
+                        # vLLM will automatically detect and use awq_marlin for compatible models
+                        _vllm_engine = LLM(
+                            model=model_path,
+                            quantization="awq",  # vLLM will auto-detect awq_marlin if compatible
+                            trust_remote_code=True,
+                            tensor_parallel_size=1,
+                            gpu_memory_utilization=0.85,  # Slightly lower to avoid OOM
+                            max_model_len=32768,  # Match Qwen2.5 context length
+                        )
+                        
+                        # Load tokenizer separately for vLLM
+                        _tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+                        _use_vllm = True
+                        logger.info("✅ AWQ model loaded successfully with vLLM")
+                        return _vllm_engine, _tokenizer, _device
+                        
+                    except RuntimeError as vllm_error:
+                        error_str = str(vllm_error).lower()
+                        if ("busy" in error_str or "unavailable" in error_str) and attempt < max_retries - 1:
+                            wait_time = base_delay * (2 ** attempt)
+                            logger.warning(f"⚠️ CUDA device busy, waiting {wait_time}s before retry...")
+                            time.sleep(wait_time)
+                            # Ensure CUDA is ready before retry
+                            if _device == "cuda":
+                                _ensure_cuda_ready()
+                            continue
+                        else:
+                            logger.error(f"❌ vLLM loading failed: {vllm_error}")
+                            if attempt == max_retries - 1:
+                                raise RuntimeError(
+                                    f"Failed to load AWQ model with vLLM after {max_retries} attempts. "
+                                    f"Last error: {vllm_error}. "
+                                    f"AutoAWQ fallback is not available (deprecated). "
+                                    f"Please ensure CUDA is available and the model path is correct."
+                                ) from vllm_error
+                    except Exception as vllm_error:
+                        logger.error(f"❌ vLLM loading failed: {vllm_error}")
+                        if attempt == max_retries - 1:
+                            raise RuntimeError(
+                                f"Failed to load AWQ model with vLLM after {max_retries} attempts. "
+                                f"Last error: {vllm_error}"
+                            ) from vllm_error
+                        wait_time = base_delay * (2 ** attempt)
+                        logger.warning(f"⚠️ Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
             else:
                 # Standard model loading (non-AWQ)
                 logger.info("🔧 Loading standard (non-AWQ) model...")
@@ -291,21 +325,44 @@ def _load_model():
                 
                 # Try vLLM for standard models too
                 if VLLM_AVAILABLE:
-                    try:
-                        logger.info("🚀 Attempting to load standard model with vLLM...")
-                        _vllm_engine = LLM(
-                            model=model_path,
-                            trust_remote_code=True,
-                            tensor_parallel_size=1,
-                            gpu_memory_utilization=0.9,
-                        )
-                        _use_vllm = True
-                        logger.info("✅ Standard model loaded successfully with vLLM")
-                        return _vllm_engine, _tokenizer, _device
-                    except Exception as e:
-                        logger.warning(f"⚠️ vLLM loading failed: {e}, falling back to transformers...")
+                    max_retries = 3
+                    base_delay = 5
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            logger.info(f"🚀 Attempting to load standard model with vLLM (attempt {attempt + 1}/{max_retries})...")
+                            _vllm_engine = LLM(
+                                model=model_path,
+                                trust_remote_code=True,
+                                tensor_parallel_size=1,
+                                gpu_memory_utilization=0.85,
+                            )
+                            _use_vllm = True
+                            logger.info("✅ Standard model loaded successfully with vLLM")
+                            return _vllm_engine, _tokenizer, _device
+                        except RuntimeError as e:
+                            error_str = str(e).lower()
+                            if ("busy" in error_str or "unavailable" in error_str) and attempt < max_retries - 1:
+                                wait_time = base_delay * (2 ** attempt)
+                                logger.warning(f"⚠️ CUDA device busy, waiting {wait_time}s before retry...")
+                                time.sleep(wait_time)
+                                if _device == "cuda":
+                                    _ensure_cuda_ready()
+                                continue
+                            else:
+                                logger.warning(f"⚠️ vLLM loading failed: {e}, falling back to transformers...")
+                                break
+                        except Exception as e:
+                            logger.warning(f"⚠️ vLLM loading failed: {e}, falling back to transformers...")
+                            if attempt < max_retries - 1:
+                                wait_time = base_delay * (2 ** attempt)
+                                time.sleep(wait_time)
+                            else:
+                                break
                 
-                # Fallback to transformers
+                # Fallback to transformers for non-AWQ models
+                from transformers import AutoModelForCausalLM
+                logger.info("🔧 Loading standard model with transformers...")
                 _model = AutoModelForCausalLM.from_pretrained(
                     model_path,
                     torch_dtype=torch.float16 if _device == "cuda" else torch.float32,
@@ -325,24 +382,67 @@ def _load_model():
             
             _tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
             
-            # Try vLLM first for HuggingFace models
+            # For HuggingFace models, try vLLM first (especially for AWQ models)
             if VLLM_AVAILABLE:
-                try:
-                    logger.info("🚀 Attempting to load HuggingFace model with vLLM...")
-                    _vllm_engine = LLM(
-                        model=model_name,
-                        quantization="awq" if "awq" in model_name.lower() else None,
-                        trust_remote_code=True,
-                        tensor_parallel_size=1,
-                        gpu_memory_utilization=0.9,
-                    )
-                    _use_vllm = True
-                    logger.info("✅ HuggingFace model loaded successfully with vLLM")
-                    return _vllm_engine, _tokenizer, _device
-                except Exception as e:
-                    logger.warning(f"⚠️ vLLM loading failed: {e}, falling back to transformers...")
+                is_awq_hf = "awq" in model_name.lower()
+                max_retries = 3
+                base_delay = 5
+                
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(f"🚀 Attempting to load HuggingFace model with vLLM (attempt {attempt + 1}/{max_retries})...")
+                        _vllm_engine = LLM(
+                            model=model_name,
+                            quantization="awq" if is_awq_hf else None,
+                            trust_remote_code=True,
+                            tensor_parallel_size=1,
+                            gpu_memory_utilization=0.85,
+                            max_model_len=32768 if is_awq_hf else None,
+                        )
+                        _use_vllm = True
+                        logger.info("✅ HuggingFace model loaded successfully with vLLM")
+                        return _vllm_engine, _tokenizer, _device
+                    except RuntimeError as e:
+                        error_str = str(e).lower()
+                        if ("busy" in error_str or "unavailable" in error_str) and attempt < max_retries - 1:
+                            wait_time = base_delay * (2 ** attempt)
+                            logger.warning(f"⚠️ CUDA device busy, waiting {wait_time}s before retry...")
+                            time.sleep(wait_time)
+                            if _device == "cuda":
+                                _ensure_cuda_ready()
+                            continue
+                        else:
+                            if attempt == max_retries - 1:
+                                if is_awq_hf:
+                                    raise RuntimeError(
+                                        f"Failed to load AWQ model from HuggingFace with vLLM after {max_retries} attempts. "
+                                        f"Last error: {e}. AutoAWQ fallback is not available (deprecated)."
+                                    ) from e
+                            logger.warning(f"⚠️ vLLM loading failed: {e}")
+                            break
+                    except Exception as e:
+                        logger.warning(f"⚠️ vLLM loading failed: {e}")
+                        if attempt == max_retries - 1 and is_awq_hf:
+                            raise RuntimeError(
+                                f"Failed to load AWQ model from HuggingFace with vLLM. "
+                                f"Error: {e}. AutoAWQ fallback is not available (deprecated)."
+                            ) from e
+                        if attempt < max_retries - 1:
+                            wait_time = base_delay * (2 ** attempt)
+                            time.sleep(wait_time)
+                        else:
+                            break
             
-            # Fallback to transformers
+            # Fallback to transformers only for non-AWQ models
+            if "awq" in model_name.lower():
+                raise RuntimeError(
+                    "AWQ models require vLLM. vLLM loading failed and AutoAWQ fallback is deprecated. "
+                    "Please ensure vLLM is properly installed and CUDA is available."
+                )
+            
+            # Only load non-AWQ models with transformers
+            from transformers import AutoModelForCausalLM
+            logger.info("🔧 Loading non-AWQ model with transformers...")
             _model = AutoModelForCausalLM.from_pretrained(
                 model_name,
                 torch_dtype=torch.float16 if _device == "cuda" else torch.float32,
