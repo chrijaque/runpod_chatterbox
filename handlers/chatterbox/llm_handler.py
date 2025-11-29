@@ -909,8 +909,8 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 if len(beats) > 3:
                     logger.info(f"   ... and {len(beats) - 3} more beats")
         
-        # Enforce character limit (11,000 max for Qwen3)
-        max_chars = 11000 if genre and genre.lower() in ['qwen3', 'qwen'] else 12000
+        # Enforce character limit (8,500 max for Qwen3)
+        max_chars = 8500 if genre and genre.lower() in ['qwen3', 'qwen'] else 12000
         if len(generated_text) > max_chars:
             logger.warning(f"⚠️ Story exceeds {max_chars} character limit ({len(generated_text)} chars), truncating...")
             # Try to truncate at a beat boundary
