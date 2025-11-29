@@ -451,7 +451,7 @@ class RunPodClient:
         self,
         messages: list,
         temperature: float = 0.7,
-        max_tokens: int = 4000,
+        max_tokens: int = 6000,
         language: Optional[str] = None,
         genre: Optional[str] = None,
         age_range: Optional[str] = None,
