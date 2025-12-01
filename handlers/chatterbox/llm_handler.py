@@ -734,7 +734,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         "input": {
             "messages": [{"role": "user", "content": "..."}, ...],
             "temperature": 0.7,
-            "max_tokens": 4000,
+            "max_tokens": 6000,
             "language": "English",
             "genre": "adventure",
             "age_range": "6-8",
@@ -761,7 +761,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         age_range = input_data.get("age_range")
         
         # Default to 3200 for Qwen3, 4000 for others
-        default_max_tokens = 3200 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
+        default_max_tokens = 6000 if genre and genre.lower() in ['qwen3', 'qwen'] else 6000
         max_tokens = input_data.get("max_tokens", default_max_tokens)
         
         # Qwen3 is adult-oriented, not age-specific - use +18 as default
