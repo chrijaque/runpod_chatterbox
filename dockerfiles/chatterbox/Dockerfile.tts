@@ -7,7 +7,7 @@ ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Optional HF token for private models (pass at build time)
+# Optional HF token for private models
 ARG HF_TOKEN=""
 
 # Setup environment for Hugging Face model cache baked into the image
