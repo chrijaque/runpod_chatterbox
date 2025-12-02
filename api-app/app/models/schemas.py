@@ -160,6 +160,10 @@ class LLMGenerateRequest(BaseModel):
     genre: Optional[str] = None
     age_range: Optional[str] = None
     callback_url: Optional[str] = None
+    # Two-step workflow support
+    workflow_type: Optional[str] = None  # 'two-step' or 'single-step'
+    outline_messages: Optional[List[Dict[str, str]]] = None
+    story_messages: Optional[List[Dict[str, str]]] = None
 
 class LLMGenerateResponse(BaseModel):
     status: str  # 'queued', 'success', 'error'

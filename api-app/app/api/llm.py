@@ -54,6 +54,9 @@ async def generate_story_llm(request: LLMGenerateRequest, http_req: Request):
             user_id=request.user_id,
             story_id=request.story_id,
             callback_url=(request.callback_url or default_cb),
+            workflow_type=request.workflow_type,
+            outline_messages=request.outline_messages,
+            story_messages=request.story_messages,
         )
         
         logger.info(f"✅ RunPod LLM call completed")

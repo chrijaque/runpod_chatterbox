@@ -705,6 +705,84 @@ def notify_success_callback(callback_url: str, story_id: str, content: str, **kw
         logger.error(f"❌ Failed to send success callback: {e}")
         return False
 
+def _generate_content(
+    messages: list,
+    model_or_engine,
+    tokenizer,
+    use_vllm: bool,
+    temperature: float,
+    max_tokens: int,
+    device: str
+) -> tuple[str, float]:
+    """
+    Helper function to generate content from messages.
+    Returns (generated_text, generation_time)
+    """
+    import torch
+    
+    # Format messages for Qwen model
+    formatted_messages = []
+    for msg in messages:
+        formatted_messages.append({
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", "")
+        })
+    
+    if use_vllm:
+        # Apply chat template
+        prompt = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        # Create sampling parameters
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            top_p=0.9,
+            max_tokens=max_tokens,
+        )
+        
+        # Generate
+        start_time = time.time()
+        outputs = model_or_engine.generate([prompt], sampling_params)
+        generated_text = outputs[0].outputs[0].text
+        generation_time = time.time() - start_time
+        
+        return generated_text, generation_time
+    else:
+        # Use transformers API
+        text = tokenizer.apply_chat_template(
+            formatted_messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        # Tokenize
+        model_inputs = tokenizer([text], return_tensors="pt")
+        # Move to device
+        model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+        
+        # Generate
+        start_time = time.time()
+        with torch.no_grad():
+            generated_ids = model_or_engine.generate(
+                **model_inputs,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                do_sample=True,
+                top_p=0.9,
+            )
+        
+        # Decode
+        generated_text = tokenizer.batch_decode(
+            generated_ids[:, model_inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True
+        )[0]
+        generation_time = time.time() - start_time
+        
+        return generated_text, generation_time
+
 def notify_error_callback(error_callback_url: str, story_id: str, error_message: str, **kwargs):
     """Send error callback to the main app when LLM generation fails."""
     payload = {
@@ -760,8 +838,19 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         genre = input_data.get("genre")
         age_range = input_data.get("age_range")
         
-        # Default to 3200 for Qwen3, 4000 for others
-        default_max_tokens = 6000 if genre and genre.lower() in ['qwen3', 'qwen'] else 6000
+        # Check for two-step workflow
+        workflow_type = input_data.get("workflow_type") or metadata.get("workflow_type")
+        outline_messages = input_data.get("outline_messages", [])
+        story_messages = input_data.get("story_messages", [])
+        needs_two_step = workflow_type == "two-step" or (outline_messages and story_messages)
+        
+        # Default max_tokens (only used for single-step workflow)
+        # For two-step workflow, we use hardcoded values: 2000 (outline) and 5000 (story)
+        # Token analysis:
+        # - Outline: ~475-725 tokens needed, 2000 is sufficient
+        # - Story: ~3,025-3,425 tokens needed, 5000 is safer
+        # - Single-step Qwen3: ~3,025-3,425 tokens needed, 4000 is tight but acceptable
+        default_max_tokens = 4000 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
         max_tokens = input_data.get("max_tokens", default_max_tokens)
         
         # Qwen3 is adult-oriented, not age-specific - use +18 as default
@@ -783,6 +872,16 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"🏷️ Genre: {genre}")
         logger.info(f"👶 Age Range: {age_range}")
         logger.info(f"🌍 Language: {language}")
+        logger.info(f"🔄 Two-step workflow: {needs_two_step}")
+        if needs_two_step:
+            logger.info(f"📝 Outline messages count: {len(outline_messages)}")
+            logger.info(f"📖 Story messages count: {len(story_messages)}")
+            if outline_messages:
+                outline_preview = outline_messages[0].get("content", "")[:200] + "..." if len(outline_messages[0].get("content", "")) > 200 else outline_messages[0].get("content", "")
+                logger.info(f"   Outline prompt preview: {outline_preview}")
+            if story_messages:
+                story_preview = story_messages[0].get("content", "")[:200] + "..." if len(story_messages[0].get("content", "")) > 200 else story_messages[0].get("content", "")
+                logger.info(f"   Story prompt preview: {story_preview}")
         
         # Log message preview
         if messages:
@@ -793,121 +892,126 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             if len(messages) > 2:
                 logger.info(f"   ... and {len(messages) - 2} more messages")
         
-        if not messages:
-            raise ValueError("messages is required")
+        if not messages and not needs_two_step:
+            raise ValueError("messages is required (or outline_messages + story_messages for two-step)")
         
         # Load model if not already loaded
         model_or_engine, tokenizer, device = _load_model()
         use_vllm = _use_vllm
         
-        # Format messages for Qwen model
-        formatted_messages = []
-        for msg in messages:
-            formatted_messages.append({
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", "")
-            })
+        # TWO-STEP WORKFLOW: Generate outline first, then story
+        if needs_two_step and outline_messages and story_messages:
+            logger.info("=" * 80)
+            logger.info("📝 STEP 1: Generating outline...")
+            logger.info("=" * 80)
+            
+            # Step 1: Generate outline
+            # Token analysis: ~475-725 tokens needed, 2000 is sufficient
+            outline_text, outline_time = _generate_content(
+                outline_messages,
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens=2000,  # Outline: system ~100-125 + user ~125-200 + output ~250-400 = ~475-725 total
+                device=device
+            )
+            
+            logger.info(f"✅ Generated outline ({len(outline_text)} chars) in {outline_time:.2f}s")
+            logger.info(f"📄 Outline preview: {outline_text[:200]}...")
+            
+            # Inject outline into story messages
+            logger.info("=" * 80)
+            logger.info("📖 STEP 2: Generating story from outline...")
+            logger.info("=" * 80)
+            
+            # Find user message in story_messages and inject outline
+            # Replace "STORY STRUCTURE:" fallback section if present, otherwise prepend outline
+            story_messages_with_outline = []
+            for msg in story_messages:
+                if msg.get("role") == "user":
+                    original_content = msg.get("content", "")
+                    msg_copy = msg.copy()
+                    
+                    # Check if content has "STORY STRUCTURE:" fallback section
+                    # If so, replace it with the actual outline
+                    if "STORY STRUCTURE:" in original_content:
+                        # Replace the fallback section with actual outline
+                        import re
+                        # Match "STORY STRUCTURE:" and everything until the next major section
+                        pattern = r'STORY STRUCTURE:.*?(?=\n\nSTORY REQUEST:|\n\nSTRICT REQUIREMENTS:|\Z)'
+                        replacement = f"STORY OUTLINE:\n{outline_text}\n\nFollow this outline exactly - each scene matches one outline step."
+                        updated_content = re.sub(pattern, replacement, original_content, flags=re.DOTALL)
+                        msg_copy["content"] = updated_content
+                        logger.info("✅ Replaced 'STORY STRUCTURE:' fallback with actual outline")
+                    else:
+                        # No fallback found, prepend outline
+                        msg_copy["content"] = f"STORY OUTLINE:\n{outline_text}\n\nFollow this outline exactly - each scene matches one outline step.\n\n{original_content}"
+                        logger.info("✅ Prepended outline to user message (no fallback found)")
+                    
+                    story_messages_with_outline.append(msg_copy)
+                else:
+                    story_messages_with_outline.append(msg)
+            
+            # Step 2: Generate story
+            # Token analysis: ~3,025-3,425 tokens needed, 5000 is safer
+            generated_text, story_time = _generate_content(
+                story_messages_with_outline,
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens=5000,  # Story: system ~150-175 + user ~375-750 + output ~2,500 = ~3,025-3,425 total
+                device=device
+            )
+            
+            generation_time = outline_time + story_time
+            logger.info(f"✅ Generated story ({len(generated_text)} chars) in {story_time:.2f}s")
+            logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
         
-        # Generate using vLLM or transformers/AutoAWQ
-        if use_vllm:
-            # Use vLLM API
-            logger.info("🚀 Generating story content with vLLM...")
-            
-            # Apply chat template
-            prompt = tokenizer.apply_chat_template(
-                formatted_messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            # Create sampling parameters
-            sampling_params = SamplingParams(
-                temperature=temperature,
-                top_p=0.9,
-                max_tokens=max_tokens,
-            )
-            
-            # Generate
-            logger.info(f"⏳ Starting story generation (vLLM)...")
-            start_time = time.time()
-            outputs = model_or_engine.generate([prompt], sampling_params)
-            generated_text = outputs[0].outputs[0].text
-            generation_time = time.time() - start_time
-            
-            # Extract beats for logging
-            beats = _extract_beats(generated_text)
-            
-            logger.info(f"✅ Generated content length: {len(generated_text)} characters (vLLM)")
-            logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
-            logger.info(f"📊 Content statistics: {len(generated_text.split())} words, {len(generated_text)} chars")
-            logger.info(f"🎬 Beats detected: {len(beats)} beats")
-            
-            # Log content preview
-            content_preview = generated_text[:300] + "..." if len(generated_text) > 300 else generated_text
-            logger.info(f"📄 Generated content preview (first 300 chars):")
-            logger.info(f"   {content_preview}")
-            
-            # Log beats preview
-            if beats:
-                logger.info(f"🎬 Beats preview:")
-                for i, beat in enumerate(beats[:3], 1):  # Log first 3 beats
-                    beat_preview = beat[:150] + "..." if len(beat) > 150 else beat
-                    logger.info(f"   Beat {i} ({len(beat)} chars): {beat_preview}")
-                if len(beats) > 3:
-                    logger.info(f"   ... and {len(beats) - 3} more beats")
+        # SINGLE-STEP WORKFLOW: Generate story directly
         else:
-            # Use transformers/AutoAWQ API
-            logger.info("🤖 Generating story content with transformers/AutoAWQ...")
-            import torch
+            # Format messages for Qwen model
+            formatted_messages = []
+            for msg in messages:
+                formatted_messages.append({
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", "")
+                })
             
-            # Apply chat template
-            text = tokenizer.apply_chat_template(
+            # Generate using vLLM or transformers/AutoAWQ
+            logger.info("🚀 Generating story content...")
+            generated_text, generation_time = _generate_content(
                 formatted_messages,
-                tokenize=False,
-                add_generation_prompt=True
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens,
+                device
             )
-            
-            # Tokenize
-            model_inputs = tokenizer([text], return_tensors="pt")
-            # Move to device
-            model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
-            
-            # Generate
-            with torch.no_grad():
-                generated_ids = model_or_engine.generate(
-                    **model_inputs,
-                    max_new_tokens=max_tokens,
-                    temperature=temperature,
-                    do_sample=True,
-                    top_p=0.9,
-                )
-            
-            # Decode
-            generated_text = tokenizer.batch_decode(
-                generated_ids[:, model_inputs["input_ids"].shape[1]:],
-                skip_special_tokens=True
-            )[0]
-            
-            # Extract beats for logging
-            beats = _extract_beats(generated_text)
-            
-            logger.info(f"✅ Generated content length: {len(generated_text)} characters (transformers/AutoAWQ)")
-            logger.info(f"📊 Content statistics: {len(generated_text.split())} words, {len(generated_text)} chars")
-            logger.info(f"🎬 Beats detected: {len(beats)} beats")
-            
-            # Log content preview
-            content_preview = generated_text[:300] + "..." if len(generated_text) > 300 else generated_text
-            logger.info(f"📄 Generated content preview (first 300 chars):")
-            logger.info(f"   {content_preview}")
-            
-            # Log beats preview
-            if beats:
-                logger.info(f"🎬 Beats preview:")
-                for i, beat in enumerate(beats[:3], 1):  # Log first 3 beats
-                    beat_preview = beat[:150] + "..." if len(beat) > 150 else beat
-                    logger.info(f"   Beat {i} ({len(beat)} chars): {beat_preview}")
-                if len(beats) > 3:
-                    logger.info(f"   ... and {len(beats) - 3} more beats")
+        
+        # Extract beats for logging (common for both workflows)
+        beats = _extract_beats(generated_text)
+        
+        logger.info(f"✅ Generated content length: {len(generated_text)} characters")
+        logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
+        logger.info(f"📊 Content statistics: {len(generated_text.split())} words, {len(generated_text)} chars")
+        logger.info(f"🎬 Beats detected: {len(beats)} beats")
+        
+        # Log content preview
+        content_preview = generated_text[:300] + "..." if len(generated_text) > 300 else generated_text
+        logger.info(f"📄 Generated content preview (first 300 chars):")
+        logger.info(f"   {content_preview}")
+        
+        # Log beats preview
+        if beats:
+            logger.info(f"🎬 Beats preview:")
+            for i, beat in enumerate(beats[:3], 1):  # Log first 3 beats
+                beat_preview = beat[:150] + "..." if len(beat) > 150 else beat
+                logger.info(f"   Beat {i} ({len(beat)} chars): {beat_preview}")
+            if len(beats) > 3:
+                logger.info(f"   ... and {len(beats) - 3} more beats")
         
         # Enforce character limit (8,500 max for Qwen3)
         max_chars = 8500 if genre and genre.lower() in ['qwen3', 'qwen'] else 12000

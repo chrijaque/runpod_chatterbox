@@ -457,7 +457,10 @@ class RunPodClient:
         age_range: Optional[str] = None,
         user_id: Optional[str] = None,
         story_id: Optional[str] = None,
-        callback_url: Optional[str] = None
+        callback_url: Optional[str] = None,
+        workflow_type: Optional[str] = None,
+        outline_messages: Optional[list] = None,
+        story_messages: Optional[list] = None
     ) -> Dict[str, Any]:
         """
         Generate LLM completion using RunPod Qwen 2.5 instruct model
@@ -501,6 +504,7 @@ class RunPodClient:
                     "genre": genre,
                     "age_range": age_range,
                     "callback_url": cb_url,
+                    "workflow_type": workflow_type,
                 },
                 "input": {
                     "messages": messages,
@@ -511,6 +515,9 @@ class RunPodClient:
                     "age_range": age_range,
                     "user_id": user_id,
                     "story_id": story_id,
+                    "workflow_type": workflow_type,
+                    "outline_messages": outline_messages,
+                    "story_messages": story_messages,
                     "metadata": {
                         "user_id": user_id,
                         "story_id": story_id,
@@ -518,6 +525,7 @@ class RunPodClient:
                         "genre": genre,
                         "age_range": age_range,
                         "callback_url": cb_url,
+                        "workflow_type": workflow_type,
                     },
                 }
             }
