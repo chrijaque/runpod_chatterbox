@@ -32,7 +32,13 @@ async def generate_story_llm(request: LLMGenerateRequest, http_req: Request):
     try:
         logger.info(f"📖 LLM story generation request received for story: {request.story_id}")
         logger.info(f"📊 Request details: language={request.language}, genre={request.genre}, age_range={request.age_range}")
-        logger.info(f"📝 Messages count: {len(request.messages)}")
+        
+        # Log message counts based on workflow type
+        is_two_step = request.workflow_type == "two-step" or (request.outline_messages and request.story_messages)
+        if is_two_step:
+            logger.info(f"📝 Two-step workflow: outline_messages={len(request.outline_messages) if request.outline_messages else 0}, story_messages={len(request.story_messages) if request.story_messages else 0}")
+        else:
+            logger.info(f"📝 Single-step workflow: messages count={len(request.messages) if request.messages else 0}")
         
         if not settings.LLM_CB_ENDPOINT_ID:
             raise HTTPException(status_code=500, detail="LLM endpoint not configured")
@@ -45,7 +51,7 @@ async def generate_story_llm(request: LLMGenerateRequest, http_req: Request):
             logger.warning("⚠️ PUBLIC_API_BASE_URL not set, using hardcoded fallback URL")
         
         result = runpod_client.generate_llm_completion(
-            messages=request.messages,
+            messages=request.messages or [],  # Use empty list if None (for two-step workflow)
             temperature=request.temperature,
             max_tokens=request.max_tokens,
             language=request.language,

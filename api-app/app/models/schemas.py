@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing import Optional, Dict, Any, List
 
 class VoiceCloneRequest(BaseModel):
@@ -153,7 +153,7 @@ class DebugResponse(BaseModel):
 class LLMGenerateRequest(BaseModel):
     user_id: str
     story_id: str
-    messages: List[Dict[str, str]]  # List of message dicts with 'role' and 'content'
+    messages: Optional[List[Dict[str, str]]] = None  # List of message dicts with 'role' and 'content' (required for single-step)
     temperature: float = 0.7
     max_tokens: int = 6000
     language: Optional[str] = None
@@ -164,6 +164,20 @@ class LLMGenerateRequest(BaseModel):
     workflow_type: Optional[str] = None  # 'two-step' or 'single-step'
     outline_messages: Optional[List[Dict[str, str]]] = None
     story_messages: Optional[List[Dict[str, str]]] = None
+    
+    @model_validator(mode='after')
+    def validate_messages(self):
+        """Validate that either messages OR (outline_messages AND story_messages) are provided."""
+        is_two_step = self.workflow_type == "two-step" or (self.outline_messages and self.story_messages)
+        
+        if is_two_step:
+            if not self.outline_messages or not self.story_messages:
+                raise ValueError("For two-step workflow, both outline_messages and story_messages are required")
+        else:
+            if not self.messages:
+                raise ValueError("messages is required for single-step workflow")
+        
+        return self
 
 class LLMGenerateResponse(BaseModel):
     status: str  # 'queued', 'success', 'error'
