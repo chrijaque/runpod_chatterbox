@@ -859,13 +859,14 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         needs_two_step = workflow_type == "two-step" or (outline_messages and story_messages)
         
         # Default max_tokens (only used for single-step workflow)
-        # For two-step workflow, we use hardcoded values: 2000 (outline) and 5000 (story)
+        # For two-step workflow, we use configurable values: outline_max_tokens (default 5000) and max_tokens (default 5000 for story)
         # Token analysis:
-        # - Outline: ~475-725 tokens needed, 2000 is sufficient
+        # - Outline: ~475-725 tokens needed, but can be longer with detailed beats, 5000 allows for expansion
         # - Story: ~3,025-3,425 tokens needed, 5000 is safer
         # - Single-step Qwen3: ~3,025-3,425 tokens needed, 4000 is tight but acceptable
         default_max_tokens = 4000 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
         max_tokens = input_data.get("max_tokens", default_max_tokens)
+        outline_max_tokens = input_data.get("outline_max_tokens", 5000)  # Default 5000 for beat creation
         
         # Qwen3 is adult-oriented, not age-specific - use +18 as default
         if genre and genre.lower() in ['qwen3', 'qwen']:
@@ -931,14 +932,14 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("=" * 80)
             
             # Step 1: Generate outline
-            # Token analysis: ~475-725 tokens needed, 2000 is sufficient
+            # Token analysis: ~475-725 tokens needed, but can be longer with detailed beats, 5000 allows for expansion
             outline_text, outline_time = _generate_content(
                 outline_messages,
                 model_or_engine,
                 tokenizer,
                 use_vllm,
                 temperature,
-                max_tokens=2000,  # Outline: system ~100-125 + user ~125-200 + output ~250-400 = ~475-725 total
+                max_tokens=outline_max_tokens,  # Configurable: default 5000 for detailed beat creation
                 device=device
             )
             

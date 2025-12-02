@@ -164,6 +164,7 @@ class LLMGenerateRequest(BaseModel):
     workflow_type: Optional[str] = None  # 'two-step' or 'single-step'
     outline_messages: Optional[List[Dict[str, str]]] = None
     story_messages: Optional[List[Dict[str, str]]] = None
+    outline_max_tokens: Optional[int] = 5000  # Max tokens for outline/beat generation (two-step workflow)
     
     @model_validator(mode='after')
     def validate_messages(self):
