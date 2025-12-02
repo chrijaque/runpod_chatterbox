@@ -736,6 +736,13 @@ def _generate_content(
             add_generation_prompt=True
         )
         
+        # Log the full formatted prompt that's sent to the model
+        logger.info("=" * 80)
+        logger.info("🤖 FULL FORMATTED PROMPT (after chat template):")
+        logger.info("=" * 80)
+        logger.info(prompt)
+        logger.info("=" * 80)
+        
         # Create sampling parameters
         sampling_params = SamplingParams(
             temperature=temperature,
@@ -757,6 +764,13 @@ def _generate_content(
             tokenize=False,
             add_generation_prompt=True
         )
+        
+        # Log the full formatted prompt that's sent to the model
+        logger.info("=" * 80)
+        logger.info("🤖 FULL FORMATTED PROMPT (after chat template):")
+        logger.info("=" * 80)
+        logger.info(text)
+        logger.info("=" * 80)
         
         # Tokenize
         model_inputs = tokenizer([text], return_tensors="pt")
@@ -877,20 +891,31 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             logger.info(f"📝 Outline messages count: {len(outline_messages)}")
             logger.info(f"📖 Story messages count: {len(story_messages)}")
             if outline_messages:
-                outline_preview = outline_messages[0].get("content", "")[:200] + "..." if len(outline_messages[0].get("content", "")) > 200 else outline_messages[0].get("content", "")
-                logger.info(f"   Outline prompt preview: {outline_preview}")
+                logger.info("=" * 80)
+                logger.info("📝 FULL OUTLINE PROMPT:")
+                logger.info("=" * 80)
+                for i, msg in enumerate(outline_messages, 1):
+                    logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
+                    logger.info(msg.get("content", ""))
+                logger.info("=" * 80)
             if story_messages:
-                story_preview = story_messages[0].get("content", "")[:200] + "..." if len(story_messages[0].get("content", "")) > 200 else story_messages[0].get("content", "")
-                logger.info(f"   Story prompt preview: {story_preview}")
+                logger.info("=" * 80)
+                logger.info("📖 FULL STORY PROMPT:")
+                logger.info("=" * 80)
+                for i, msg in enumerate(story_messages, 1):
+                    logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
+                    logger.info(msg.get("content", ""))
+                logger.info("=" * 80)
         
         # Log message preview
         if messages:
-            logger.info(f"📝 Message preview:")
-            for i, msg in enumerate(messages[:2], 1):  # Log first 2 messages
-                content_preview = msg.get("content", "")[:200] + "..." if len(msg.get("content", "")) > 200 else msg.get("content", "")
-                logger.info(f"   Message {i} ({msg.get('role', 'unknown')}): {content_preview}")
-            if len(messages) > 2:
-                logger.info(f"   ... and {len(messages) - 2} more messages")
+            logger.info("=" * 80)
+            logger.info("📝 FULL MESSAGES PROMPT:")
+            logger.info("=" * 80)
+            for i, msg in enumerate(messages, 1):
+                logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
+                logger.info(msg.get("content", ""))
+            logger.info("=" * 80)
         
         if not messages and not needs_two_step:
             raise ValueError("messages is required (or outline_messages + story_messages for two-step)")
