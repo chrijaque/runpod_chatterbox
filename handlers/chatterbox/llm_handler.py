@@ -1019,7 +1019,11 @@ You never over-expand any single section.
 
 You distribute additional detail evenly across the entire story.
 
-You maintain all scene breaks exactly as given."""
+You maintain all scene breaks exactly as given.
+
+CRITICAL: Preserve the beat labels ("Beat 1:", "Beat 2:", etc.) from the story below.
+
+CRITICAL: Preserve the \\n\\n⁂\\n\\n separators between beats."""
                 
                 expansion_user_prompt = f"""Expand the following story by adding:
 	•	more natural dialogue
@@ -1031,6 +1035,7 @@ You maintain all scene breaks exactly as given."""
 BUT:
 	•	Keep the original plot and sequence exactly the same
 	•	Keep all scene breaks (⁂) exactly where they are
+	•	Keep all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
 	•	Add only 30–40% more text overall, distributed evenly
 	•	Do not expand only the first scenes
 	•	Do not change POV, tense, or character roles
@@ -1087,6 +1092,9 @@ Here is the story to expand:
         
         # Extract beats for logging (common for both workflows)
         beats = _extract_beats(generated_text)
+        
+        # Remove beat labels before saving (they were only for tracking during generation)
+        generated_text = _remove_beat_labels(generated_text)
         
         logger.info(f"✅ Generated content length: {len(generated_text)} characters")
         logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
@@ -1244,6 +1252,29 @@ Here is the story to expand:
             "status": "error",
             "error": str(e)
         }
+
+def _remove_beat_labels(content: str) -> str:
+    """Remove beat labels (e.g., 'Beat 1:', 'Beat 2:', etc.) from story content while preserving separators."""
+    import re
+    # Pattern to match beat labels at the start of lines: "Beat 1:", "Beat 2:", "### Beat 1:", etc.
+    # Also handles variations like "Beat 1", "Beat1:", etc.
+    beat_label_pattern = r'^(?:###\s*)?Beat\s*\d+\s*:\s*'
+    
+    lines = content.split('\n')
+    cleaned_lines = []
+    
+    for line in lines:
+        # Remove beat label if present
+        cleaned_line = re.sub(beat_label_pattern, '', line, flags=re.IGNORECASE | re.MULTILINE)
+        cleaned_lines.append(cleaned_line)
+    
+    cleaned_content = '\n'.join(cleaned_lines)
+    
+    # Also handle cases where beat labels might be on the same line as content
+    # Pattern: "Beat 1: content" -> "content"
+    cleaned_content = re.sub(r'(?:###\s*)?Beat\s*\d+\s*:\s*', '', cleaned_content, flags=re.IGNORECASE)
+    
+    return cleaned_content
 
 if __name__ == '__main__':
     logger.info("🚀 LLM Handler starting...")
