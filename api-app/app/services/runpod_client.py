@@ -461,7 +461,9 @@ class RunPodClient:
         workflow_type: Optional[str] = None,
         outline_messages: Optional[list] = None,
         story_messages: Optional[list] = None,
-        outline_max_tokens: Optional[int] = None
+        outline_max_tokens: Optional[int] = None,
+        expansion_max_tokens: Optional[int] = None,
+        mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate LLM completion using RunPod Qwen 2.5 instruct model
@@ -520,6 +522,8 @@ class RunPodClient:
                     "outline_messages": outline_messages,
                     "story_messages": story_messages,
                     "outline_max_tokens": outline_max_tokens,
+                    "expansion_max_tokens": expansion_max_tokens,
+                    "mode": mode,
                     "metadata": {
                         "user_id": user_id,
                         "story_id": story_id,

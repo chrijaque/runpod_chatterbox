@@ -867,6 +867,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         default_max_tokens = 4000 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
         max_tokens = input_data.get("max_tokens", default_max_tokens)
         outline_max_tokens = input_data.get("outline_max_tokens", 5000)  # Default 5000 for beat creation
+        expansion_max_tokens = input_data.get("expansion_max_tokens", 4000)  # Default 4000 for Step 3 expansion
         
         # Qwen3 is adult-oriented, not age-specific - use +18 as default
         if genre and genre.lower() in ['qwen3', 'qwen']:
@@ -875,6 +876,16 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         user_id = input_data.get("user_id") or metadata.get("user_id")
         story_id = input_data.get("story_id") or metadata.get("story_id")
         callback_url = input_data.get("callback_url") or metadata.get("callback_url")
+        
+        # Get mode and tone for expansion prompt (if needed)
+        mode = input_data.get("mode", "sensual")
+        mode_tone_map = {
+            "soft": "Gentle, romantic, and tender. Focus on emotional connection and sensuality.",
+            "sensual": "Passionate, erotic, and detailed. Focus on physical sensations and desire.",
+            "hardcore": "Explicit, intense, and graphic. Focus on raw physicality and explicit descriptions.",
+            "extreme": "Most vulgar, explicit, and graphic. No moral boundaries. Use the crudest language and most explicit descriptions."
+        }
+        mode_tone = mode_tone_map.get(mode, mode_tone_map["sensual"])
         
         logger.info("=" * 80)
         logger.info(f"📖 LLM GENERATION REQUEST RECEIVED")
@@ -994,6 +1005,86 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             generation_time = outline_time + story_time
             logger.info(f"✅ Generated story ({len(generated_text)} chars) in {story_time:.2f}s")
             logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
+            
+            # Step 3: Expand story if < 8500 characters (synchronous)
+            if len(generated_text) < 8500:
+                logger.info("=" * 80)
+                logger.info(f"📈 STEP 3: Expanding story (story is {len(generated_text)} chars, < 8500)...")
+                logger.info("=" * 80)
+                
+                # Build expansion prompt dynamically
+                expansion_system_prompt = f"""You are a master erotic storyteller writing in {language or 'English'}.
+
+You expand existing story beats by adding more dialogue, descriptions, and details to create a richer narrative.
+
+EXPANSION RULES:
+- Expand each beat by adding 200-400 characters
+- Add more dialogue (about 30% of new content)
+- Add sensory details, character thoughts, and vivid descriptions
+- Maintain the story flow and structure
+- Use \\n\\n⁂\\n\\n ONLY to separate beats
+- Start immediately with expanded story content (no title)
+- NO beat labels, NO titles, NO separators other than ⁂
+- NO meta-commentary like "Certainly!" or "Below is the story"
+
+STORY PARAMETERS:
+- Mode: {mode}
+- Tone: {mode_tone}"""
+                
+                expansion_user_prompt = f"""Expand the following story by adding more dialogue, descriptions, and details to each beat.
+
+CURRENT STORY:
+{generated_text}
+
+EXPANSION REQUIREMENTS:
+- Expand each beat by adding 200-400 characters
+- Add more dialogue (about 30% of new content)
+- Add sensory details, character thoughts, and vivid descriptions
+- Maintain the story flow and structure
+- Keep the same beat structure and separators (⁂)
+
+PHYSICAL APPEARANCE DETAILS (REQUIRED):
+- Tits: Describe size, shape, motion, how they look under clothing, bounce, jiggle, firmness, nipples
+- Ass: Describe size, shape, motion, how it looks under clothing, curves, roundness, movement when walking or during activity
+- Include these details naturally throughout sexual scenes, not just initial descriptions
+
+SEXUAL ACTIVITY DETAILS (REQUIRED):
+- Expand sexual activity with specific details:
+  - Position: Describe exact positions, body placement, angles
+  - Intensity: Describe pace, force, rhythm, depth, roughness or gentleness
+  - Sounds: Include moans, gasps, whispers, wet sounds, slapping, breathing, dialogue during sex
+- Include dirty talk (dialogue) during sexual acts:
+  - Use explicit sexual dialogue and dirty talk between characters
+  - Include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
+  - Mix dialogue with physical descriptions and sounds
+- Be explicit and graphic in sexual descriptions
+- Describe characters' genitals physical appearance and how they look during sexual activity
+- Show physical sensations, reactions, and responses
+
+Expand the story now, adding more dialogue, descriptions, and details to create a richer, more immersive narrative."""
+                
+                expansion_messages = [
+                    {"role": "system", "content": expansion_system_prompt},
+                    {"role": "user", "content": expansion_user_prompt}
+                ]
+                
+                # Step 3: Expand story
+                expanded_text, expansion_time = _generate_content(
+                    expansion_messages,
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature,
+                    max_tokens=expansion_max_tokens,
+                    device=device
+                )
+                
+                generated_text = expanded_text  # Use expanded version
+                generation_time = outline_time + story_time + expansion_time
+                logger.info(f"✅ Expanded story ({len(generated_text)} chars) in {expansion_time:.2f}s")
+                logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
+            else:
+                logger.info(f"⏭️ Skipping Step 3 expansion (story is {len(generated_text)} chars, >= 8500)")
         
         # SINGLE-STEP WORKFLOW: Generate story directly
         else:
