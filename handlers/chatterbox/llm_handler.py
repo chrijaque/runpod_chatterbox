@@ -1013,39 +1013,32 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 logger.info("=" * 80)
                 
                 # Build expansion prompt dynamically
-                expansion_system_prompt = f"""You are a master erotic storyteller writing in {language or 'English'}.
+                expansion_system_prompt = f"""You're an award winning editor. You rewrite stories while preserving structure, pacing, and narrative balance.
 
-You expand existing story beats by adding more dialogue, descriptions, and details to create a richer narrative.
+You never over-expand any single section.
 
-EXPANSION RULES:
-- Expand each beat by adding 200-400 characters
-- Add sensory details, character thoughts, and vivid descriptions
-- Add more dialogue
-- Maintain the story flow and structure
-- Use \\n\\n⁂\\n\\n ONLY to separate beats
-- Start immediately with expanded story content (no title)
-- NO beat labels, NO titles, NO separators other than ⁂
-- NO meta-commentary like "Certainly!" or "Below is the story"
+You distribute additional detail evenly across the entire story.
 
-STORY PARAMETERS:
-- Mode: {mode}
-- Tone: {mode_tone}"""
+You maintain all scene breaks exactly as given."""
                 
-                expansion_user_prompt = f"""Add more dialogue, descriptions, and details to create a richer narrative to each beat.
+                expansion_user_prompt = f"""Expand the following story by adding:
+	•	more natural dialogue
+	•	richer sensory descriptions
+	•	deeper emotional reactions
+	•	more specific physical detail
+	•	smoother transitions
 
-CURRENT STORY:
-{generated_text}
+BUT:
+	•	Keep the original plot and sequence exactly the same
+	•	Keep all scene breaks (⁂) exactly where they are
+	•	Add only 30–40% more text overall, distributed evenly
+	•	Do not expand only the first scenes
+	•	Do not change POV, tense, or character roles
+	•	Do not add new plot events
 
-EXPANSION RULES:
-- Expand each beat by adding 200-400 characters
-- Add sensory details, character thoughts, and vivid descriptions
-- Add more dialogue
-- Maintain the story flow and structure
-- Include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
-- Position: Describe exact positions, body placement, angles
-- Intensity: Describe pace, force, rhythm, depth, roughness or gentleness
+Here is the story to expand:
 
-Expand the story now, adding more dialogue, descriptions, and details to create a richer, more immersive narrative."""
+{generated_text}"""
                 
                 expansion_messages = [
                     {"role": "system", "content": expansion_system_prompt},
