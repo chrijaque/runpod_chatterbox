@@ -845,6 +845,12 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         input_data = event.get("input", {})
         metadata = event.get("metadata", {})
         
+        # Extract callback_url early and log it
+        callback_url = input_data.get("callback_url") or metadata.get("callback_url")
+        logger.info(f"🔔 Callback URL received: {callback_url if callback_url else 'NOT PROVIDED'}")
+        logger.info(f"📋 Input data keys: {list(input_data.keys())}")
+        logger.info(f"📋 Metadata keys: {list(metadata.keys())}")
+        
         # Extract parameters
         messages = input_data.get("messages", [])
         temperature = input_data.get("temperature", 0.7)
@@ -868,6 +874,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         max_tokens = input_data.get("max_tokens", default_max_tokens)
         outline_max_tokens = input_data.get("outline_max_tokens", 5000)  # Default 5000 for beat creation
         expansion_max_tokens = input_data.get("expansion_max_tokens", 4000)  # Default 4000 for Step 3 expansion
+        finetune_max_tokens = input_data.get("finetune_max_tokens", 4000)  # Default 4000 for Step 4 finetuning
         
         # Qwen3 is adult-oriented, not age-specific - use +18 as default
         if genre and genre.lower() in ['qwen3', 'qwen']:
@@ -1067,6 +1074,67 @@ Here is the story to expand:
                 logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
             else:
                 logger.info(f"⏭️ Skipping Step 3 expansion (story is {len(generated_text)} chars, >= 8500)")
+            
+            # Step 4: Finetune story - rewrite duplicated dialogue and descriptions
+            logger.info("=" * 80)
+            logger.info("✨ STEP 4: Finetuning story (rewriting duplicated dialogue and descriptions)...")
+            logger.info("=" * 80)
+            
+            # Build finetune prompt dynamically
+            finetune_system_prompt = f"""You're an expert editor specializing in refining narrative prose. Your task is to improve story quality by rewriting duplicated or repetitive dialogue and descriptions.
+
+CRITICAL RULES:
+- DO NOT change or remove any content - only rewrite to make it better
+- DO NOT change the plot, sequence, or story structure
+- DO NOT change character names, actions, or events
+- DO NOT add new content or remove existing content
+- Preserve all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
+- Preserve all \\n\\n⁂\\n\\n separators between beats exactly as they are
+- Only rewrite duplicated dialogue and descriptions to make them more varied and engaging
+- Maintain the same meaning and context when rewriting
+- Keep the same length approximately (don't significantly expand or contract)"""
+            
+            finetune_user_prompt = f"""Rewrite the following story to improve quality by fixing duplicated dialogue and descriptions.
+
+Your task:
+- Identify repeated phrases, dialogue patterns, or descriptions that appear multiple times
+- Rewrite them to be more varied while keeping the same meaning
+- Make dialogue more natural and less repetitive
+- Vary descriptive language to avoid repetition
+- Improve flow and readability without changing the story
+
+CRITICAL CONSTRAINTS:
+- Keep the original plot and sequence exactly the same
+- Keep all scene breaks (⁂) exactly where they are
+- Keep all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
+- Do NOT change POV, tense, or character roles
+- Do NOT add new plot events or remove existing ones
+- Only rewrite duplicated/repetitive content - everything else stays the same
+
+Here is the story to finetune:
+
+{generated_text}"""
+            
+            finetune_messages = [
+                {"role": "system", "content": finetune_system_prompt},
+                {"role": "user", "content": finetune_user_prompt}
+            ]
+            
+            # Step 4: Finetune story
+            finetuned_text, finetune_time = _generate_content(
+                finetune_messages,
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens=finetune_max_tokens,
+                device=device
+            )
+            
+            generated_text = finetuned_text  # Use finetuned version
+            generation_time = generation_time + finetune_time
+            logger.info(f"✅ Finetuned story ({len(generated_text)} chars) in {finetune_time:.2f}s")
+            logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
         
         # SINGLE-STEP WORKFLOW: Generate story directly
         else:
@@ -1095,6 +1163,9 @@ Here is the story to expand:
         
         # Remove beat labels before saving (they were only for tracking during generation)
         generated_text = _remove_beat_labels(generated_text)
+        
+        # Remove trailing separators (⁂) so we only have clean story content
+        generated_text = _remove_trailing_separators(generated_text)
         
         logger.info(f"✅ Generated content length: {len(generated_text)} characters")
         logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
@@ -1275,6 +1346,19 @@ def _remove_beat_labels(content: str) -> str:
     cleaned_content = re.sub(r'(?:###\s*)?Beat\s*\d+\s*:\s*', '', cleaned_content, flags=re.IGNORECASE)
     
     return cleaned_content
+
+def _remove_trailing_separators(content: str) -> str:
+    """Remove trailing separator pattern (\n\n⁂\n\n) from the end of story content."""
+    # Simply remove the exact separator pattern from the end
+    if content.endswith('\n\n⁂\n\n'):
+        content = content[:-7]  # Remove exactly 7 characters: '\n\n⁂\n\n'
+    
+    # Also handle cases where there might be extra whitespace after the separator
+    content = content.rstrip()
+    if content.endswith('\n\n⁂\n\n'):
+        content = content[:-7]
+    
+    return content
 
 if __name__ == '__main__':
     logger.info("🚀 LLM Handler starting...")

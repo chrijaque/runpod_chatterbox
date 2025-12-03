@@ -463,6 +463,7 @@ class RunPodClient:
         story_messages: Optional[list] = None,
         outline_max_tokens: Optional[int] = None,
         expansion_max_tokens: Optional[int] = None,
+        finetune_max_tokens: Optional[int] = None,
         mode: Optional[str] = None
     ) -> Dict[str, Any]:
         """
@@ -488,6 +489,8 @@ class RunPodClient:
             
             # Canonicalize callback_url host to www.daezend.app (avoid 307)
             cb_url = callback_url
+            logger.info(f"🔔 Callback URL received in RunPod client: {cb_url}")
+            logger.info(f"🔔 Story ID: {story_id}, User ID: {user_id}")
             if cb_url:
                 try:
                     p = urlparse(cb_url)
@@ -496,8 +499,11 @@ class RunPodClient:
                     if netloc == 'daezend.app':
                         netloc = 'www.daezend.app'
                     cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
-                except Exception:
-                    pass
+                    logger.info(f"🔔 Callback URL canonicalized: {cb_url}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to canonicalize callback URL: {e}")
+            else:
+                logger.warning("⚠️ No callback URL provided to RunPod client - will use default from API app")
             
             payload = {
                 "metadata": {
@@ -523,6 +529,7 @@ class RunPodClient:
                     "story_messages": story_messages,
                     "outline_max_tokens": outline_max_tokens,
                     "expansion_max_tokens": expansion_max_tokens,
+                    "finetune_max_tokens": finetune_max_tokens,
                     "mode": mode,
                     "metadata": {
                         "user_id": user_id,

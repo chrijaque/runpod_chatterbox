@@ -166,6 +166,7 @@ class LLMGenerateRequest(BaseModel):
     story_messages: Optional[List[Dict[str, str]]] = None
     outline_max_tokens: Optional[int] = 5000  # Max tokens for outline/beat generation (two-step workflow)
     expansion_max_tokens: Optional[int] = 4000  # Max tokens for Step 3 expansion (if story < 8500 chars)
+    finetune_max_tokens: Optional[int] = 4000  # Max tokens for Step 4 finetuning (rewrite duplicated dialogue/descriptions)
     mode: Optional[str] = "sensual"  # NSFW mode for tone (soft, sensual, hardcore, extreme)
     
     @model_validator(mode='after')
