@@ -852,7 +852,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         genre = input_data.get("genre")
         age_range = input_data.get("age_range")
         
-        # Check for two-step workflow
+        # Check for two step workflow
         workflow_type = input_data.get("workflow_type") or metadata.get("workflow_type")
         outline_messages = input_data.get("outline_messages", [])
         story_messages = input_data.get("story_messages", [])
