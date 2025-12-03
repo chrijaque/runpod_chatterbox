@@ -1019,8 +1019,8 @@ You expand existing story beats by adding more dialogue, descriptions, and detai
 
 EXPANSION RULES:
 - Expand each beat by adding 200-400 characters
-- Add more dialogue (about 30% of new content)
 - Add sensory details, character thoughts, and vivid descriptions
+- Add more dialogue
 - Maintain the story flow and structure
 - Use \\n\\n⁂\\n\\n ONLY to separate beats
 - Start immediately with expanded story content (no title)
@@ -1031,35 +1031,19 @@ STORY PARAMETERS:
 - Mode: {mode}
 - Tone: {mode_tone}"""
                 
-                expansion_user_prompt = f"""Expand the following story by adding more dialogue, descriptions, and details to each beat.
+                expansion_user_prompt = f"""Add more dialogue, descriptions, and details to create a richer narrative to each beat.
 
 CURRENT STORY:
 {generated_text}
 
-EXPANSION REQUIREMENTS:
+EXPANSION RULES:
 - Expand each beat by adding 200-400 characters
-- Add more dialogue (about 30% of new content)
 - Add sensory details, character thoughts, and vivid descriptions
+- Add more dialogue
 - Maintain the story flow and structure
-- Keep the same beat structure and separators (⁂)
-
-PHYSICAL APPEARANCE DETAILS (REQUIRED):
-- Tits: Describe size, shape, motion, how they look under clothing, bounce, jiggle, firmness, nipples
-- Ass: Describe size, shape, motion, how it looks under clothing, curves, roundness, movement when walking or during activity
-- Include these details naturally throughout sexual scenes, not just initial descriptions
-
-SEXUAL ACTIVITY DETAILS (REQUIRED):
-- Expand sexual activity with specific details:
-  - Position: Describe exact positions, body placement, angles
-  - Intensity: Describe pace, force, rhythm, depth, roughness or gentleness
-  - Sounds: Include moans, gasps, whispers, wet sounds, slapping, breathing, dialogue during sex
-- Include dirty talk (dialogue) during sexual acts:
-  - Use explicit sexual dialogue and dirty talk between characters
-  - Include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
-  - Mix dialogue with physical descriptions and sounds
-- Be explicit and graphic in sexual descriptions
-- Describe characters' genitals physical appearance and how they look during sexual activity
-- Show physical sensations, reactions, and responses
+- Include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
+- Position: Describe exact positions, body placement, angles
+- Intensity: Describe pace, force, rhythm, depth, roughness or gentleness
 
 Expand the story now, adding more dialogue, descriptions, and details to create a richer, more immersive narrative."""
                 
