@@ -1081,35 +1081,34 @@ Here is the story to expand:
             logger.info("=" * 80)
             
             # Build finetune prompt dynamically
-            finetune_system_prompt = f"""You're an expert editor specializing in refining narrative prose. Your task is to improve story quality by rewriting duplicated or repetitive dialogue and descriptions.
+            finetune_system_prompt = f"""You're an expert editor specializing in refining narrative prose. Your task is to improve story quality by rewriting duplicated, flat or repetitive dialogue and descriptions.
 
 CRITICAL RULES:
-- DO NOT change or remove any content - only rewrite to make it better
+- DO NOT change or remove any content
 - DO NOT change the plot, sequence, or story structure
 - DO NOT change character names, actions, or events
 - DO NOT add new content or remove existing content
 - Preserve all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
 - Preserve all \\n\\n⁂\\n\\n separators between beats exactly as they are
 - Only rewrite duplicated dialogue and descriptions to make them more varied and engaging
-- Maintain the same meaning and context when rewriting
-- Keep the same length approximately (don't significantly expand or contract)"""
+- Maintain the same meaning and context when rewriting"""
             
-            finetune_user_prompt = f"""Rewrite the following story to improve quality by fixing duplicated dialogue and descriptions.
+            finetune_user_prompt = f"""Rewrite the following story to improve quality by nuancing dialogue and descriptions.
 
 Your task:
 - Identify repeated phrases, dialogue patterns, or descriptions that appear multiple times
 - Rewrite them to be more varied while keeping the same meaning
 - Make dialogue more natural and less repetitive
 - Vary descriptive language to avoid repetition
-- Improve flow and readability without changing the story
+- Include dirty talk (dialogue) during sexual acts:
+  - Use explicit sexual dialogue and dirty talk between characters
+  - Include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
+  - Mix dialogue with physical descriptions and sounds
 
 CRITICAL CONSTRAINTS:
-- Keep the original plot and sequence exactly the same
 - Keep all scene breaks (⁂) exactly where they are
 - Keep all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
 - Do NOT change POV, tense, or character roles
-- Do NOT add new plot events or remove existing ones
-- Only rewrite duplicated/repetitive content - everything else stays the same
 
 Here is the story to finetune:
 
@@ -1161,11 +1160,8 @@ Here is the story to finetune:
         # Extract beats for logging (common for both workflows)
         beats = _extract_beats(generated_text)
         
-        # Remove beat labels before saving (they were only for tracking during generation)
-        generated_text = _remove_beat_labels(generated_text)
-        
-        # Remove trailing separators (⁂) so we only have clean story content
-        generated_text = _remove_trailing_separators(generated_text)
+        # Clean story content: remove beat labels, separators, and unwanted formatting
+        generated_text = clean_story(generated_text)
         
         logger.info(f"✅ Generated content length: {len(generated_text)} characters")
         logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
@@ -1324,41 +1320,33 @@ Here is the story to finetune:
             "error": str(e)
         }
 
-def _remove_beat_labels(content: str) -> str:
-    """Remove beat labels (e.g., 'Beat 1:', 'Beat 2:', etc.) from story content while preserving separators."""
+def clean_story(text: str) -> str:
+    """
+    Clean story content by removing beat labels, separators, and unwanted formatting.
+    This is the standard production solution for story-cleanup pipelines.
+    
+    Removes:
+    - "⁂" dividers with surrounding whitespace
+    - Beat labels like "Beat 8:", "Beat '8:", etc.
+    - Accidental escaped newlines like "\\n"
+    - Excessive blank lines (collapses to max 2 consecutive newlines)
+    """
     import re
-    # Pattern to match beat labels at the start of lines: "Beat 1:", "Beat 2:", "### Beat 1:", etc.
-    # Also handles variations like "Beat 1", "Beat1:", etc.
-    beat_label_pattern = r'^(?:###\s*)?Beat\s*\d+\s*:\s*'
     
-    lines = content.split('\n')
-    cleaned_lines = []
+    # Remove "⁂" dividers with surrounding whitespace
+    text = re.sub(r'\s*[⁂]+\s*', '\n\n', text, flags=re.MULTILINE)
     
-    for line in lines:
-        # Remove beat label if present
-        cleaned_line = re.sub(beat_label_pattern, '', line, flags=re.IGNORECASE | re.MULTILINE)
-        cleaned_lines.append(cleaned_line)
+    # Remove Beat labels like: Beat '8:, Beat 8:, etc.
+    text = re.sub(r"Beat\s*['\"]?\d+['\"]?:?", '', text, flags=re.IGNORECASE)
     
-    cleaned_content = '\n'.join(cleaned_lines)
+    # Remove accidental escaped newlines like "\n\n"
+    text = text.replace('\\n', '\n')
     
-    # Also handle cases where beat labels might be on the same line as content
-    # Pattern: "Beat 1: content" -> "content"
-    cleaned_content = re.sub(r'(?:###\s*)?Beat\s*\d+\s*:\s*', '', cleaned_content, flags=re.IGNORECASE)
+    # Collapse too many blank lines (max 2 consecutive newlines)
+    text = re.sub(r'\n{3,}', '\n\n', text)
     
-    return cleaned_content
-
-def _remove_trailing_separators(content: str) -> str:
-    """Remove trailing separator pattern (\n\n⁂\n\n) from the end of story content."""
-    # Simply remove the exact separator pattern from the end
-    if content.endswith('\n\n⁂\n\n'):
-        content = content[:-7]  # Remove exactly 7 characters: '\n\n⁂\n\n'
-    
-    # Also handle cases where there might be extra whitespace after the separator
-    content = content.rstrip()
-    if content.endswith('\n\n⁂\n\n'):
-        content = content[:-7]
-    
-    return content
+    # Trim leading/trailing whitespace
+    return text.strip()
 
 if __name__ == '__main__':
     logger.info("🚀 LLM Handler starting...")
