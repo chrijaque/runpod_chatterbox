@@ -163,12 +163,12 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
         
         try:
             # Default callback_url if none provided
-            if settings.PUBLIC_API_BASE_URL:
-                default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/tts/callback"
+            if settings.MINSTRALY_CALLBACK_BASE_URL:
+                default_cb = settings.MINSTRALY_CALLBACK_BASE_URL.rstrip("/") + "/api/tts/callback"
             else:
-                # Fallback to the known public URL if PUBLIC_API_BASE_URL is not set
+                # Fallback to the known public URL if MINSTRALY_CALLBACK_BASE_URL is not set
                 default_cb = "https://runpod-chatterbox.fly.dev/api/tts/callback"
-                logger.warning("⚠️ PUBLIC_API_BASE_URL not set, using hardcoded fallback URL")
+                logger.warning("⚠️ MINSTRALY_CALLBACK_BASE_URL not set, using hardcoded fallback URL")
 
             result = runpod_client.generate_tts_with_context(
                 voice_id=request.voice_id,

@@ -6,7 +6,7 @@ docker_image_tag = "prod"
 
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
-DAEZEND_API_SHARED_SECRET = "{{ DAEZEND_API_SHARED_SECRET }}"
+MINSTRALY_API_SHARED_SECRET = "{{ MINSTRALY_API_SHARED_SECRET }}"
 FIREBASE_SERVICE_ACCOUNT = "{{ FIREBASE_SERVICE_ACCOUNT }}"  # Firebase service account JSON
 MODEL_PATH = "/runpod-volume/models/Qwen2.5-32B-Instruct-AWQ"  # Network volume path
 MODEL_NAME = "Qwen2.5-32B-Instruct-AWQ"  # Fallback HuggingFace model if MODEL_PATH not found
@@ -25,7 +25,7 @@ volume_mount_path = "/runpod-volume"  # Mount point for network volume
 ports = "8000/http"
 envs = [
     "RUNPOD_API_KEY",
-    "DAEZEND_API_SHARED_SECRET",
+    "MINSTRALY_API_SHARED_SECRET",
     "FIREBASE_SERVICE_ACCOUNT",
     "MODEL_PATH",
     "MODEL_NAME",

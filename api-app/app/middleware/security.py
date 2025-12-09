@@ -22,12 +22,12 @@ async def verify_hmac(request: Request) -> None:
     if not settings.SECURITY_ENABLE_HMAC:
         return
 
-    secret = settings.DAEZEND_API_SHARED_SECRET
+    secret = settings.MINSTRALY_API_SHARED_SECRET
     if not secret:
         raise HTTPException(status_code=500, detail="Server misconfigured: missing shared secret")
 
-    ts = request.headers.get("X-Daezend-Timestamp")
-    sig = request.headers.get("X-Daezend-Signature")
+    ts = request.headers.get("X-Minstraly-Timestamp")
+    sig = request.headers.get("X-Minstraly-Signature")
     idem = request.headers.get("X-Idempotency-Key")
     if not ts or not sig or not idem:
         raise HTTPException(status_code=401, detail="Missing auth headers")

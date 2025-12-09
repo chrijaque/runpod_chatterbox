@@ -634,18 +634,18 @@ def _load_model():
 
 def _post_signed_callback(callback_url: str, payload: dict):
     """POST JSON payload to callback_url with HMAC headers compatible with app callback."""
-    secret = os.getenv('DAEZEND_API_SHARED_SECRET')
+    secret = os.getenv('MINSTRALY_API_SHARED_SECRET')
     if not secret:
-        logger.error("❌ DAEZEND_API_SHARED_SECRET not set; cannot sign callback")
-        raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+        logger.error("❌ MINSTRALY_API_SHARED_SECRET not set; cannot sign callback")
+        raise RuntimeError('MINSTRALY_API_SHARED_SECRET not set; cannot sign callback')
     
     def _canonicalize_callback_url(url: str) -> str:
         try:
             p = urlparse(url)
             scheme = p.scheme or 'https'
             netloc = p.netloc
-            if netloc == 'daezend.app':
-                netloc = 'www.daezend.app'
+            if netloc == 'minstraly.com':
+                netloc = 'www.minstraly.com'
             return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
         except Exception:
             return url
@@ -665,8 +665,8 @@ def _post_signed_callback(callback_url: str, payload: dict):
     
     headers = {
         'Content-Type': 'application/json',
-        'X-Daezend-Timestamp': ts,
-        'X-Daezend-Signature': signature,
+        'X-Minstraly-Timestamp': ts,
+        'X-Minstraly-Signature': signature,
     }
     
     logger.info(f"📤 Sending callback to: {canonical_url}")

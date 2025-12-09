@@ -96,15 +96,15 @@ class RunPodClient:
             
             url = f"{self.base_url}/{endpoint_id}/run"
 
-            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            # Canonicalize callback_url host to www.minstraly.com (avoid 307)
             cb_url = callback_url
             if cb_url:
                 try:
                     p = urlparse(cb_url)
                     scheme = p.scheme or 'https'
                     netloc = p.netloc
-                    if netloc == 'daezend.app':
-                        netloc = 'www.daezend.app'
+                    if netloc == 'minstraly.com':
+                        netloc = 'www.minstraly.com'
                     cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
                 except Exception:
                     pass
@@ -240,15 +240,15 @@ class RunPodClient:
             
             url = f"{self.base_url}/{endpoint_id}/run"
 
-            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            # Canonicalize callback_url host to www.minstraly.com (avoid 307)
             cb_url = callback_url
             if cb_url:
                 try:
                     p = urlparse(cb_url)
                     scheme = p.scheme or 'https'
                     netloc = p.netloc
-                    if netloc == 'daezend.app':
-                        netloc = 'www.daezend.app'
+                    if netloc == 'minstraly.com':
+                        netloc = 'www.minstraly.com'
                     cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
                 except Exception:
                     pass
@@ -487,7 +487,7 @@ class RunPodClient:
             endpoint_id = self.llm_cb_endpoint_id
             url = f"{self.base_url}/{endpoint_id}/run"
             
-            # Canonicalize callback_url host to www.daezend.app (avoid 307)
+            # Canonicalize callback_url host to www.minstraly.com (avoid 307)
             cb_url = callback_url
             logger.info(f"🔔 Callback URL received in RunPod client: {cb_url}")
             logger.info(f"🔔 Story ID: {story_id}, User ID: {user_id}")
@@ -496,8 +496,8 @@ class RunPodClient:
                     p = urlparse(cb_url)
                     scheme = p.scheme or 'https'
                     netloc = p.netloc
-                    if netloc == 'daezend.app':
-                        netloc = 'www.daezend.app'
+                    if netloc == 'minstraly.com':
+                        netloc = 'www.minstraly.com'
                     cb_url = urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
                     logger.info(f"🔔 Callback URL canonicalized: {cb_url}")
                 except Exception as e:

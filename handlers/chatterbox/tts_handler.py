@@ -319,24 +319,24 @@ def _post_signed_callback(callback_url: str, payload: dict):
         clean_payload['audio_data'] = f"[BASE64 DATA] Length: {len(payload['audio_data'])} chars"
     logger.info(f"🔍 _post_signed_callback clean payload: {clean_payload}")
     
-    secret = os.getenv('DAEZEND_API_SHARED_SECRET')
+    secret = os.getenv('MINSTRALY_API_SHARED_SECRET')
     if not secret:
-        logger.error("❌ DAEZEND_API_SHARED_SECRET not set; cannot sign callback")
-        raise RuntimeError('DAEZEND_API_SHARED_SECRET not set; cannot sign callback')
+        logger.error("❌ MINSTRALY_API_SHARED_SECRET not set; cannot sign callback")
+        raise RuntimeError('MINSTRALY_API_SHARED_SECRET not set; cannot sign callback')
     
-    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET exists: {bool(secret)}")
-    logger.info(f"🔍 DAEZEND_API_SHARED_SECRET length: {len(secret) if secret else 0}")
+    logger.info(f"🔍 MINSTRALY_API_SHARED_SECRET exists: {bool(secret)}")
+    logger.info(f"🔍 MINSTRALY_API_SHARED_SECRET length: {len(secret) if secret else 0}")
 
-    # Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)
+    # Canonicalize callback URL to avoid 307 redirects (prefer www.minstraly.com)
     def _canonicalize_callback_url(url: str) -> str:
         try:
             p = urlparse(url)
             scheme = p.scheme or 'https'
             netloc = p.netloc
-            if netloc == 'daezend.app':
-                netloc = 'www.daezend.app'
+            if netloc == 'minstraly.com':
+                netloc = 'www.minstraly.com'
             if not netloc and p.path:
-                return f'https://www.daezend.app{p.path}'
+                return f'https://www.minstraly.com{p.path}'
             return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
         except Exception:
             return url
@@ -363,8 +363,8 @@ def _post_signed_callback(callback_url: str, payload: dict):
 
     headers = {
         'Content-Type': 'application/json',
-        'X-Daezend-Timestamp': ts,
-        'X-Daezend-Signature': sig,
+        'X-Minstraly-Timestamp': ts,
+        'X-Minstraly-Signature': sig,
     }
     
     logger.info(f"🔍 Headers: {headers}")
@@ -428,9 +428,9 @@ except ImportError as e:
     logger.warning(f"⚠️ Could not import storage utilities: {e}")
     # Fallback: define functions locally if import fails
     def resolve_bucket_name(bucket_name: Optional[str] = None, country_code: Optional[str] = None) -> str:
-        return os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+        return os.getenv('R2_BUCKET_NAME', 'minstraly-storage')
     def is_r2_bucket(bucket_name: str) -> bool:
-        return bucket_name == 'daezend-public-content' or bucket_name.startswith('r2://')
+        return bucket_name == 'minstraly-storage' or bucket_name.startswith('r2://')
     def upload_to_r2(data: bytes, destination_key: str, content_type: str = "application/octet-stream", metadata: dict = None, bucket_name: Optional[str] = None) -> Optional[str]:
         logger.error("Storage utilities not available - upload_to_r2 not implemented")
         return None

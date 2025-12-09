@@ -320,7 +320,7 @@ if _VERBOSE_LOGS:
 def _select_device() -> str:
     """Choose execution device honoring env overrides and runtime availability."""
     try:
-        forced = (os.getenv("VC_DEVICE") or os.getenv("DAEZEND_DEVICE") or os.getenv("DEVICE") or "").lower()
+        forced = (os.getenv("VC_DEVICE") or os.getenv("MINSTRALY_DEVICE") or os.getenv("DEVICE") or "").lower()
         if forced in ("cpu", "cuda", "mps"):
             return forced
         if forced == "auto":
@@ -528,8 +528,8 @@ def _build_api_metadata(input_data: Dict[str, Any], voice_id: str, name: str,
                        metadata: Dict[str, Any], target_profile_name: str,
                        target_sample_name: str) -> Dict[str, Any]:
     """Build API metadata for VC model. Uploads go to R2 at:
-    - daezend-public-content/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
-    - daezend-public-content/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
+    - minstraly-storage/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
+    - minstraly-storage/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
     """
     return {
         'user_id': input_data.get('user_id'),
@@ -612,8 +612,8 @@ def handle_voice_clone_request(input_data: Dict[str, Any], response_format: str)
     2. RunPod downloads audio from R2 if audio_path provided
     3. Creates voice profile (.npy) and audio sample
     4. VC model uploads to R2 at:
-       - daezend-public-content/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
-       - daezend-public-content/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
+       - minstraly-storage/private/users/{user_id}/voices/{lang}/profiles/{voice_id}.npy
+       - minstraly-storage/private/users/{user_id}/voices/{lang}/samples/{voice_id}.mp3
     """
     global vc_model
     
@@ -758,15 +758,15 @@ def handler(event, responseFormat="base64"):
 # Callback POST implementation
 # -------------------------------------------------------------------
 def _canonicalize_callback_url(url: str) -> str:
-    """Canonicalize callback URL to avoid 307 redirects (prefer www.daezend.app)."""
+    """Canonicalize callback URL to avoid 307 redirects (prefer www.minstraly.com)."""
     try:
         p = urlparse(url)
         scheme = p.scheme or 'https'
         netloc = p.netloc
-        if netloc == 'daezend.app':
-            netloc = 'www.daezend.app'
+        if netloc == 'minstraly.com':
+            netloc = 'www.minstraly.com'
         if not netloc and p.path:
-            return f'https://www.daezend.app{p.path}'
+            return f'https://www.minstraly.com{p.path}'
         return urlunparse((scheme, netloc, p.path, p.params, p.query, p.fragment))
     except Exception:
         return url
@@ -780,9 +780,9 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any], *, retries
     if _VERBOSE_LOGS:
         logger.debug(f"Posting callback to {callback_url}")
     
-    secret = os.getenv('DAEZEND_API_SHARED_SECRET')
+    secret = os.getenv('MINSTRALY_API_SHARED_SECRET')
     if not secret:
-        logger.warning("DAEZEND_API_SHARED_SECRET not set; unsigned callback")
+        logger.warning("MINSTRALY_API_SHARED_SECRET not set; unsigned callback")
     
     canonical_url = _canonicalize_callback_url(callback_url)
     parsed = urlparse(canonical_url)
@@ -806,8 +806,8 @@ def _post_signed_callback(callback_url: str, payload: Dict[str, Any], *, retries
                 message = prefix + body_bytes
                 sig = hmac.new(secret.encode('utf-8'), message, hashlib.sha256).hexdigest()
                 headers.update({
-                    'X-Daezend-Timestamp': ts,
-                    'X-Daezend-Signature': sig,
+                    'X-Minstraly-Timestamp': ts,
+                    'X-Minstraly-Signature': sig,
                 })
             
             req = Request(canonical_url, data=body_bytes, headers=headers, method='POST')

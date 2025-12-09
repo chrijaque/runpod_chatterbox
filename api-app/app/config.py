@@ -33,16 +33,14 @@ class Settings:
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
-    PUBLIC_API_BASE_URL: Optional[str] = os.getenv("PUBLIC_API_BASE_URL")
+    MINSTRALY_CALLBACK_BASE_URL: Optional[str] = os.getenv("MINSTRALY_CALLBACK_BASE_URL")
     
     # CORS Configuration
     # Default origins; can be overridden by ALLOW_ORIGINS (comma-separated)
     CORS_ORIGINS: list = [
         "http://localhost:3000",
-        "https://daezend.com",
-        "https://www.daezend.com",
-        "https://daezend.app",
-        "https://www.daezend.app"
+        "https://minstraly.com",
+        "https://www.minstraly.com",
     ]
     ALLOW_ORIGINS: Optional[str] = os.getenv("ALLOW_ORIGINS")
     
@@ -63,7 +61,7 @@ class Settings:
     SECURITY_ENABLE_HMAC: bool = os.getenv("SECURITY_ENABLE_HMAC", "True").lower() == "true"
     SECURITY_ENABLE_FIREBASE_AUTH: bool = os.getenv("SECURITY_ENABLE_FIREBASE_AUTH", "False").lower() == "true"
     SECURITY_ENABLE_APP_CHECK: bool = os.getenv("SECURITY_ENABLE_APP_CHECK", "False").lower() == "true"
-    DAEZEND_API_SHARED_SECRET: Optional[str] = os.getenv("DAEZEND_API_SHARED_SECRET")
+    MINSTRALY_API_SHARED_SECRET: Optional[str] = os.getenv("MINSTRALY_API_SHARED_SECRET")
     HMAC_MAX_SKEW_SECONDS: int = int(os.getenv("HMAC_MAX_SKEW_SECONDS", "300"))  # 5 minutes
     IDEMPOTENCY_TTL_SECONDS: int = int(os.getenv("IDEMPOTENCY_TTL_SECONDS", "3600"))  # 1 hour
     

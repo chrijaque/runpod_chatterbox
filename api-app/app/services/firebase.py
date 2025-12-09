@@ -989,7 +989,7 @@ class FirebaseService:
             r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
             r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
             r2_endpoint = os.getenv('R2_ENDPOINT')
-            r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'daezend-public-content')
+            r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'minstraly-storage')
             
             if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
                 logger.error("❌ R2 credentials not configured")

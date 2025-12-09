@@ -111,18 +111,18 @@ async def clone_voice(request: VoiceCloneRequest, http_req: Request, job_id: str
             raise HTTPException(status_code=400, detail="audio_path must be under recorded/")
 
         # Default callback_url if none provided
-        if settings.PUBLIC_API_BASE_URL:
-            # Check if PUBLIC_API_BASE_URL points to the correct domain
-            if "runpod-chatterbox.fly.dev" in settings.PUBLIC_API_BASE_URL:
-                default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/voices/callback"
+        if settings.MINSTRALY_CALLBACK_BASE_URL:
+            # Check if MINSTRALY_CALLBACK_BASE_URL points to the correct domain
+            if "runpod-chatterbox.fly.dev" in settings.MINSTRALY_CALLBACK_BASE_URL:
+                default_cb = settings.MINSTRALY_CALLBACK_BASE_URL.rstrip("/") + "/api/voices/callback"
             else:
-                # Use the correct domain even if PUBLIC_API_BASE_URL is set to wrong domain
+                # Use the correct domain even if MINSTRALY_CALLBACK_BASE_URL is set to wrong domain
                 default_cb = "https://runpod-chatterbox.fly.dev/api/voices/callback"
-                logger.warning(f"⚠️ PUBLIC_API_BASE_URL points to wrong domain ({settings.PUBLIC_API_BASE_URL}), using correct domain")
+                logger.warning(f"⚠️ MINSTRALY_CALLBACK_BASE_URL points to wrong domain ({settings.MINSTRALY_CALLBACK_BASE_URL}), using correct domain")
         else:
-            # Fallback to the known public URL if PUBLIC_API_BASE_URL is not set
+            # Fallback to the known public URL if MINSTRALY_CALLBACK_BASE_URL is not set
             default_cb = "https://runpod-chatterbox.fly.dev/api/voices/callback"
-            logger.warning("⚠️ PUBLIC_API_BASE_URL not set, using hardcoded fallback URL")
+            logger.warning("⚠️ MINSTRALY_CALLBACK_BASE_URL not set, using hardcoded fallback URL")
 
         result = runpod_client.create_voice_clone(
             name=request.name,

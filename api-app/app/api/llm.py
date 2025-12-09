@@ -44,11 +44,11 @@ async def generate_story_llm(request: LLMGenerateRequest, http_req: Request):
             raise HTTPException(status_code=500, detail="LLM endpoint not configured")
         
         # Default callback_url if none provided
-        if settings.PUBLIC_API_BASE_URL:
-            default_cb = settings.PUBLIC_API_BASE_URL.rstrip("/") + "/api/llm/callback"
+        if settings.MINSTRALY_CALLBACK_BASE_URL:
+            default_cb = settings.MINSTRALY_CALLBACK_BASE_URL.rstrip("/") + "/api/llm/callback"
         else:
-            default_cb = "https://runpod-chatterbox.fly.dev/api/llm/callback"
-            logger.warning("⚠️ PUBLIC_API_BASE_URL not set, using hardcoded fallback URL")
+            default_cb = "https://minstraly.com/api/llm/callback"
+            logger.warning("⚠️ MINSTRALY_CALLBACK_BASE_URL not set, using hardcoded fallback URL")
         
         result = runpod_client.generate_llm_completion(
             messages=request.messages or [],  # Use empty list if None (for two-step workflow)
