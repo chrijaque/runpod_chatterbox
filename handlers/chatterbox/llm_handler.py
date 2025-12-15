@@ -821,6 +821,263 @@ def notify_error_callback(error_callback_url: str, story_id: str, error_message:
         logger.error(f"❌ Failed to send error callback: {e}")
         return False
 
+_BEAT_SEPARATOR = "\n\n⁂\n\n"
+_SOFT_MIN_CHARS = 9000
+_HARD_MAX_CHARS = 11500
+_STEP2_GATE_MIN = 8800
+_STEP2_GATE_MAX = 11800
+
+def _normalize_workflow_type(input_data: Dict[str, Any], metadata: Dict[str, Any]) -> str:
+    """Return normalized workflow type (accepts workflow_type or workflow_version)."""
+    wt = (
+        input_data.get("workflow_type")
+        or metadata.get("workflow_type")
+        or input_data.get("workflow_version")
+        or metadata.get("workflow_version")
+        or ""
+    )
+    try:
+        return str(wt).strip().lower()
+    except Exception:
+        return ""
+
+def _split_beats_strict(text: str) -> list:
+    """Split a structured beat-labeled story into beats using the canonical separator."""
+    parts = text.split(_BEAT_SEPARATOR) if _BEAT_SEPARATOR in text else [text]
+    beats = [p.strip() for p in parts if p and p.strip()]
+    return beats
+
+def _validate_beats_strict(beats: list, expected_beats: int = 12) -> tuple[bool, str]:
+    """Validate strict beat format: count, labels, and separator safety."""
+    try:
+        if len(beats) != expected_beats:
+            return False, f"expected {expected_beats} beats, got {len(beats)}"
+        for i in range(1, expected_beats + 1):
+            b = beats[i - 1].lstrip()
+            if not b.startswith(f"Beat {i}:"):
+                return False, f"beat {i} missing required label prefix"
+            if "⁂" in beats[i - 1]:
+                return False, f"beat {i} contains separator glyph"
+        return True, ""
+    except Exception as e:
+        return False, f"validation error: {e}"
+
+def _ensure_structured_beats(
+    text: str,
+    expected_beats: int,
+    *,
+    model_or_engine,
+    tokenizer,
+    use_vllm: bool,
+    device: str,
+    step_name: str,
+) -> str:
+    """
+    Ensure text is in strict Beat 1..N + separator format.
+    If invalid, attempt a single 'format-only' repair pass.
+    """
+    beats = _split_beats_strict(text)
+    ok, reason = _validate_beats_strict(beats, expected_beats=expected_beats)
+    if ok:
+        return text.strip()
+
+    logger.warning(f"⚠️ {step_name}: invalid structured beats ({reason}), attempting format-only repair")
+
+    format_system = f"""You are a strict formatter.
+
+TASK:
+Reformat the provided text into a strict {expected_beats}-beat structure.
+
+FORBIDDEN:
+- Do NOT add new story content.
+- Do NOT expand or embellish.
+- Do NOT change meaning.
+- Do NOT add meta-commentary.
+
+FORMAT (STRICT):
+- Output exactly {expected_beats} beats.
+- Each beat MUST start with: Beat X: (X = 1..{expected_beats})
+- Separate beats using \"\\n\\n⁂\\n\\n\" ONLY.
+- Start immediately with \"Beat 1:\".
+- Do NOT include the separator (⁂) inside any beat.
+
+OUTPUT:
+Return the reformatted beats only."""
+
+    format_user = f"RAW TEXT TO REFORMAT:\n{text}"
+
+    repaired, _t = _generate_content(
+        [{"role": "system", "content": format_system}, {"role": "user", "content": format_user}],
+        model_or_engine,
+        tokenizer,
+        use_vllm,
+        temperature=0.2,
+        max_tokens=2500,
+        device=device,
+    )
+
+    repaired_beats = _split_beats_strict(repaired)
+    ok2, reason2 = _validate_beats_strict(repaired_beats, expected_beats=expected_beats)
+    if not ok2:
+        logger.warning(f"⚠️ {step_name}: format-only repair failed ({reason2}); returning original output")
+        return text.strip()
+
+    logger.info(f"✅ {step_name}: format-only repair succeeded")
+    return repaired.strip()
+
+def _parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+    """Extract first JSON object from text and parse it."""
+    try:
+        import re
+        m = re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            return None
+        return json.loads(m.group(0))
+    except Exception:
+        return None
+
+def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
+    """
+    Apply 1-sentence transitions between beats in code, without rewriting existing beat text.
+    Strategy: append transition as a new paragraph to the end of the prior beat.
+    """
+    if not transitions:
+        return beats
+    by_pair: Dict[str, str] = {}
+    for t in transitions:
+        try:
+            pair = t.get("between")
+            txt = (t.get("text") or "").strip()
+            if not isinstance(pair, list) or len(pair) != 2:
+                continue
+            a, b = int(pair[0]), int(pair[1])
+            if a < 1 or b != a + 1:
+                continue
+            if not txt:
+                continue
+            if "⁂" in txt or "Beat" in txt:
+                continue
+            by_pair[f"{a}-{b}"] = txt
+        except Exception:
+            continue
+
+    out = list(beats)
+    for i in range(1, len(beats)):  # between i and i+1
+        key = f"{i}-{i+1}"
+        if key in by_pair:
+            out[i - 1] = out[i - 1].rstrip() + "\n\n" + by_pair[key]
+    return out
+
+def _safe_trim_to_max(cleaned_text: str, max_chars: int) -> str:
+    """
+    Trim text to max_chars trying to cut at a sentence boundary.
+    Used as an absolute final enforcement (hard max).
+    """
+    if len(cleaned_text) <= max_chars:
+        return cleaned_text
+    try:
+        truncated = cleaned_text[:max_chars]
+        # Try to cut at last sentence end in the truncated window
+        for sep in [".", "!", "?"]:
+            idx = truncated.rfind(sep)
+            if idx > max_chars * 0.85:
+                return truncated[: idx + 1].rstrip()
+        # Fallback: last newline
+        nl = truncated.rfind("\n")
+        if nl > max_chars * 0.85:
+            return truncated[:nl].rstrip()
+        return truncated.rstrip()
+    except Exception:
+        return cleaned_text[:max_chars].rstrip()
+
+def _micro_add_to_reach_min_v2(
+    structured_text: str,
+    min_chars: int,
+    *,
+    model_or_engine,
+    tokenizer,
+    use_vllm: bool,
+    device: str,
+) -> str:
+    """
+    Delta-only micro-add pass to reach soft minimum.
+    Produces JSON with short append sentences (no dialogue, no new actions) and applies in code.
+    """
+    cleaned_len = len(clean_story(structured_text))
+    if cleaned_len >= min_chars:
+        return structured_text
+
+    beats = _split_beats_strict(structured_text)
+    ok, _reason = _validate_beats_strict(beats, expected_beats=12)
+    if not ok:
+        return structured_text
+
+    delta = min_chars - cleaned_len
+    # Add at most 1 sentence to up to 10 beats (avoid Beat 11 climax, avoid Beat 12 no-sex beat)
+    max_targets = 10
+    approx_per = max(40, min(90, int((delta / max_targets) + 10)))
+    # Choose number of beats to modify
+    beats_to_modify = min(max_targets, max(1, int((delta + 69) // 70)))
+    target_ids = list(range(1, beats_to_modify + 1))
+
+    system = f"""We are a micro-expansion editor.
+
+TASK:
+Provide short, non-plot-changing append sentences for specific beats to slightly increase length.
+
+STRICT RULES:
+- Do NOT add new actions or events.
+- Do NOT add dialogue.
+- Do NOT add new sexual acts.
+- Only add sensory detail, internal thought, or environmental description.
+- Each append must be ONE sentence only.
+- Each append must be ~{approx_per} characters (±20).
+- Do NOT mention beat numbers in the sentence.
+
+FORMAT:
+Return ONLY valid JSON:
+{{
+  "appends": [
+    {{ "beat": 1, "text": "..." }}
+  ]
+}}"""
+
+    # Provide compact context per target beat (strip label content)
+    context_lines = []
+    for i in target_ids:
+        b = beats[i - 1]
+        body = b.split(":", 1)[1].strip() if ":" in b else b.strip()
+        context_lines.append(f"Beat {i} context: {body[:260]}")
+    user = f"""We are below the minimum length and need small, safe additions.\n\nProvide appends for beats: {', '.join(str(i) for i in target_ids)}.\n\n" + "\n".join(context_lines)"""
+
+    out_text, _t = _generate_content(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model_or_engine,
+        tokenizer,
+        use_vllm,
+        temperature=0.4,
+        max_tokens=800,
+        device=device,
+    )
+    obj = _parse_json_from_text(out_text) or {}
+    appends = obj.get("appends") if isinstance(obj.get("appends"), list) else []
+
+    # Apply appends
+    for item in appends:
+        try:
+            beat_id = int(item.get("beat"))
+            txt = (item.get("text") or "").strip()
+            if beat_id not in target_ids:
+                continue
+            if not txt or "⁂" in txt or "Beat" in txt:
+                continue
+            beats[beat_id - 1] = beats[beat_id - 1].rstrip() + "\n\n" + txt
+        except Exception:
+            continue
+
+    rebuilt = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+    return rebuilt
+
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     """
     RunPod handler for LLM story generation.
@@ -862,11 +1119,13 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         genre = input_data.get("genre")
         age_range = input_data.get("age_range")
         
-        # Check for two step workflow
-        workflow_type = input_data.get("workflow_type") or metadata.get("workflow_type")
+        # Workflow selection
+        workflow_type = _normalize_workflow_type(input_data, metadata)
         outline_messages = input_data.get("outline_messages", [])
         story_messages = input_data.get("story_messages", [])
-        needs_two_step = workflow_type == "two-step" or (outline_messages and story_messages)
+        is_multi_step_v2 = workflow_type == "multi-step-v2"
+        # Legacy two-step workflow (outline + story prompt injection)
+        needs_two_step = (workflow_type == "two-step") or (outline_messages and story_messages and not is_multi_step_v2)
         
         # Default max_tokens (only used for single-step workflow)
         # For two-step workflow, we use configurable values: outline_max_tokens (default 5000) and max_tokens (default 5000 for story)
@@ -910,6 +1169,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"👶 Age Range: {age_range}")
         logger.info(f"🌍 Language: {language}")
         logger.info(f"🔄 Two-step workflow: {needs_two_step}")
+        logger.info(f"🧩 Multi-step-v2 workflow: {is_multi_step_v2}")
         if needs_two_step:
             logger.info(f"📝 Outline messages count: {len(outline_messages)}")
             logger.info(f"📖 Story messages count: {len(story_messages)}")
@@ -940,15 +1200,592 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 logger.info(msg.get("content", ""))
             logger.info("=" * 80)
         
-        if not messages and not needs_two_step:
+        if not messages and not needs_two_step and not is_multi_step_v2:
             raise ValueError("messages is required (or outline_messages + story_messages for two-step)")
         
         # Load model if not already loaded
         model_or_engine, tokenizer, device = _load_model()
         use_vllm = _use_vllm
-        
-        # TWO-STEP WORKFLOW: Generate outline first, then story
-        if needs_two_step and outline_messages and story_messages:
+
+        # MULTI-STEP-V2 WORKFLOW: Deterministic 12-beat pipeline (Steps 2–8 orchestrated server-side)
+        if is_multi_step_v2:
+            expected_beats = 12
+            enable_transitions = bool(input_data.get("enable_transitions", False))
+            enable_dialogue = bool(input_data.get("enable_dialogue", False))
+            enable_motifs = bool(input_data.get("enable_motifs", False))
+
+            # Tight step budgets (can be overridden via input_data)
+            outline_max_tokens_v2 = int(input_data.get("outline_max_tokens", 800) or 800)
+            step2_max_tokens = int(input_data.get("max_tokens", 6000) or 6000)  # Step 2 budget
+            step3_max_tokens = int(input_data.get("transitions_max_tokens", 800) or 800)
+            step4_max_tokens = int(input_data.get("motifs_max_tokens", 1200) or 1200)
+            step5_max_tokens = int(input_data.get("dialogue_max_tokens", 600) or 600)
+            step6_max_tokens = int(input_data.get("climax_max_tokens", 800) or 800)
+            step7_max_tokens = int(input_data.get("dedup_max_tokens", 7500) or 7500)
+            step8a_max_tokens = int(input_data.get("metadata_max_tokens", 1500) or 1500)
+            step8b_max_tokens = int(input_data.get("cover_max_tokens", 800) or 800)
+
+            logger.info("=" * 80)
+            logger.info("🧩 MULTI-STEP-V2 PIPELINE START")
+            logger.info("=" * 80)
+            logger.info(f"Flags: transitions={enable_transitions}, dialogue={enable_dialogue}, motifs={enable_motifs}")
+
+            # Step 1: Generate outline (beats skeleton) using provided outline_messages
+            if not outline_messages:
+                raise ValueError("multi-step-v2 requires outline_messages (Step 1 prompt)")
+            logger.info("=" * 80)
+            logger.info("📝 STEP 1: Generating beat skeleton (outline)...")
+            logger.info("=" * 80)
+            outline_text, outline_time = _generate_content(
+                outline_messages,
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens=outline_max_tokens_v2,
+                device=device
+            )
+            outline_text = _ensure_structured_beats(
+                outline_text,
+                expected_beats,
+                model_or_engine=model_or_engine,
+                tokenizer=tokenizer,
+                use_vllm=use_vllm,
+                device=device,
+                step_name="Step1_outline",
+            )
+
+            # Step 2: Physicalization (expanded beats, no climax except Beat 11)
+            logger.info("=" * 80)
+            logger.info("📖 STEP 2: Physicalization (expand beats; climax locked to Beat 11)...")
+            logger.info("=" * 80)
+            step2_system = """We are a precision erotic writer.
+
+TASK:
+Expand each beat into detailed narrative prose.
+
+RULES:
+- Expand each beat to 800–900 characters.
+- Do not exceed 900 characters per beat.
+- Do not go below 800 characters per beat.
+- Follow the outline exactly; do not change event order.
+- Add concrete physical actions, positions, and spatial detail.
+- Graphic description IS allowed.
+
+CLIMAX CONTROL:
+- A climax may ONLY occur in Beat 11.
+- Beats 1–10 must NOT describe orgasm or release.
+- Beat 12 must NOT contain sexual action.
+
+STYLE RULES:
+- Avoid abstract intensity words (e.g., "overwhelming", "crescendo").
+- Prefer physical mechanics over emotional metaphors.
+
+FORMAT (STRICT):
+- Preserve beat labels ("Beat X:")
+- Preserve "\\n\\n⁂\\n\\n" separators
+- No titles, no commentary.
+
+OUTPUT:
+A fully expanded 12-beat story."""
+
+            step2_user = f"""Expand the outline below into 12 expanded beats.
+
+IMPORTANT:
+- Preserve the beat labels exactly (Beat 1..Beat 12).
+- Keep the same number of beats and the same beat order.
+- Keep the same separator between beats: \\n\\n⁂\\n\\n.
+- Each beat MUST be 800–900 characters (strict).
+
+OUTLINE:
+{outline_text}
+
+Write the expanded beats now."""
+
+            expanded_text, step2_time = _generate_content(
+                [{"role": "system", "content": step2_system}, {"role": "user", "content": step2_user}],
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature,
+                max_tokens=step2_max_tokens,
+                device=device
+            )
+            expanded_text = _ensure_structured_beats(
+                expanded_text,
+                expected_beats,
+                model_or_engine=model_or_engine,
+                tokenizer=tokenizer,
+                use_vllm=use_vllm,
+                device=device,
+                step_name="Step2_physicalization",
+            )
+
+            beats = _split_beats_strict(expanded_text)
+
+            # Step 2 checkpoint: reject and retry if out of allowed buffer.
+            # We do NOT proceed to later steps if Step 2 fails the length contract.
+            def _step2_clean_len(s: str) -> int:
+                try:
+                    return len(clean_story(s))
+                except Exception:
+                    return len(s)
+
+            step2_len = _step2_clean_len(expanded_text)
+            if step2_len < _STEP2_GATE_MIN or step2_len > _STEP2_GATE_MAX:
+                logger.warning(
+                    f"⚠️ Step2 checkpoint failed: cleaned_len={step2_len} (expected {_STEP2_GATE_MIN}–{_STEP2_GATE_MAX}). Retrying Step 2 once."
+                )
+                # One retry with the same prompt (we trust local constraints more than global targets)
+                expanded_text_retry, step2_time_retry = _generate_content(
+                    [{"role": "system", "content": step2_system}, {"role": "user", "content": step2_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature,
+                    max_tokens=step2_max_tokens,
+                    device=device
+                )
+                expanded_text_retry = _ensure_structured_beats(
+                    expanded_text_retry,
+                    expected_beats,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                    step_name="Step2_physicalization_retry",
+                )
+                step2_len_retry = _step2_clean_len(expanded_text_retry)
+                if step2_len_retry < _STEP2_GATE_MIN or step2_len_retry > _STEP2_GATE_MAX:
+                    logger.warning(
+                        f"⚠️ Step2 retry still out of range: cleaned_len={step2_len_retry}. Continuing pipeline anyway, but final hard limits will be enforced."
+                    )
+                else:
+                    expanded_text = expanded_text_retry
+                    step2_time = step2_time + step2_time_retry
+                    beats = _split_beats_strict(expanded_text)
+
+            # Step 3 (optional): Transitions (JSON only; applied in code)
+            if enable_transitions:
+                logger.info("=" * 80)
+                logger.info("🔗 STEP 3: Transitions (JSON-only; applied in code)...")
+                logger.info("=" * 80)
+                step3_system = """We are a narrative flow editor.
+
+TASK:
+Write short transition sentences between beats.
+
+RULES:
+- Do NOT rewrite beats.
+- Do NOT repeat story content.
+- Do NOT add sexual detail.
+- Each transition must be 1 sentence only.
+
+FORMAT:
+Return ONLY valid JSON:
+{
+  "transitions": [
+    { "between": [1, 2], "text": "..." }
+  ]
+}"""
+                # Provide compact beat summaries to reduce context and avoid repetition loops
+                summaries = []
+                for i, b in enumerate(beats, 1):
+                    b2 = b
+                    if b2.lstrip().startswith(f"Beat {i}:"):
+                        b2 = b2.split(":", 1)[1].strip()
+                    summaries.append(f"Beat {i} summary: {b2[:220]}")
+                step3_user = "Create one transition sentence between each adjacent beat (1->2 ... 11->12).\n\n" + "\n".join(summaries)
+                transitions_text, _t3 = _generate_content(
+                    [{"role": "system", "content": step3_system}, {"role": "user", "content": step3_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.3,
+                    max_tokens=step3_max_tokens,
+                    device=device
+                )
+                transitions_json = _parse_json_from_text(transitions_text) or {}
+                transitions_list = transitions_json.get("transitions") if isinstance(transitions_json.get("transitions"), list) else []
+                metadata["transitions"] = transitions_list
+                beats = _apply_transitions_to_beats(beats, transitions_list)
+
+            # Step 4 (optional): Motif / keyword annotation (JSON only; no prose)
+            if enable_motifs:
+                logger.info("=" * 80)
+                logger.info("🏷️ STEP 4: Motif annotation (JSON-only)...")
+                logger.info("=" * 80)
+                step4_system = """We are a story analyst.
+
+TASK:
+Assign thematic motifs to beats.
+
+RULES:
+- Do NOT generate prose.
+- Do NOT rewrite text.
+- Do NOT add actions.
+
+FORMAT (STRICT JSON):
+{
+  "beatMotifs": {
+    "6": ["authority", "instruction"],
+    "7": ["submission"]
+  }
+}"""
+                # Use outline only (cheaper and less prone to prose echo)
+                step4_user = f"""Assign 1–3 motifs to any beats where it makes sense.
+
+Return only JSON.
+
+OUTLINE:
+{outline_text}"""
+                motifs_text, _t4 = _generate_content(
+                    [{"role": "system", "content": step4_system}, {"role": "user", "content": step4_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.3,
+                    max_tokens=step4_max_tokens,
+                    device=device
+                )
+                motifs_json = _parse_json_from_text(motifs_text) or {}
+                metadata["beatMotifs"] = motifs_json.get("beatMotifs")
+
+            # Step 5 (optional): Dialogue pass (per beat only; no new actions; no escalation)
+            if enable_dialogue:
+                logger.info("=" * 80)
+                logger.info("🗣️ STEP 5: Dialogue pass (per beat)...")
+                logger.info("=" * 80)
+                step5_system = """We are a dialogue specialist.
+
+TASK:
+Add or refine dialogue for ONE beat only.
+
+RULES:
+- Do NOT add new physical actions.
+- Do NOT escalate sexual intensity.
+- Dialogue must reflect power dynamics only.
+- Max 80 additional characters.
+
+OUTPUT:
+Return ONLY the revised beat text."""
+                revised_beats = []
+                for i, beat in enumerate(beats, 1):
+                    step5_user = f"""Revise ONLY the dialogue inside this beat.
+
+CRITICAL:
+- Do not add actions, positions, or new events.
+- Do not escalate intensity.
+- Keep the beat label intact: Beat {i}:
+
+BEAT TO REVISE:
+{beat}
+
+Return ONLY the revised beat text."""
+                    revised, _t5 = _generate_content(
+                        [{"role": "system", "content": step5_system}, {"role": "user", "content": step5_user}],
+                        model_or_engine,
+                        tokenizer,
+                        use_vllm,
+                        temperature=0.5,
+                        max_tokens=step5_max_tokens,
+                        device=device
+                    )
+                    revised = revised.strip()
+                    if not revised.lstrip().startswith(f"Beat {i}:"):
+                        revised = f"Beat {i}: " + revised
+                    revised_beats.append(revised)
+                beats = revised_beats
+
+            # Step 6: Climax pass (Beat 11 only)
+            logger.info("=" * 80)
+            logger.info("💥 STEP 6: Climax refinement (Beat 11 only)...")
+            logger.info("=" * 80)
+            step6_system = """We are an erotic climax specialist.
+
+TASK:
+Rewrite Beat 11 to deliver a single, sharp climax.
+
+RULES:
+- This is the ONLY beat allowed to climax.
+- Do NOT extend length beyond +15%.
+- Do NOT repeat phrasing.
+- No aftermath.
+
+OUTPUT:
+Return only Beat 11 text."""
+            beat11 = beats[10] if len(beats) >= 11 else ""
+            step6_user = f"""Rewrite ONLY Beat 11 for a single, sharp climax.
+
+CRITICAL:
+- Return only the revised Beat 11 text.
+- Keep the label intact: Beat 11:
+
+BEAT 11:
+{beat11}"""
+            beat11_revised, _t6 = _generate_content(
+                [{"role": "system", "content": step6_system}, {"role": "user", "content": step6_user}],
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature=0.6,
+                max_tokens=step6_max_tokens,
+                device=device
+            )
+            beat11_revised = beat11_revised.strip()
+            if not beat11_revised.lstrip().startswith("Beat 11:"):
+                beat11_revised = "Beat 11: " + beat11_revised
+            if len(beats) >= 11:
+                beats[10] = beat11_revised
+
+            # Re-assemble structured story (still beat-labeled + separators)
+            structured_story = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+
+            # Step 7: Deduplication / polish (single full-story pass)
+            logger.info("=" * 80)
+            logger.info("🧼 STEP 7: Deduplication / polish (single full-story pass)...")
+            logger.info("=" * 80)
+            step7_system = """We are a professional prose editor.
+
+TASK:
+Remove repetition and improve variation.
+
+STRICT RULES:
+- Do NOT add new content.
+- Do NOT intensify sexual acts.
+- Do NOT add dialogue.
+- Prefer shortening over expanding.
+
+FORMAT:
+Return the full story with identical structure:
+- Preserve beat labels ("Beat X:") and order
+- Preserve "\\n\\n⁂\\n\\n" separators
+- No title, no headings, no meta commentary."""
+            step7_user = f"""Edit the story below by removing repetition and improving variation.
+
+CRITICAL:
+- Do not add new content.
+- Do not add dialogue.
+- Do not intensify sexual acts.
+- Keep the exact beat structure and separators.
+
+STORY:
+{structured_story}"""
+            dedup_text, step7_time = _generate_content(
+                [{"role": "system", "content": step7_system}, {"role": "user", "content": step7_user}],
+                model_or_engine,
+                tokenizer,
+                use_vllm,
+                temperature=0.3,
+                max_tokens=step7_max_tokens,
+                device=device
+            )
+            dedup_text = _ensure_structured_beats(
+                dedup_text,
+                expected_beats,
+                model_or_engine=model_or_engine,
+                tokenizer=tokenizer,
+                use_vllm=use_vllm,
+                device=device,
+                step_name="Step7_deduplicate",
+            )
+            generated_text = dedup_text
+            generation_time = outline_time + step2_time + step7_time
+            logger.info(f"✅ multi-step-v2 generated structured story: {len(generated_text)} chars")
+            logger.info(f"⏱️ multi-step-v2 generation time (core): {generation_time:.2f}s")
+
+            # Final length enforcement for multi-step-v2:
+            # - soft min: 9000 (micro-add via deltas)
+            # - hard max: 11500 (safe trim after cleaning)
+            try:
+                cleaned_len_final = len(clean_story(generated_text))
+            except Exception:
+                cleaned_len_final = len(generated_text)
+
+            if cleaned_len_final < _SOFT_MIN_CHARS:
+                logger.warning(f"⚠️ Below soft min after Step 7: cleaned_len={cleaned_len_final} (<{_SOFT_MIN_CHARS}). Applying micro-add deltas.")
+                generated_text = _micro_add_to_reach_min_v2(
+                    generated_text,
+                    _SOFT_MIN_CHARS,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                )
+                try:
+                    cleaned_len_final = len(clean_story(generated_text))
+                except Exception:
+                    cleaned_len_final = len(generated_text)
+                logger.info(f"✅ After micro-add: cleaned_len={cleaned_len_final}")
+
+            # Hard max is enforced on cleaned text later, but we log here for visibility.
+            if cleaned_len_final > _HARD_MAX_CHARS:
+                logger.warning(f"⚠️ Above hard max after Step 7: cleaned_len={cleaned_len_final} (>{_HARD_MAX_CHARS}). Will trim after cleaning.")
+
+            # Step 8: Metadata generation (fresh context; no beat labels)
+            erotic_like = False
+            try:
+                genre_key = (genre or "").strip().lower()
+                erotic_like = genre_key in ['erotic', 'advanced erotic', 'hardcore erotic', 'qwen3', 'qwen']
+            except Exception:
+                erotic_like = False
+
+            if erotic_like:
+                logger.info("=" * 80)
+                logger.info("🧾 STEP 8: Generating title/preview/tags + cover prompt...")
+                logger.info("=" * 80)
+
+                story_for_metadata = clean_story(generated_text)
+                story_for_metadata = story_for_metadata[:2500]
+
+                # Step 8a: Title + preview + tags (JSON)
+                allowed_themes = [
+                    "betrayal", "redemption", "trust", "duty-vs-desire", "power-and-corruption",
+                    "forbidden-knowledge", "mystery", "discovery", "legacy", "loss-and-grief"
+                ]
+                allowed_themes_text = f"\nAllowed canonical themes (prefer these ids): {', '.join(allowed_themes)}"
+                available_tones = ["sensual", "noir", "tension", "passion", "mystery", "intimate", "forbidden"]
+                tones_text = f"Available primary tones: {', '.join(available_tones)}"
+
+                title_preview_system = """You are a creative storyteller and editor specializing in abstract, sophisticated narratives.
+
+Read the story below and generate:
+1. A short, engaging title (2–6 words) that captures the story's essence.
+   - Use abstract, evocative language
+   - Reflect the sophisticated, mature tone
+   - Avoid explicit sexual references
+   - Make it memorable and suggestive
+
+2. A 2–3 sentence preview (180–240 characters) that entices the reader.
+   - Keep it spoiler-free
+   - Use abstract, suggestive language
+   - Focus on mood, atmosphere, and emotional tension
+   - Avoid explicit sexual content
+
+3. Tags for search and indexing:
+   - themes: 2–4 canonical theme ids from the allowed list; if none fit, place the suggestion in "themeFreeform"
+   - tones: 1–3 tonal tags (lowercase, concise)
+   - settings: 1–3 location/setting tags (lowercase, concrete nouns)
+   - artifacts: up to 2 key items (lowercase, concrete nouns)
+   - conflicts: up to 2 conflicts/stakes (lowercase)
+   - motifs: up to 2 motifs/imagery words (lowercase, concise)
+
+Output ONLY valid JSON (no markdown, no code blocks):
+{
+  "title": "...",
+  "preview": "...",
+  "tags": {
+    "themes": ["..."],
+    "themeFreeform": ["..."],
+    "tones": ["..."],
+    "settings": ["..."],
+    "artifacts": ["..."],
+    "conflicts": ["..."],
+    "motifs": ["..."]
+  }
+}"""
+
+                title_preview_user = f"""Genre: {genre}
+{tones_text}{allowed_themes_text}
+Story:
+{story_for_metadata}
+
+Generate a non-explicit, abstract title, preview, and tags for this {genre} story."""
+
+                title_preview_text, _t8a = _generate_content(
+                    [{"role": "system", "content": title_preview_system}, {"role": "user", "content": title_preview_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.7,
+                    max_tokens=step8a_max_tokens,
+                    device=device
+                )
+                title_preview_json = _parse_json_from_text(title_preview_text) or {}
+                title = title_preview_json.get("title", "Untitled Story")
+                preview = title_preview_json.get("preview", "")
+                tags_raw = title_preview_json.get("tags", {}) if isinstance(title_preview_json.get("tags", {}), dict) else {}
+
+                tags = None
+                if tags_raw:
+                    try:
+                        tags = {
+                            "themes": tags_raw.get("themes", []),
+                            "themeFreeform": tags_raw.get("themeFreeform", []),
+                            "tones": [t.lower() for t in tags_raw.get("tones", [])],
+                            "settings": [s.lower() for s in tags_raw.get("settings", [])],
+                            "artifacts": [a.lower() for a in tags_raw.get("artifacts", [])],
+                            "conflicts": [c.lower() for c in tags_raw.get("conflicts", [])],
+                            "motifs": [m.lower() for m in tags_raw.get("motifs", [])]
+                        }
+                        tags = {k: v for k, v in tags.items() if v}
+                    except Exception:
+                        tags = None
+
+                # Step 8b: Cover prompt (text only)
+                cover_system = """You create detailed image prompts for abstract, erotic noir-style book covers.
+
+Generate a cover image prompt (25–60 words) in an abstract erotic noir style. The prompt should be:
+- Non-explicit and suggestive rather than graphic
+- Focused on mood, atmosphere, and sensual composition
+- Using abstract visual elements
+- Vertical portrait composition suitable for 1024x1536 output
+- Include the book title as tasteful, readable cover typography that matches the art style
+
+Required visual elements to incorporate:
+- silhouettes
+- shadows of intertwined hands
+- a dimly lit room with wine glasses and candlelight
+- soft curves of fabric, smoke, or shapes implying intimacy
+- a backlit figure, clothed, partially obscured
+- a couple in an embrace but with no sexual positioning
+- moody lighting, suggestive atmosphere, sensual composition
+
+Output ONLY the cover prompt text (25–60 words). No labels, no JSON, just the prompt."""
+
+                cover_user = f"""Title: {title}
+Genre: {genre}
+
+Story context (first 1000 chars for mood reference):
+{story_for_metadata[:1000]}
+
+Create an abstract erotic noir cover prompt incorporating the required visual elements. Focus on moody, suggestive, non-explicit imagery. Integrate the exact title text as cover typography."""
+
+                cover_prompt_text, _t8b = _generate_content(
+                    [{"role": "system", "content": cover_system}, {"role": "user", "content": cover_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.7,
+                    max_tokens=step8b_max_tokens,
+                    device=device
+                )
+                coverPrompt = (cover_prompt_text or "").strip()
+
+                # Store metadata for Firestore and callback payload
+                metadata["generated_title"] = title
+                metadata["generated_preview"] = preview
+                metadata["generated_coverPrompt"] = coverPrompt
+                metadata["generated_tags"] = tags
+
+                metadata["title"] = title
+                metadata["preview"] = preview
+                metadata["tags"] = tags
+                metadata["cover_prompt"] = coverPrompt
+                metadata["coverPrompt"] = coverPrompt
+            else:
+                metadata["generated_title"] = "Untitled Story"
+                metadata["generated_preview"] = ""
+                metadata["generated_coverPrompt"] = ""
+                metadata["generated_tags"] = None
+                metadata["title"] = "Untitled Story"
+                metadata["preview"] = ""
+                metadata["tags"] = None
+                metadata["cover_prompt"] = ""
+                metadata["coverPrompt"] = ""
+
+        # TWO-STEP WORKFLOW: Generate outline first, then story (legacy)
+        elif needs_two_step and outline_messages and story_messages:
             logger.info("=" * 80)
             logger.info("📝 STEP 1: Generating outline...")
             logger.info("=" * 80)
@@ -1139,8 +1976,18 @@ Here is the story to finetune:
             logger.info(f"✅ Finetuned story ({len(generated_text)} chars) in {finetune_time:.2f}s")
             logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
             
-            # Step 5: Generate title, preview, tags, and cover prompt (for erotic stories)
-            if genre and genre.lower() in ['erotic', 'qwen3', 'qwen']:
+            # Step 5: Generate title, preview, tags, and cover prompt (for erotic-like stories)
+            # IMPORTANT: This metadata must be propagated into BOTH:
+            # - Firestore save metadata (used by _save_story_to_firestore)
+            # - callback payload metadata (used by the Next.js app callback to enqueue cover image etc.)
+            erotic_like = False
+            try:
+                genre_key = (genre or "").strip().lower()
+                erotic_like = genre_key in ['erotic', 'advanced erotic', 'hardcore erotic', 'qwen3', 'qwen']
+            except Exception:
+                erotic_like = False
+
+            if erotic_like:
                 logger.info("=" * 80)
                 logger.info("📝 STEP 5: Generating title, preview, tags, and cover prompt...")
                 logger.info("=" * 80)
@@ -1203,10 +2050,13 @@ Output ONLY valid JSON (no markdown, no code blocks):
   "coverPrompt": "..."
 }"""
                 
+                # Use cleaned story text for metadata generation (avoid Beat labels / separators leaking into title/preview)
+                story_for_metadata = clean_story(generated_text)
+
                 metadata_user_prompt = f"""Genre: {genre}
 {tones_text}{allowed_themes_text}
 Story:
-{generated_text}
+{story_for_metadata}
 
 Generate a non-explicit, abstract title, preview, tags, and cover prompt for this {genre} story."""
                 
@@ -1268,17 +2118,31 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                     logger.warning(f"⚠️ Failed to parse metadata JSON: {parse_error}")
                     logger.warning(f"⚠️ Raw metadata response: {metadata_response[:500]}")
                 
-                # Store metadata for later use in _save_story_to_firestore
+                # Store metadata for later use in _save_story_to_firestore AND for callback payload.
+                # _save_story_to_firestore currently reads generated_* keys.
                 metadata["generated_title"] = title
                 metadata["generated_preview"] = preview
                 metadata["generated_coverPrompt"] = coverPrompt
                 metadata["generated_tags"] = tags
+
+                # Also include "app-facing" keys so the Next.js callback can consume them directly.
+                # (The callback code looks for title/preview/cover_prompt/coverPrompt + tags.)
+                metadata["title"] = title
+                metadata["preview"] = preview
+                metadata["tags"] = tags
+                metadata["cover_prompt"] = coverPrompt
+                metadata["coverPrompt"] = coverPrompt
             else:
                 # For non-erotic stories, set defaults
                 metadata["generated_title"] = "Untitled Story"
                 metadata["generated_preview"] = ""
                 metadata["generated_coverPrompt"] = ""
                 metadata["generated_tags"] = None
+                metadata["title"] = "Untitled Story"
+                metadata["preview"] = ""
+                metadata["tags"] = None
+                metadata["cover_prompt"] = ""
+                metadata["coverPrompt"] = ""
         
         # SINGLE-STEP WORKFLOW: Generate story directly
         else:
@@ -1308,11 +2172,12 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
             metadata["generated_coverPrompt"] = ""
             metadata["generated_tags"] = None
         
-        # Extract beats for logging (common for both workflows)
-        beats = _extract_beats(generated_text)
-        
-        # Clean story content: remove beat labels, separators, and unwanted formatting
-        generated_text = clean_story(generated_text)
+        # Keep the structured (beat-labeled) text for extraction/truncation;
+        # only clean at the very end to avoid breaking beat-aware truncation.
+        structured_text = generated_text
+
+        # Extract beats for logging/truncation (from structured text)
+        beats = _extract_beats(structured_text)
         
         logger.info(f"✅ Generated content length: {len(generated_text)} characters")
         logger.info(f"⏱️ Generation time: {generation_time:.2f} seconds")
@@ -1333,30 +2198,35 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
             if len(beats) > 3:
                 logger.info(f"   ... and {len(beats) - 3} more beats")
         
-        # Enforce character limit (8,500 max for Qwen3)
-        max_chars = 8500 if genre and genre.lower() in ['qwen3', 'qwen'] else 12000
-        if len(generated_text) > max_chars:
-            logger.warning(f"⚠️ Story exceeds {max_chars} character limit ({len(generated_text)} chars), truncating...")
-            # Try to truncate at a beat boundary
-            beats = _extract_beats(generated_text)
-            expected_beats = 10 if genre and genre.lower() in ['qwen3', 'qwen'] else 12
+        # Enforce character limit on the FINAL (cleaned) text, but truncate using structured beats when possible.
+        # Legacy Qwen/Qwen3 used 8,500; multi-step-v2 uses a hard max of 11,500.
+        max_chars = _HARD_MAX_CHARS if workflow_type == "multi-step-v2" else (8500 if genre and genre.lower() in ['qwen3', 'qwen'] else 12000)
+        cleaned_preview = clean_story(structured_text)
+        if len(cleaned_preview) > max_chars:
+            logger.warning(f"⚠️ Story exceeds {max_chars} character limit ({len(cleaned_preview)} chars cleaned), truncating...")
+            expected_beats = 12 if workflow_type == "multi-step-v2" else (10 if genre and genre.lower() in ['qwen3', 'qwen'] else 12)
             if len(beats) >= expected_beats:
-                # Truncate by removing content from last beat(s) if needed
                 truncated_beats = beats[:expected_beats]
-                # Rebuild content, ensuring we don't exceed max_chars
-                rebuilt_content = '\n\n⁂\n\n'.join(truncated_beats)
-                if len(rebuilt_content) > max_chars:
-                    # Further truncate last beat
-                    last_beat = truncated_beats[-1]
-                    remaining_chars = max_chars - len('\n\n⁂\n\n'.join(truncated_beats[:-1])) - len('\n\n⁂\n\n')
-                    truncated_beats[-1] = last_beat[:remaining_chars].rsplit('.', 1)[0] + '.' if '.' in last_beat[:remaining_chars] else last_beat[:remaining_chars]
-                    rebuilt_content = '\n\n⁂\n\n'.join(truncated_beats)
-                generated_text = rebuilt_content
-                logger.info(f"✅ Truncated to {len(generated_text)} characters while maintaining beat structure")
+                rebuilt_structured = '\n\n⁂\n\n'.join(truncated_beats)
+                # If still too long after cleaning, truncate last beat content
+                if len(clean_story(rebuilt_structured)) > max_chars:
+                    last = truncated_beats[-1]
+                    # Coarse truncation target (structured), then we will re-clean after
+                    coarse_target = max(200, int(len(last) * 0.85))
+                    truncated_beats[-1] = last[:coarse_target].rsplit('.', 1)[0] + '.' if '.' in last[:coarse_target] else last[:coarse_target]
+                    rebuilt_structured = '\n\n⁂\n\n'.join(truncated_beats)
+                structured_text = rebuilt_structured
+                logger.info(f"✅ Truncated while maintaining beat structure (cleaned length: {len(clean_story(structured_text))})")
             else:
-                # Fallback: simple truncation
-                generated_text = generated_text[:max_chars].rsplit('.', 1)[0] + '.' if '.' in generated_text[:max_chars] else generated_text[:max_chars]
-                logger.warning(f"⚠️ Simple truncation applied: {len(generated_text)} characters")
+                # Fallback: simple truncation on cleaned text
+                cleaned_preview = cleaned_preview[:max_chars].rsplit('.', 1)[0] + '.' if '.' in cleaned_preview[:max_chars] else cleaned_preview[:max_chars]
+                structured_text = cleaned_preview
+                logger.warning(f"⚠️ Simple truncation applied (cleaned): {len(cleaned_preview)} characters")
+
+        # Clean story content: remove beat labels, separators, and unwanted formatting
+        generated_text = clean_story(structured_text)
+        if workflow_type == "multi-step-v2" and len(generated_text) > _HARD_MAX_CHARS:
+            generated_text = _safe_trim_to_max(generated_text, _HARD_MAX_CHARS)
         
         # Save story directly to Firestore
         if story_id and user_id:
@@ -1368,6 +2238,14 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             }
+            # Merge in any generated metadata fields from Step 5 (if present)
+            # NOTE: _save_story_to_firestore expects generated_* keys.
+            try:
+                for k in ["generated_title", "generated_preview", "generated_coverPrompt", "generated_tags"]:
+                    if k in metadata:
+                        save_metadata[k] = metadata.get(k)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to merge generated metadata into save_metadata: {e}")
             _save_story_to_firestore(story_id, user_id, generated_text, save_metadata)
         
         # Send callback if callback_url is provided
@@ -1381,18 +2259,32 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                     error_callback_url = f"{base_url}/error-callback"
                 
                 # Send success callback
+                # Include generated metadata in callback payload so the main app can skip OpenAI fallback.
+                callback_metadata = {
+                    "language": language,
+                    "genre": genre,
+                    "age_range": age_range,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                try:
+                    # Prefer app-facing keys (title/preview/cover_prompt/tags) if available
+                    for k in ["title", "preview", "cover_prompt", "coverPrompt", "tags"]:
+                        if k in metadata:
+                            callback_metadata[k] = metadata.get(k)
+                    # Also include generated_* for completeness/debugging
+                    for k in ["generated_title", "generated_preview", "generated_coverPrompt", "generated_tags"]:
+                        if k in metadata:
+                            callback_metadata[k] = metadata.get(k)
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to build callback metadata: {e}")
+
                 callback_sent = notify_success_callback(
                     callback_url=callback_url,
                     story_id=story_id or "unknown",
                     content=generated_text,
                     user_id=user_id,
-                    metadata={
-                        "language": language,
-                        "genre": genre,
-                        "age_range": age_range,
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                    }
+                    metadata=callback_metadata
                 )
                 
                 if not callback_sent:
