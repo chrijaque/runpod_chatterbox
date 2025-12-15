@@ -1010,6 +1010,182 @@ def _safe_trim_to_max(cleaned_text: str, max_chars: int) -> str:
     except Exception:
         return cleaned_text[:max_chars].rstrip()
 
+def _build_keyword_constraints_text(beat_keyword_map: Dict[int, list], keyword_constraints: list) -> str:
+    """
+    Build a strict, beat-scoped constraints section for Step 2.
+    Uses both semantic instructions and lexical anchors (when provided) to force specificity.
+    """
+    if not beat_keyword_map:
+        return ""
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for k in keyword_constraints or []:
+        try:
+            kid = str(k.get("id"))
+            if not kid:
+                continue
+            by_id[kid] = k
+        except Exception:
+            continue
+
+    lines = ["KEYWORD CONSTRAINTS (STRICT):"]
+    lines.append("- Each listed keyword MUST be clearly and explicitly depicted in its assigned beat.")
+    lines.append("- Do NOT satisfy a keyword by vague euphemism.")
+    lines.append("- If a keyword is assigned to Beat X, do NOT introduce that act in other beats unless explicitly listed.")
+    lines.append("")
+
+    for beat_num in sorted(beat_keyword_map.keys()):
+        ids = beat_keyword_map.get(beat_num) or []
+        if not ids:
+            continue
+        pretty = []
+        for kid in ids:
+            meta = by_id.get(kid, {})
+            name = meta.get("name") or kid
+            instr = (meta.get("instruction") or "").strip()
+            anchors = meta.get("anchors") if isinstance(meta.get("anchors"), list) else []
+            if instr and anchors:
+                pretty.append(f"- Beat {beat_num} MUST include: {name}. {instr} Use explicit lexical anchors like: {', '.join(anchors)}.")
+            elif instr:
+                pretty.append(f"- Beat {beat_num} MUST include: {name}. {instr}")
+            else:
+                pretty.append(f"- Beat {beat_num} MUST include: {name}.")
+        lines.extend(pretty)
+
+    return "\n".join(lines).strip()
+
+def _validate_keyword_coverage(beats: list, beat_keyword_map: Dict[int, list], keyword_constraints: list) -> Dict[int, list]:
+    """
+    Return missing keywords by beat number.
+    Uses lexical anchors when available, otherwise falls back to keyword id/name presence.
+    """
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for k in keyword_constraints or []:
+        try:
+            kid = str(k.get("id"))
+            if kid:
+                by_id[kid] = k
+        except Exception:
+            continue
+
+    missing: Dict[int, list] = {}
+    for beat_num, ids in (beat_keyword_map or {}).items():
+        if beat_num < 1 or beat_num > len(beats):
+            continue
+        text = beats[beat_num - 1].lower()
+        for kid in ids or []:
+            meta = by_id.get(kid, {})
+            anchors = meta.get("anchors") if isinstance(meta.get("anchors"), list) else []
+            ok = False
+            if anchors:
+                ok = any(a.lower() in text for a in anchors if isinstance(a, str) and a.strip())
+            if not ok:
+                # fallback to id or name substring
+                name = str(meta.get("name") or "").lower()
+                if kid.lower() in text or (name and name.lower() in text):
+                    ok = True
+            if not ok:
+                if beat_num not in missing:
+                    missing[beat_num] = []
+                missing[beat_num].append(kid)
+    return missing
+
+def _assign_keywords_to_beats_with_llm(
+    outline_text: str,
+    keyword_constraints: list,
+    *,
+    model_or_engine,
+    tokenizer,
+    use_vllm: bool,
+    device: str,
+) -> Dict[int, list]:
+    """
+    JSON-only keyword-to-beat assignment step.
+    Returns a dict beat_num -> [keyword_id].
+    Falls back to deterministic mapping if JSON parsing fails.
+    """
+    if not keyword_constraints:
+        return {}
+
+    # Compact keyword list for model
+    kw_list = []
+    for k in keyword_constraints:
+        try:
+            kw_list.append({
+                "id": k.get("id"),
+                "category": k.get("category"),
+                "name": k.get("name"),
+            })
+        except Exception:
+            continue
+
+    system = """You are a story planner.
+
+TASK:
+Assign each keyword to the most appropriate beat(s) in a 12-beat outline.
+
+RULES:
+- Do NOT write story text.
+- Do NOT invent new keywords.
+- Each keyword must be assigned to at least one beat.
+- Sexual acts/positions should be assigned only to beats where sexual activity occurs (typically Beats 6–11).
+- Do NOT assign orgasm-only keywords outside Beat 11.
+
+FORMAT (JSON ONLY):
+{
+  "beatKeywords": {
+    "7": ["anal"]
+  }
+}"""
+
+    user = f"""Outline:
+{outline_text}
+
+Keywords:
+{json.dumps(kw_list)}"""
+
+    out_text, _t = _generate_content(
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model_or_engine,
+        tokenizer,
+        use_vllm,
+        temperature=0.2,
+        max_tokens=800,
+        device=device,
+    )
+    obj = _parse_json_from_text(out_text) or {}
+    beat_keywords = obj.get("beatKeywords") if isinstance(obj.get("beatKeywords"), dict) else {}
+
+    # Convert keys to int
+    mapping: Dict[int, list] = {}
+    try:
+        for k, v in beat_keywords.items():
+            bn = int(k)
+            if not isinstance(v, list):
+                continue
+            ids = []
+            for item in v:
+                if isinstance(item, str) and item.strip():
+                    ids.append(item.strip())
+            if ids:
+                mapping[bn] = ids
+    except Exception:
+        mapping = {}
+
+    # Deterministic fallback: assign sexual activities to Beat 7/8, positions to Beat 9, others ignored
+    if not mapping:
+        mapping = {}
+        acts = [k.get("id") for k in kw_list if str(k.get("category", "")).lower() == "sexual activity"]
+        positions = [k.get("id") for k in kw_list if str(k.get("category", "")).lower() == "sexual position"]
+        acts = [a for a in acts if isinstance(a, str) and a]
+        positions = [p for p in positions if isinstance(p, str) and p]
+        if acts:
+            mapping[7] = [acts[0]]
+            if len(acts) > 1:
+                mapping[8] = [acts[1]]
+        if positions:
+            mapping[9] = [positions[0]]
+    return mapping
+
 def _micro_add_to_reach_min_v2(
     structured_text: str,
     min_chars: int,
@@ -1244,6 +1420,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             enable_transitions = bool(input_data.get("enable_transitions", False))
             enable_dialogue = bool(input_data.get("enable_dialogue", False))
             enable_motifs = bool(input_data.get("enable_motifs", False))
+            keyword_constraints = input_data.get("keyword_constraints", []) or []
 
             # Tight step budgets (can be overridden via input_data)
             outline_max_tokens_v2 = int(input_data.get("outline_max_tokens", 800) or 800)
@@ -1286,6 +1463,26 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 step_name="Step1_outline",
             )
 
+            # NEW: Keyword → Beat binding (JSON-only) so keywords can't silently drop.
+            beat_keyword_map: Dict[int, list] = {}
+            if keyword_constraints:
+                logger.info("=" * 80)
+                logger.info("🏷️ STEP 1.5: Assigning keywords to beats (JSON-only)...")
+                logger.info("=" * 80)
+                beat_keyword_map = _assign_keywords_to_beats_with_llm(
+                    outline_text,
+                    keyword_constraints,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                )
+                # Store for debugging
+                try:
+                    metadata["beatKeywordMap"] = {str(k): v for k, v in beat_keyword_map.items()}
+                except Exception:
+                    pass
+
             # Step 2: Physicalization (expanded beats, no climax except Beat 11)
             logger.info("=" * 80)
             logger.info("📖 STEP 2: Physicalization (expand beats; climax locked to Beat 11)...")
@@ -1305,6 +1502,8 @@ RULES:
 - Do NOT refer to characters as "the man", "the woman" except at first introduction.
 - Do NOT write outline/stage-direction phrases like "Transition to..." / "They change positions..." / "The tension peaks...".
 - Each beat must read as in-scene storytelling, not a bullet summary.
+- If a beat has a keyword constraint for a sexual act, you MUST depict the act explicitly with act-specific anatomy and mechanics.
+- Do not euphemize or generalize; include the required lexical anchors when provided.
 
 CLIMAX CONTROL:
 - A climax may ONLY occur in Beat 11.
@@ -1323,6 +1522,8 @@ FORMAT (STRICT):
 OUTPUT:
 A fully expanded 12-beat story."""
 
+            keyword_constraints_text = _build_keyword_constraints_text(beat_keyword_map, keyword_constraints)
+
             step2_user = f"""Expand the outline below into 12 expanded beats.
 
 IMPORTANT:
@@ -1330,6 +1531,8 @@ IMPORTANT:
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
 - Aim for ~850–900 characters per beat. Keep most beats within 780–930.
+
+{keyword_constraints_text if keyword_constraints_text else ''}
 
 OUTLINE:
 {outline_text}
@@ -1356,6 +1559,49 @@ Write the expanded beats now."""
             )
 
             beats = _split_beats_strict(expanded_text)
+
+            # Keyword validation after Step 2 (retry once if missing)
+            if keyword_constraints and beat_keyword_map:
+                missing = _validate_keyword_coverage(beats, beat_keyword_map, keyword_constraints)
+                if missing:
+                    logger.warning(f"⚠️ Step2 keyword validation failed (missing): {missing}. Retrying Step 2 once with stronger enforcement.")
+                    missing_lines = []
+                    for bn in sorted(missing.keys()):
+                        missing_lines.append(f"- Beat {bn} missing: {', '.join(missing[bn])}")
+                    enforcement = (
+                        "\n\nCRITICAL RETRY NOTE:\n"
+                        "Your previous output failed the keyword constraints.\n"
+                        "You MUST explicitly depict the missing items in the specified beats, using explicit anatomy/mechanics and the lexical anchors when provided.\n"
+                        + "\n".join(missing_lines)
+                    )
+                    step2_user_retry = step2_user + enforcement
+                    expanded_text_retry2, step2_time_retry2 = _generate_content(
+                        [{"role": "system", "content": step2_system}, {"role": "user", "content": step2_user_retry}],
+                        model_or_engine,
+                        tokenizer,
+                        use_vllm,
+                        temperature,
+                        max_tokens=step2_max_tokens,
+                        device=device
+                    )
+                    expanded_text_retry2 = _ensure_structured_beats(
+                        expanded_text_retry2,
+                        expected_beats,
+                        model_or_engine=model_or_engine,
+                        tokenizer=tokenizer,
+                        use_vllm=use_vllm,
+                        device=device,
+                        step_name="Step2_physicalization_keyword_retry",
+                    )
+                    beats_retry2 = _split_beats_strict(expanded_text_retry2)
+                    missing2 = _validate_keyword_coverage(beats_retry2, beat_keyword_map, keyword_constraints)
+                    if missing2:
+                        logger.warning(f"⚠️ Step2 keyword retry still missing: {missing2}. Proceeding; final story may not include all keywords.")
+                        metadata["missingKeywordMap"] = {str(k): v for k, v in missing2.items()}
+                    else:
+                        expanded_text = expanded_text_retry2
+                        step2_time = step2_time + step2_time_retry2
+                        beats = beats_retry2
 
             # Step 2 checkpoint: reject and retry if out of allowed buffer.
             # We do NOT proceed to later steps if Step 2 fails the length contract.
