@@ -939,7 +939,8 @@ def _parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
 def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
     """
     Apply 1-sentence transitions between beats in code, without rewriting existing beat text.
-    Strategy: append transition as a new paragraph to the end of the prior beat.
+    Strategy: append transition as a micro-continuation at the end of the prior beat,
+    avoiding a hard paragraph break so it doesn't read like a bolted-on bridge.
     """
     if not transitions:
         return beats
@@ -955,6 +956,17 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
                 continue
             if not txt:
                 continue
+            # Hard caps: 1–2 short sentences, <= 180 chars total
+            if len(txt) > 180:
+                continue
+            # Sentence count heuristic (avoid "..." being counted as multiple)
+            import re
+            sent_count = len([m for m in re.findall(r"[.!?]+", txt) if m != "..."])
+            if sent_count == 0:
+                # Allow a single sentence without terminal punctuation
+                sent_count = 1
+            if sent_count > 2:
+                continue
             if "⁂" in txt or "Beat" in txt:
                 continue
             by_pair[f"{a}-{b}"] = txt
@@ -965,7 +977,15 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
     for i in range(1, len(beats)):  # between i and i+1
         key = f"{i}-{i+1}"
         if key in by_pair:
-            out[i - 1] = out[i - 1].rstrip() + "\n\n" + by_pair[key]
+            prior = out[i - 1].rstrip()
+            transition = by_pair[key].strip()
+            # If the beat already has multiple paragraphs, use a single newline.
+            # Otherwise, append as an inline continuation sentence.
+            if "\n\n" in prior:
+                joiner = "\n"
+            else:
+                joiner = " " if prior and not prior.endswith(("\n", " ")) else ""
+            out[i - 1] = prior + joiner + transition
     return out
 
 def _safe_trim_to_max(cleaned_text: str, max_chars: int) -> str:
@@ -1107,7 +1127,13 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         metadata = event.get("metadata", {})
         
         # Extract callback_url early and log it
-        callback_url = input_data.get("callback_url") or metadata.get("callback_url")
+        # Check multiple locations: top-level input, top-level metadata, and nested input.metadata
+        input_metadata = input_data.get("metadata", {})
+        callback_url = (
+            input_data.get("callback_url") 
+            or metadata.get("callback_url") 
+            or input_metadata.get("callback_url")
+        )
         logger.info(f"🔔 Callback URL received: {callback_url if callback_url else 'NOT PROVIDED'}")
         logger.info(f"📋 Input data keys: {list(input_data.keys())}")
         logger.info(f"📋 Metadata keys: {list(metadata.keys())}")
@@ -1145,7 +1171,12 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         
         user_id = input_data.get("user_id") or metadata.get("user_id")
         story_id = input_data.get("story_id") or metadata.get("story_id")
-        callback_url = input_data.get("callback_url") or metadata.get("callback_url")
+        # Re-check callback_url (may have been set earlier, but ensure we have the latest)
+        callback_url = (
+            input_data.get("callback_url") 
+            or metadata.get("callback_url") 
+            or input_metadata.get("callback_url")
+        )
         
         # Get mode and tone for expansion prompt (if needed)
         mode = input_data.get("mode", "sensual")
@@ -1265,12 +1296,15 @@ TASK:
 Expand each beat into detailed narrative prose.
 
 RULES:
-- Expand each beat to 800–900 characters.
-- Do not exceed 900 characters per beat.
-- Do not go below 800 characters per beat.
+- Expand each beat into a complete scene of ~850–900 characters.
+- Keep most beats within 780–930 characters (small variance is allowed).
 - Follow the outline exactly; do not change event order.
 - Add concrete physical actions, positions, and spatial detail.
 - Graphic description IS allowed.
+- Introduce named adult protagonists early (Beat 1) and refer to them by name thereafter.
+- Do NOT refer to characters as "the man", "the woman" except at first introduction.
+- Do NOT write outline/stage-direction phrases like "Transition to..." / "They change positions..." / "The tension peaks...".
+- Each beat must read as in-scene storytelling, not a bullet summary.
 
 CLIMAX CONTROL:
 - A climax may ONLY occur in Beat 11.
@@ -1295,7 +1329,7 @@ IMPORTANT:
 - Preserve the beat labels exactly (Beat 1..Beat 12).
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
-- Each beat MUST be 800–900 characters (strict).
+- Aim for ~850–900 characters per beat. Keep most beats within 780–930.
 
 OUTLINE:
 {outline_text}
@@ -1378,8 +1412,13 @@ Write short transition sentences between beats.
 RULES:
 - Do NOT rewrite beats.
 - Do NOT repeat story content.
-- Do NOT add sexual detail.
-- Each transition must be 1 sentence only.
+- Do NOT add sexual detail or new sex acts.
+- Do NOT add dialogue.
+- Do NOT escalate intensity.
+- Each transition must be 1–2 short sentences, max 180 characters total.
+- Prefer physical or situational continuation over abstract causality.
+- Do NOT use stage-direction phrasing like "Transition to..." / "Cut to..." / "Shift to...".
+- Refer to characters by name/pronouns (avoid "the man", "the woman").
 
 FORMAT:
 Return ONLY valid JSON:
@@ -1464,8 +1503,10 @@ Add or refine dialogue for ONE beat only.
 RULES:
 - Do NOT add new physical actions.
 - Do NOT escalate sexual intensity.
-- Dialogue must reflect power dynamics only.
-- Max 80 additional characters.
+- Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
+- Max 240 additional characters total.
+- Add at most 1–2 short lines of dialogue.
+- Avoid generic labels ("the man", "the woman"); use names/pronouns.
 
 OUTPUT:
 Return ONLY the revised beat text."""
@@ -1555,6 +1596,7 @@ STRICT RULES:
 - Do NOT intensify sexual acts.
 - Do NOT add dialogue.
 - Prefer shortening over expanding.
+- You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants, broken prefixes).
 
 FORMAT:
 Return the full story with identical structure:
@@ -2335,7 +2377,12 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
         try:
             input_data = event.get("input", {})
             metadata = event.get("metadata", {})
-            callback_url = input_data.get("callback_url") or metadata.get("callback_url")
+            input_metadata = input_data.get("metadata", {})
+            callback_url = (
+                input_data.get("callback_url") 
+                or metadata.get("callback_url") 
+                or input_metadata.get("callback_url")
+            )
             story_id = input_data.get("story_id") or metadata.get("story_id")
             user_id = input_data.get("user_id") or metadata.get("user_id")
             
