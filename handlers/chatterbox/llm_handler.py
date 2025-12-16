@@ -826,6 +826,9 @@ _SOFT_MIN_CHARS = 9000
 _HARD_MAX_CHARS = 11500
 _STEP2_GATE_MIN = 8800
 _STEP2_GATE_MAX = 11800
+_BEAT_MIN = 780
+_BEAT_TARGET = 850
+_BEAT_MAX = 930
 
 def _normalize_workflow_type(input_data: Dict[str, Any], metadata: Dict[str, Any]) -> str:
     """Return normalized workflow type (accepts workflow_type or workflow_version)."""
@@ -944,11 +947,92 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
     """
     if not transitions:
         return beats
+
+    # Transition safety filters: transitions must never "do the next beat".
+    # They should only add state/anticipation, not action/anatomy/acts.
+    FORBIDDEN_SUBSTRINGS = [
+        # action verbs / procedural language
+        "enter", "entered", "insert", "inserted", "thrust", "thrusts", "push", "pulled", "pulls",
+        "guide", "guides", "guided", "turn", "turned", "move", "moves", "moved", "position", "positions",
+        "spread", "spreads", "spreading", "reach", "reaches", "reached", "grip", "grips", "gripping",
+        "kiss", "kisses", "kissing", "lick", "licks", "licking", "suck", "sucks", "sucking",
+        # stage directions
+        "transition to", "cut to", "shift to",
+        # sex acts / escalation cues (keep broad)
+        "anal", "oral", "blowjob", "rim", "rimming", "penetrat", "fuck", "fucking",
+        # anatomy/contact terms
+        "anus", "asshole", "sphincter", "rectum", "cheeks", "cock", "dick", "pussy", "clit", "nipple",
+        "tongue", "mouth", "lips",
+    ]
+    FORBIDDEN_MULTIWORD = [
+        "from behind",
+        "hands and knees",
+    ]
+
+    def _is_safe_transition(txt: str) -> bool:
+        t = (txt or "").strip()
+        if not t:
+            return False
+        low = t.lower()
+        if any(w in low for w in FORBIDDEN_MULTIWORD):
+            return False
+        if any(s in low for s in FORBIDDEN_SUBSTRINGS):
+            return False
+        # Avoid "Name + verb" starts that often cause mini-beats.
+        # e.g. "Neil shifts..." / "Sarah turns..."
+        try:
+            import re
+            if re.match(r"^[A-Z][a-z]+\s+\w+", t):
+                first_two = " ".join(t.split()[:2]).lower()
+                if any(v in first_two for v in ["shifts", "guides", "turns", "moves", "reaches", "spreads", "enters", "kisses"]):
+                    return False
+        except Exception:
+            pass
+        return True
+
+    def _transition_bleeds_into_next(txt: str, next_beat: str) -> bool:
+        """
+        Cheap overlap heuristic: if the transition shares too many non-trivial words with the next beat,
+        it's probably describing what happens next instead of anticipation.
+        """
+        try:
+            import re
+            stop = {"the","a","an","and","or","but","to","of","in","on","at","with","for","from","into","as","is","was","were","be","been","her","his","their","she","he","they","them","him"}
+            t_words = [w for w in re.findall(r"[a-zA-Z']+", (txt or "").lower()) if len(w) >= 4 and w not in stop]
+            n_words = [w for w in re.findall(r"[a-zA-Z']+", (next_beat or "").lower()) if len(w) >= 4 and w not in stop]
+            if not t_words or not n_words:
+                return False
+            inter = set(t_words) & set(n_words)
+            # If most of the transition's meaningful words already appear in the next beat, it's a spoiler.
+            ratio = len(inter) / max(1, len(set(t_words)))
+            return (len(inter) >= 5 and ratio >= 0.45)
+        except Exception:
+            return False
+
+    def _clean_transition(txt: str) -> str:
+        """
+        Deterministic transition cleanup:
+        - strip leading/trailing whitespace/quotes
+        - remove leading numbering like "0:" / "1."
+        - keep it short and stateful (prompt + filters enforce semantics)
+        """
+        if not txt:
+            return ""
+        t = txt.replace("\r\n", "\n").replace("\r", "\n").strip()
+        # Remove leading quote characters that sometimes appear
+        t = t.lstrip(' "\'“”')
+        # Remove leading numeric helper prefixes (e.g., "0: " / "1. ")
+        import re
+        t = re.sub(r"^\s*\d+\s*[:.)]\s*", "", t)
+        # Collapse internal whitespace
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
     by_pair: Dict[str, str] = {}
     for t in transitions:
         try:
             pair = t.get("between")
-            txt = (t.get("text") or "").strip()
+            txt = _clean_transition((t.get("text") or ""))
             if not isinstance(pair, list) or len(pair) != 2:
                 continue
             a, b = int(pair[0]), int(pair[1])
@@ -969,6 +1053,8 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
                 continue
             if "⁂" in txt or "Beat" in txt:
                 continue
+            if not _is_safe_transition(txt):
+                continue
             by_pair[f"{a}-{b}"] = txt
         except Exception:
             continue
@@ -979,13 +1065,11 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
         if key in by_pair:
             prior = out[i - 1].rstrip()
             transition = by_pair[key].strip()
-            # If the beat already has multiple paragraphs, use a single newline.
-            # Otherwise, append as an inline continuation sentence.
-            if "\n\n" in prior:
-                joiner = "\n"
-            else:
-                joiner = " " if prior and not prior.endswith(("\n", " ")) else ""
-            out[i - 1] = prior + joiner + transition
+            # If the transition likely bleeds into Beat N+1, skip it.
+            if _transition_bleeds_into_next(transition, out[i]):
+                continue
+            # Apply as a soft separate paragraph (keeps prose readable, avoids duplicating next beat mechanics).
+            out[i - 1] = prior + "\n\n" + transition
     return out
 
 def _safe_trim_to_max(cleaned_text: str, max_chars: int) -> str:
@@ -1037,7 +1121,16 @@ def _build_keyword_constraints_text(beat_keyword_map: Dict[int, list], keyword_c
         ids = beat_keyword_map.get(beat_num) or []
         if not ids:
             continue
+        # Special handling: if both anal + ass_to_mouth are in same beat, enforce strict intra-beat order.
+        has_anal = any(str(x).strip().lower() == "anal" for x in ids)
+        has_atm = any(str(x).strip().lower() == "ass_to_mouth" for x in ids)
         pretty = []
+        if has_anal and has_atm:
+            pretty.append(f"- Beat {beat_num} MUST include BOTH Anal and Ass-to-Mouth in this strict order:")
+            pretty.append(f"  1) Anal penetration (with preparation + explicit anatomy).")
+            pretty.append(f"  2) Withdrawal/cleanup moment (brief, non-climax).")
+            pretty.append(f"  3) Ass-to-mouth contact after anal (explicitly described; no euphemism).")
+            pretty.append(f"  - Do NOT move climax/release into this beat.")
         for kid in ids:
             meta = by_id.get(kid, {})
             name = meta.get("name") or kid
@@ -1076,6 +1169,14 @@ def _validate_keyword_coverage(beats: list, beat_keyword_map: Dict[int, list], k
             meta = by_id.get(kid, {})
             anchors = meta.get("anchors") if isinstance(meta.get("anchors"), list) else []
             ok = False
+            # Special-case ass_to_mouth: accept "ass[- ]to[- ]mouth" even if anchors differ.
+            if str(kid).lower() == "ass_to_mouth":
+                try:
+                    import re
+                    if re.search(r"ass[\s\-]*to[\s\-]*mouth", text):
+                        ok = True
+                except Exception:
+                    pass
             if anchors:
                 ok = any(a.lower() in text for a in anchors if isinstance(a, str) and a.strip())
             if not ok:
@@ -1186,6 +1287,127 @@ Keywords:
             mapping[9] = [positions[0]]
     return mapping
 
+def _normalize_keyword_id(token: str, keyword_constraints: list) -> Optional[str]:
+    """
+    Map model outputs like 'ass to mouth' -> 'ass_to_mouth' using known ids/names.
+    """
+    if not token:
+        return None
+    t = str(token).strip().lower()
+    t = t.replace("-", "_").replace(" ", "_")
+    # Build lookup from constraints
+    ids = set()
+    name_map: Dict[str, str] = {}
+    for k in keyword_constraints or []:
+        try:
+            kid = str(k.get("id") or "").strip().lower()
+            if kid:
+                ids.add(kid)
+            nm = str(k.get("name") or "").strip().lower()
+            if nm:
+                name_map[nm.replace(" ", "_").replace("-", "_")] = kid
+        except Exception:
+            continue
+    if t in ids:
+        return t
+    if t in name_map and name_map[t]:
+        return name_map[t]
+    return None
+
+def _ensure_all_keywords_assigned(beat_keyword_map: Dict[int, list], keyword_constraints: list) -> Dict[int, list]:
+    """
+    Ensure every selected keyword id appears at least once in beat_keyword_map.
+    Also resolve dependency: ass_to_mouth should co-locate with anal if both selected.
+    """
+    selected_ids = []
+    for k in keyword_constraints or []:
+        try:
+            kid = str(k.get("id") or "").strip()
+            if kid:
+                selected_ids.append(kid.lower())
+        except Exception:
+            continue
+
+    # Normalize any existing tokens to canonical ids
+    normalized: Dict[int, list] = {}
+    for bn, toks in (beat_keyword_map or {}).items():
+        ids = []
+        for tok in toks or []:
+            kid = _normalize_keyword_id(tok, keyword_constraints)
+            if kid:
+                ids.append(kid)
+        if ids:
+            # de-dupe while preserving order
+            seen = set()
+            out = []
+            for x in ids:
+                if x not in seen:
+                    seen.add(x)
+                    out.append(x)
+            normalized[int(bn)] = out
+
+    present = set()
+    for ids in normalized.values():
+        for kid in ids:
+            present.add(kid)
+
+    missing = [kid for kid in selected_ids if kid not in present]
+
+    # Capability heuristics: place sexual activities into Beat 10 by default (pre-climax, explicit allowed),
+    # positions into Beat 9, everything else into Beat 4/5 if needed.
+    def _default_beat_for(kid: str) -> int:
+        cat = ""
+        for k in keyword_constraints or []:
+            try:
+                if str(k.get("id") or "").strip().lower() == kid:
+                    cat = str(k.get("category") or "").strip().lower()
+                    break
+            except Exception:
+                continue
+        if cat == "sexual position":
+            return 9
+        if cat == "sexual activity":
+            return 10
+        return 5
+
+    for kid in missing:
+        bn = _default_beat_for(kid)
+        normalized.setdefault(bn, [])
+        normalized[bn].append(kid)
+
+    # Dependency rule: if both anal and ass_to_mouth, co-locate in the same beat (Beat 10 by default)
+    if "anal" in selected_ids and "ass_to_mouth" in selected_ids:
+        # find where anal is
+        anal_beat = None
+        for bn, ids in normalized.items():
+            if "anal" in ids:
+                anal_beat = bn
+                break
+        if anal_beat is None:
+            anal_beat = 10
+            normalized.setdefault(anal_beat, []).append("anal")
+        # ensure ass_to_mouth in same beat
+        # remove from other beats first
+        for bn, ids in list(normalized.items()):
+            if bn != anal_beat and "ass_to_mouth" in ids:
+                normalized[bn] = [x for x in ids if x != "ass_to_mouth"]
+                if not normalized[bn]:
+                    del normalized[bn]
+        normalized.setdefault(anal_beat, [])
+        if "ass_to_mouth" not in normalized[anal_beat]:
+            normalized[anal_beat].append("ass_to_mouth")
+
+    # final de-dupe per beat
+    for bn, ids in list(normalized.items()):
+        seen = set()
+        out = []
+        for x in ids:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        normalized[bn] = out
+    return normalized
+
 def _micro_add_to_reach_min_v2(
     structured_text: str,
     min_chars: int,
@@ -1209,11 +1431,12 @@ def _micro_add_to_reach_min_v2(
         return structured_text
 
     delta = min_chars - cleaned_len
-    # Add at most 1 sentence to up to 10 beats (avoid Beat 11 climax, avoid Beat 12 no-sex beat)
+    # Add at most 1–2 sentences to up to 10 beats (avoid Beat 11 climax, avoid Beat 12 no-sex beat).
+    # This is a cheap bump; a stronger per-beat recovery pass exists later if we're far below min.
     max_targets = 10
-    approx_per = max(40, min(90, int((delta / max_targets) + 10)))
-    # Choose number of beats to modify
-    beats_to_modify = min(max_targets, max(1, int((delta + 69) // 70)))
+    approx_per = max(60, min(140, int((delta / max_targets) + 20)))
+    # Choose number of beats to modify (assume ~120 chars per beat)
+    beats_to_modify = min(max_targets, max(1, int((delta + 119) // 120)))
     target_ids = list(range(1, beats_to_modify + 1))
 
     system = f"""We are a micro-expansion editor.
@@ -1226,8 +1449,8 @@ STRICT RULES:
 - Do NOT add dialogue.
 - Do NOT add new sexual acts.
 - Only add sensory detail, internal thought, or environmental description.
-- Each append must be ONE sentence only.
-- Each append must be ~{approx_per} characters (±20).
+- Each append must be 1–2 short sentences only.
+- Each append must be ~{approx_per} characters (±40).
 - Do NOT mention beat numbers in the sentence.
 
 FORMAT:
@@ -1244,7 +1467,10 @@ Return ONLY valid JSON:
         b = beats[i - 1]
         body = b.split(":", 1)[1].strip() if ":" in b else b.strip()
         context_lines.append(f"Beat {i} context: {body[:260]}")
-    user = f"""We are below the minimum length and need small, safe additions.\n\nProvide appends for beats: {', '.join(str(i) for i in target_ids)}.\n\n" + "\n".join(context_lines)"""
+    user = "We are below the minimum length and need small, safe additions.\n\n" + \
+           f"Provide appends for beats: {', '.join(str(i) for i in target_ids)}.\n\n" + \
+           "Return only JSON.\n\n" + \
+           "\n".join(context_lines)
 
     out_text, _t = _generate_content(
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
@@ -1273,6 +1499,185 @@ Return ONLY valid JSON:
 
     rebuilt = _BEAT_SEPARATOR.join([b.strip() for b in beats])
     return rebuilt
+
+def _trim_beat_to_max(beat_text: str, max_body_chars: int) -> str:
+    """Trim a single beat body (keeping Beat X: label) to max_body_chars, sentence-aware."""
+    beat_text = (beat_text or "").strip()
+    if not beat_text:
+        return beat_text
+    label = ""
+    body = beat_text
+    if ":" in beat_text[:20]:
+        label, body = beat_text.split(":", 1)
+        label = label.strip() + ":"
+        body = body.strip()
+    if len(body) <= max_body_chars:
+        return f"{label} {body}".strip() if label else body
+    cut = body[:max_body_chars]
+    for sep in [".", "!", "?"]:
+        idx = cut.rfind(sep)
+        if idx > max_body_chars * 0.85:
+            cut = cut[:idx + 1]
+            break
+    cut = cut.rstrip()
+    return f"{label} {cut}".strip() if label else cut
+
+def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
+    """
+    Clean a structured Beat 1..N story without destroying the structure.
+    - removes per-line numeric junk (e.g. "0:")
+    - removes leading quotes/whitespace per line
+    - removes nested Beat labels inside a beat body
+    """
+    beats = _split_beats_strict(text)
+    ok, _reason = _validate_beats_strict(beats, expected_beats=expected_beats)
+    if not ok:
+        return text.strip()
+
+    import re
+    cleaned = []
+    for i, beat in enumerate(beats, 1):
+        if ":" in beat:
+            label, body = beat.split(":", 1)
+            label = f"Beat {i}:"
+            body = body
+        else:
+            label = f"Beat {i}:"
+            body = beat
+        # Normalize newlines and strip whitespace/quotes per line
+        body = body.replace("\r\n", "\n").replace("\r", "\n")
+        body = re.sub(r'(?m)^\s*["“”]\s*', '', body)
+        body = re.sub(r'(?m)^\s*\d+\s*[:.)]\s*', '', body)  # remove "0:" etc
+        body = "\n".join(line.strip() for line in body.split("\n"))
+        # Remove accidental nested beat labels inside the body
+        body = re.sub(r'(?im)\bBeat\s*\d+\s*:\s*', '', body)
+        # Collapse blank lines
+        body = re.sub(r"\n{3,}", "\n\n", body).strip()
+        # Beat 1: strip expository framing if it leaked into the beat body
+        if i == 1:
+            low = body.lstrip().lower()
+            forbidden = (
+                "the story starts",
+                "the story takes place",
+                "the story opens",
+                "this story",
+                "the scene opens",
+                "the narrative",
+                "the following story",
+            )
+            if low.startswith(forbidden):
+                # Drop first sentence
+                parts = body.split(".", 1)
+                if len(parts) > 1:
+                    body = parts[1].lstrip()
+                else:
+                    body = ""
+        cleaned.append(f"{label} {body}".strip())
+    return _BEAT_SEPARATOR.join(cleaned).strip()
+
+def _recover_length_per_beat_v2(
+    structured_text: str,
+    beat_keyword_map: Dict[int, list],
+    keyword_constraints: list,
+    *,
+    model_or_engine,
+    tokenizer,
+    use_vllm: bool,
+    device: str,
+) -> str:
+    """
+    Per-beat densifier recovery. Only runs on beats that dropped below _BEAT_MIN.
+    This defends length against entropy from editorial steps.
+    """
+    beats = _split_beats_strict(structured_text)
+    ok, _reason = _validate_beats_strict(beats, expected_beats=12)
+    if not ok:
+        return structured_text
+
+    # Compute beat body lengths
+    body_lens: Dict[int, int] = {}
+    for i, b in enumerate(beats, 1):
+        body = b.split(":", 1)[1].strip() if ":" in b else b.strip()
+        body_lens[i] = len(body)
+
+    if min(body_lens.values()) >= _BEAT_MIN:
+        return structured_text
+
+    # Lookup for keyword anchors per beat (short constraint snippet)
+    by_id: Dict[str, Dict[str, Any]] = {}
+    for k in keyword_constraints or []:
+        try:
+            kid = str(k.get("id") or "").strip()
+            if kid:
+                by_id[kid] = k
+        except Exception:
+            continue
+
+    def _beat_constraint_snippet(beat_num: int) -> str:
+        ids = beat_keyword_map.get(beat_num) or []
+        if not ids:
+            return "- No special keyword constraints for this beat."
+        parts = []
+        for kid in ids:
+            meta = by_id.get(kid, {})
+            name = meta.get("name") or kid
+            anchors = meta.get("anchors") if isinstance(meta.get("anchors"), list) else []
+            if anchors:
+                parts.append(f"- Must satisfy keyword: {name} (anchors: {', '.join(anchors)}).")
+            else:
+                parts.append(f"- Must satisfy keyword: {name}.")
+        return "\n".join(parts)
+
+    # Expand only beats under min
+    for i in range(1, 13):
+        if body_lens.get(i, 0) >= _BEAT_MIN:
+            continue
+        beat = beats[i - 1].strip()
+        system = f"""You are a narrative densifier for one beat.
+
+TASK:
+Rewrite Beat {i} to increase descriptive density while preserving the same events and meaning.
+
+STRICT RULES:
+- Do NOT add new plot events.
+- Do NOT add new sexual acts. Only elaborate what is already happening.
+- Do NOT add dialogue.
+- Do NOT add climax/release outside Beat 11.
+- Preserve names, POV, tense, and continuity.
+- You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants).
+
+LENGTH SAFETY (CRITICAL):
+- Beat body MUST be {_BEAT_MIN}–{_BEAT_MAX} characters (aim ~{_BEAT_TARGET}).
+
+FORMAT:
+- Output ONLY the revised Beat {i} text.
+- Keep the label exactly: \"Beat {i}:\"."""
+
+        user = f"""Constraints for Beat {i}:
+{_beat_constraint_snippet(i)}
+
+Beat {i} to densify:
+{beat}
+
+Return ONLY the revised Beat {i} text."""
+
+        revised, _t = _generate_content(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            model_or_engine,
+            tokenizer,
+            use_vllm,
+            temperature=0.4,
+            max_tokens=900,
+            device=device,
+        )
+        revised = (revised or "").strip()
+        if not revised.lstrip().startswith(f"Beat {i}:"):
+            revised = f"Beat {i}: " + revised
+        # Trim if wildly over
+        revised = _trim_beat_to_max(revised, _BEAT_MAX)
+        beats[i - 1] = revised
+
+    return _BEAT_SEPARATOR.join([b.strip() for b in beats])
 
 def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -1477,6 +1882,8 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                     use_vllm=use_vllm,
                     device=device,
                 )
+                # Guarantee every selected keyword is assigned at least once (and normalize ids/names).
+                beat_keyword_map = _ensure_all_keywords_assigned(beat_keyword_map, keyword_constraints)
                 # Store for debugging
                 try:
                     metadata["beatKeywordMap"] = {str(k): v for k, v in beat_keyword_map.items()}
@@ -1498,6 +1905,7 @@ RULES:
 - Follow the outline exactly; do not change event order.
 - Add concrete physical actions, positions, and spatial detail.
 - Graphic description IS allowed.
+- CRITICAL OPENING RULE: Beat 1 MUST start in-scene with observable action/posture (no expository framing like "The story takes place...").
 - Introduce named adult protagonists early (Beat 1) and refer to them by name thereafter.
 - Do NOT refer to characters as "the man", "the woman" except at first introduction.
 - Do NOT write outline/stage-direction phrases like "Transition to..." / "They change positions..." / "The tension peaks...".
@@ -1558,6 +1966,8 @@ Write the expanded beats now."""
                 step_name="Step2_physicalization",
             )
 
+            beats = _split_beats_strict(expanded_text)
+            expanded_text = _sanitize_structured_beats(expanded_text, expected_beats=expected_beats)
             beats = _split_beats_strict(expanded_text)
 
             # Keyword validation after Step 2 (retry once if missing)
@@ -1653,17 +2063,30 @@ Write the expanded beats now."""
                 step3_system = """We are a narrative flow editor.
 
 TASK:
-Write short transition sentences between beats.
+Write short transition sentences that create anticipation between beats.
 
-RULES:
-- Do NOT rewrite beats.
-- Do NOT repeat story content.
-- Do NOT add sexual detail or new sex acts.
+ABSOLUTE RULES:
+- Do NOT describe physical actions.
+- Do NOT describe sexual acts.
+- Do NOT describe position changes.
+- Do NOT describe anatomy or contact.
+- Do NOT state what happens next.
 - Do NOT add dialogue.
-- Do NOT escalate intensity.
-- Each transition must be 1–2 short sentences, max 180 characters total.
-- Prefer physical or situational continuation over abstract causality.
-- Do NOT use stage-direction phrasing like "Transition to..." / "Cut to..." / "Shift to...".
+- Do NOT rewrite beats.
+
+ALLOWED CONTENT:
+- Emotional shift
+- Physical proximity without contact
+- Environmental change
+- Internal anticipation
+- Power dynamics
+- Consent cues
+- Silence, pauses, breath, eye contact
+
+CONSTRAINTS:
+- 1–2 short sentences.
+- Max 180 characters total.
+- Avoid stage-direction/meta phrasing ("Transition to...", "Cut to...", "Shift to...").
 - Refer to characters by name/pronouns (avoid "the man", "the woman").
 
 FORMAT:
@@ -1796,6 +2219,7 @@ Rewrite Beat 11 to deliver a single, sharp climax.
 RULES:
 - This is the ONLY beat allowed to climax.
 - Do NOT extend length beyond +15%.
+- LENGTH SAFETY (CRITICAL): Do NOT shrink the beat. Maintain the original beat length within ±5%.
 - Do NOT repeat phrasing.
 - No aftermath.
 
@@ -1841,7 +2265,10 @@ STRICT RULES:
 - Do NOT add new content.
 - Do NOT intensify sexual acts.
 - Do NOT add dialogue.
-- Prefer shortening over expanding.
+- LENGTH SAFETY (CRITICAL):
+  - Do NOT reduce the length of any beat.
+  - Maintain each beat length within ±5%.
+  - If removing repetition, replace it with equivalent concrete physical/sensory detail.
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants, broken prefixes).
 
 FORMAT:
@@ -1877,6 +2304,7 @@ STORY:
                 device=device,
                 step_name="Step7_deduplicate",
             )
+            dedup_text = _sanitize_structured_beats(dedup_text, expected_beats=expected_beats)
             generated_text = dedup_text
             generation_time = outline_time + step2_time + step7_time
             logger.info(f"✅ multi-step-v2 generated structured story: {len(generated_text)} chars")
@@ -1906,6 +2334,37 @@ STORY:
                     cleaned_len_final = len(generated_text)
                 logger.info(f"✅ After micro-add: cleaned_len={cleaned_len_final}")
 
+            # If we're still far below minimum or any beat collapsed below _BEAT_MIN,
+            # run a stronger per-beat recovery pass (does not add new events/acts).
+            try:
+                beats_now = _split_beats_strict(generated_text)
+                beat_body_lens = []
+                for idx, b in enumerate(beats_now, 1):
+                    body = b.split(":", 1)[1].strip() if ":" in b else b.strip()
+                    beat_body_lens.append(len(body))
+                any_beat_too_short = bool(beat_body_lens) and (min(beat_body_lens) < _BEAT_MIN)
+            except Exception:
+                any_beat_too_short = False
+
+            if cleaned_len_final < _SOFT_MIN_CHARS or any_beat_too_short:
+                logger.warning(
+                    f"⚠️ Length still below target after micro-add (cleaned_len={cleaned_len_final}, any_beat_too_short={any_beat_too_short}). Running per-beat densifier recovery."
+                )
+                generated_text = _recover_length_per_beat_v2(
+                    generated_text,
+                    beat_keyword_map if isinstance(beat_keyword_map, dict) else {},
+                    keyword_constraints if isinstance(keyword_constraints, list) else [],
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                )
+                try:
+                    cleaned_len_final = len(clean_story(generated_text))
+                except Exception:
+                    cleaned_len_final = len(generated_text)
+                logger.info(f"✅ After per-beat recovery: cleaned_len={cleaned_len_final}")
+
             # Hard max is enforced on cleaned text later, but we log here for visibility.
             if cleaned_len_final > _HARD_MAX_CHARS:
                 logger.warning(f"⚠️ Above hard max after Step 7: cleaned_len={cleaned_len_final} (>{_HARD_MAX_CHARS}). Will trim after cleaning.")
@@ -1926,6 +2385,21 @@ STORY:
                 story_for_metadata = clean_story(generated_text)
                 story_for_metadata = story_for_metadata[:2500]
 
+                title_guidelines_mature = input_data.get("title_guidelines_mature") or metadata.get("title_guidelines_mature") or {}
+                title_guidelines_text = ""
+                try:
+                    if isinstance(title_guidelines_mature, dict) and title_guidelines_mature.get("style"):
+                        ex = title_guidelines_mature.get("examples") if isinstance(title_guidelines_mature.get("examples"), list) else []
+                        rules = title_guidelines_mature.get("rules") if isinstance(title_guidelines_mature.get("rules"), list) else []
+                        title_guidelines_text = (
+                            "\nTitle guidelines (mature):"
+                            f"\n- Style: {title_guidelines_mature.get('style')}"
+                            + (f"\n- Examples: {'; '.join([str(x) for x in ex[:6]])}" if ex else "")
+                            + (f"\n- Rules: {' '.join([str(x) for x in rules])}" if rules else "")
+                        )
+                except Exception:
+                    title_guidelines_text = ""
+
                 # Step 8a: Title + preview + tags (JSON)
                 allowed_themes = [
                     "betrayal", "redemption", "trust", "duty-vs-desire", "power-and-corruption",
@@ -1936,6 +2410,14 @@ STORY:
                 tones_text = f"Available primary tones: {', '.join(available_tones)}"
 
                 title_preview_system = """You are a creative storyteller and editor specializing in abstract, sophisticated narratives.
+
+NOVELTY REQUIREMENTS (CRITICAL):
+- The title must be distinct and story-specific; avoid generic templates.
+- Do NOT use cliché template titles like "Whispers in the ___" / "___ in the Shadows" / "Embers in Twilight".
+- Do NOT start with or include these overused noir title words/starts: "whispers", "shadows", "embers", "twilight", "midnight", "secrets", "desire".
+- Prefer concrete nouns drawn from the story’s unique details (setting, artifact, motif, conflict).
+- The title MUST contain at least one uncommon story-specific noun (not just mood words).
+- Avoid repeating the same key noun twice.
 
 Read the story below and generate:
 1. A short, engaging title (2–6 words) that captures the story's essence.
@@ -1973,7 +2455,7 @@ Output ONLY valid JSON (no markdown, no code blocks):
   }
 }"""
 
-                title_preview_user = f"""Genre: {genre}
+                title_preview_user = f"""Genre: {genre}{title_guidelines_text}
 {tones_text}{allowed_themes_text}
 Story:
 {story_for_metadata}
@@ -2020,14 +2502,12 @@ Generate a cover image prompt (25–60 words) in an abstract erotic noir style. 
 - Vertical portrait composition suitable for 1024x1536 output
 - Include the book title as tasteful, readable cover typography that matches the art style
 
-Required visual elements to incorporate:
-- silhouettes
-- shadows of intertwined hands
-- a dimly lit room with wine glasses and candlelight
-- soft curves of fabric, smoke, or shapes implying intimacy
-- a backlit figure, clothed, partially obscured
-- a couple in an embrace but with no sexual positioning
-- moody lighting, suggestive atmosphere, sensual composition
+ANTI-SIMILARITY (CRITICAL):
+- Avoid repeating a generic “silhouette + candle + wine” composition unless the story explicitly centers those objects.
+- The prompt MUST include at least 2 story-specific visual details (a location feature + a concrete prop/motif) from the provided tags/context.
+- Vary composition: specify one of (close-up hands, mid-shot embrace, distant corridor/room, mirror reflection, window backlight).
+- Specify a distinct color palette (2–3 colors).
+- Keep non-explicit; no visible sex acts or nudity.
 
 Output ONLY the cover prompt text (25–60 words). No labels, no JSON, just the prompt."""
 
@@ -2036,6 +2516,9 @@ Genre: {genre}
 
 Story context (first 1000 chars for mood reference):
 {story_for_metadata[:1000]}
+
+Story tags (use these to make the cover unique and story-specific):
+{json.dumps(tags or {}, ensure_ascii=False)}
 
 Create an abstract erotic noir cover prompt incorporating the required visual elements. Focus on moody, suggestive, non-explicit imagery. Integrate the exact title text as cover typography."""
 
@@ -2669,6 +3152,61 @@ def clean_story(text: str) -> str:
     """
     import re
     
+    if not text:
+        return ""
+
+    # Normalize newlines
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    # Strip classic expository/meta openings deterministically (first line/sentence)
+    # We cut (do not rewrite) to avoid introducing new content.
+    def _strip_expository_opening(t: str) -> str:
+        try:
+            s = (t or "").lstrip()
+            low = s.lower()
+            forbidden = (
+                "the story starts",
+                "the story takes place",
+                "the story opens",
+                "this story",
+                "the scene opens",
+                "the narrative",
+                "the following story",
+            )
+            if low.startswith(forbidden):
+                # Drop first sentence
+                parts = s.split(".", 1)
+                if len(parts) > 1:
+                    return parts[1].lstrip()
+                return ""
+            return t
+        except Exception:
+            return t
+
+    text = _strip_expository_opening(text)
+
+    # Remove leading quotes caused by model formatting (per line)
+    text = re.sub(r'(?m)^\s*["“”]\s*', '', text)
+
+    # Remove leading numeric junk (e.g. "0: ", "1. ", "2) ")
+    text = re.sub(r'(?m)^\s*\d+\s*[:.)]\s*', '', text)
+
+    # Trim leading/trailing whitespace per line (fix paragraphs starting with a space)
+    text = "\n".join(line.strip() for line in text.split("\n"))
+
+    # Remove common helper phrases that sometimes leak into prose
+    # (we do not rely on prompts to prevent these)
+    helper_patterns = [
+        r'\bThey change positions\b',
+        r'\bTransition to\b',
+        r'\bThe tension peaks\b',
+        r'\bAs the scene shifts\b',
+        r'\bThis leads to\b',
+        r'\bIn the next moment\b',
+    ]
+    for p in helper_patterns:
+        text = re.sub(r'(?im)^\s*' + p + r'.*$', '', text)
+
     # Remove "⁂" dividers with surrounding whitespace
     text = re.sub(r'\s*[⁂]+\s*', '\n\n', text, flags=re.MULTILINE)
     
