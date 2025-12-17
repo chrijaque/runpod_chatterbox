@@ -721,12 +721,17 @@ def _post_signed_callback_with_retry(callback_url: str, payload: dict, max_retri
 
 def notify_success_callback(callback_url: str, story_id: str, content: str, **kwargs):
     """Send success callback to the main app when LLM generation succeeds."""
+    callback_metadata = kwargs.get("metadata", {})
     payload = {
         "story_id": story_id,
         "content": content,
         "user_id": kwargs.get("user_id"),
-        "metadata": kwargs.get("metadata", {})
+        "metadata": callback_metadata
     }
+    
+    # Log metadata contents to verify language is included
+    logger.info(f"📤 Callback payload metadata keys: {list(callback_metadata.keys()) if isinstance(callback_metadata, dict) else 'Not a dict'}")
+    logger.info(f"🌍 Callback payload metadata language: {callback_metadata.get('language') if isinstance(callback_metadata, dict) else 'N/A'}")
     
     try:
         logger.info(f"📤 Sending success callback to: {callback_url}")
@@ -1595,9 +1600,20 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         # Extract parameters
         messages = input_data.get("messages", [])
         temperature = input_data.get("temperature", 0.7)
-        language = input_data.get("language")
-        genre = input_data.get("genre")
-        age_range = input_data.get("age_range")
+        # Check multiple locations for language (similar to callback_url extraction)
+        language = (
+            input_data.get("language")
+            or metadata.get("language")
+            or input_metadata.get("language")
+            or "en"  # Default fallback
+        )
+        genre = input_data.get("genre") or metadata.get("genre") or input_metadata.get("genre")
+        age_range = input_data.get("age_range") or metadata.get("age_range") or input_metadata.get("age_range")
+        
+        # Log extracted parameters for debugging
+        logger.info(f"🌍 Language extracted: {language} (from input_data: {input_data.get('language')}, metadata: {metadata.get('language')}, input_metadata: {input_metadata.get('language')})")
+        logger.info(f"📚 Genre extracted: {genre}")
+        logger.info(f"👶 Age range extracted: {age_range}")
         
         # Workflow selection
         workflow_type = _normalize_workflow_type(input_data, metadata)
@@ -2831,8 +2847,9 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 
                 # Send success callback
                 # Include generated metadata in callback payload so the main app can skip OpenAI fallback.
+                # Ensure language is always included (with fallback to "en" if somehow None)
                 callback_metadata = {
-                    "language": language,
+                    "language": language or "en",  # Ensure language is never None
                     "genre": genre,
                     "age_range": age_range,
                     "temperature": temperature,
@@ -2849,6 +2866,10 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                             callback_metadata[k] = metadata.get(k)
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to build callback metadata: {e}")
+                
+                # Log callback metadata to verify language is included
+                logger.info(f"📤 Callback metadata keys: {list(callback_metadata.keys())}")
+                logger.info(f"🌍 Callback metadata language: {callback_metadata.get('language')}")
 
                 callback_sent = notify_success_callback(
                     callback_url=callback_url,
