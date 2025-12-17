@@ -999,7 +999,7 @@ def _parse_json_from_text(text: str) -> Optional[Dict[str, Any]]:
 
 def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
     """
-    Apply 1-sentence transitions between beats in code, without rewriting existing beat text.
+    Apply transitions between beats in code, without rewriting existing beat text.
     Strategy: append transition as a micro-continuation at the end of the prior beat,
     avoiding a hard paragraph break so it doesn't read like a bolted-on bridge.
     """
@@ -1010,21 +1010,11 @@ def _apply_transitions_to_beats(beats: list, transitions: list) -> list:
     # They should only add state/anticipation, not action/anatomy/acts.
     FORBIDDEN_SUBSTRINGS = [
         # action verbs / procedural language
-        "enter", "entered", "insert", "inserted", "thrust", "thrusts", "push", "pulled", "pulls",
-        "guide", "guides", "guided", "turn", "turned", "move", "moves", "moved", "position", "positions",
-        "spread", "spreads", "spreading", "reach", "reaches", "reached", "grip", "grips", "gripping",
-        "kiss", "kisses", "kissing", "lick", "licks", "licking", "suck", "sucks", "sucking",
         # stage directions
-        "transition to", "cut to", "shift to",
         # sex acts / escalation cues (keep broad)
-        "anal", "oral", "blowjob", "rim", "rimming", "penetrat", "fuck", "fucking",
         # anatomy/contact terms
-        "anus", "asshole", "sphincter", "rectum", "cheeks", "cock", "dick", "pussy", "clit", "nipple",
-        "tongue", "mouth", "lips",
     ]
     FORBIDDEN_MULTIWORD = [
-        "from behind",
-        "hands and knees",
     ]
 
     def _is_safe_transition(txt: str) -> bool:
@@ -1152,58 +1142,6 @@ def _safe_trim_to_max(cleaned_text: str, max_chars: int) -> str:
     except Exception:
         return cleaned_text[:max_chars].rstrip()
 
-def _build_keyword_constraints_text(beat_keyword_map: Dict[int, list], keyword_constraints: list) -> str:
-    """
-    Build a strict, beat-scoped constraints section for Step 2.
-    Uses both semantic instructions and lexical anchors (when provided) to force specificity.
-    """
-    if not beat_keyword_map:
-        return ""
-    by_id: Dict[str, Dict[str, Any]] = {}
-    for k in keyword_constraints or []:
-        try:
-            kid = str(k.get("id"))
-            if not kid:
-                continue
-            by_id[kid] = k
-        except Exception:
-            continue
-
-    lines = ["KEYWORD CONSTRAINTS (STRICT):"]
-    lines.append("- Each listed keyword MUST be clearly and explicitly depicted in its assigned beat.")
-    lines.append("- Do NOT satisfy a keyword by vague euphemism.")
-    lines.append("- If a keyword is assigned to Beat X, do NOT introduce that act in other beats unless explicitly listed.")
-    lines.append("")
-
-    for beat_num in sorted(beat_keyword_map.keys()):
-        ids = beat_keyword_map.get(beat_num) or []
-        if not ids:
-            continue
-        # Special handling: if both anal + ass_to_mouth are in same beat, enforce strict intra-beat order.
-        has_anal = any(str(x).strip().lower() == "anal" for x in ids)
-        has_atm = any(str(x).strip().lower() == "ass_to_mouth" for x in ids)
-        pretty = []
-        if has_anal and has_atm:
-            pretty.append(f"- Beat {beat_num} MUST include BOTH Anal and Ass-to-Mouth in this strict order:")
-            pretty.append(f"  1) Anal penetration (with preparation + explicit anatomy).")
-            pretty.append(f"  2) Withdrawal/cleanup moment (brief, non-climax).")
-            pretty.append(f"  3) Ass-to-mouth contact after anal (explicitly described; no euphemism).")
-            pretty.append(f"  - Do NOT move climax/release into this beat.")
-        for kid in ids:
-            meta = by_id.get(kid, {})
-            name = meta.get("name") or kid
-            instr = (meta.get("instruction") or "").strip()
-            anchors = meta.get("anchors") if isinstance(meta.get("anchors"), list) else []
-            if instr and anchors:
-                pretty.append(f"- Beat {beat_num} MUST include: {name}. {instr} Use explicit lexical anchors like: {', '.join(anchors)}.")
-            elif instr:
-                pretty.append(f"- Beat {beat_num} MUST include: {name}. {instr}")
-            else:
-                pretty.append(f"- Beat {beat_num} MUST include: {name}.")
-        lines.extend(pretty)
-
-    return "\n".join(lines).strip()
-
 def _validate_keyword_coverage(beats: list, beat_keyword_map: Dict[int, list], keyword_constraints: list) -> Dict[int, list]:
     """
     Return missing keywords by beat number.
@@ -1287,13 +1225,6 @@ RULES:
 - Do NOT invent new keywords.
 - Each keyword must be assigned to at least one beat.
 - Sexual acts/positions should be assigned only to beats where sexual activity occurs (typically Beats 6–11).
-- Do NOT assign orgasm-only keywords outside Beat 11.
-
-FORMAT (JSON ONLY):
-{
-  "beatKeywords": {
-    "7": ["anal"]
-  }
 }"""
 
     user = f"""Outline:
@@ -1345,127 +1276,6 @@ Keywords:
             mapping[9] = [positions[0]]
     return mapping
 
-def _normalize_keyword_id(token: str, keyword_constraints: list) -> Optional[str]:
-    """
-    Map model outputs like 'ass to mouth' -> 'ass_to_mouth' using known ids/names.
-    """
-    if not token:
-        return None
-    t = str(token).strip().lower()
-    t = t.replace("-", "_").replace(" ", "_")
-    # Build lookup from constraints
-    ids = set()
-    name_map: Dict[str, str] = {}
-    for k in keyword_constraints or []:
-        try:
-            kid = str(k.get("id") or "").strip().lower()
-            if kid:
-                ids.add(kid)
-            nm = str(k.get("name") or "").strip().lower()
-            if nm:
-                name_map[nm.replace(" ", "_").replace("-", "_")] = kid
-        except Exception:
-            continue
-    if t in ids:
-        return t
-    if t in name_map and name_map[t]:
-        return name_map[t]
-    return None
-
-def _ensure_all_keywords_assigned(beat_keyword_map: Dict[int, list], keyword_constraints: list) -> Dict[int, list]:
-    """
-    Ensure every selected keyword id appears at least once in beat_keyword_map.
-    Also resolve dependency: ass_to_mouth should co-locate with anal if both selected.
-    """
-    selected_ids = []
-    for k in keyword_constraints or []:
-        try:
-            kid = str(k.get("id") or "").strip()
-            if kid:
-                selected_ids.append(kid.lower())
-        except Exception:
-            continue
-
-    # Normalize any existing tokens to canonical ids
-    normalized: Dict[int, list] = {}
-    for bn, toks in (beat_keyword_map or {}).items():
-        ids = []
-        for tok in toks or []:
-            kid = _normalize_keyword_id(tok, keyword_constraints)
-            if kid:
-                ids.append(kid)
-        if ids:
-            # de-dupe while preserving order
-            seen = set()
-            out = []
-            for x in ids:
-                if x not in seen:
-                    seen.add(x)
-                    out.append(x)
-            normalized[int(bn)] = out
-
-    present = set()
-    for ids in normalized.values():
-        for kid in ids:
-            present.add(kid)
-
-    missing = [kid for kid in selected_ids if kid not in present]
-
-    # Capability heuristics: place sexual activities into Beat 10 by default (pre-climax, explicit allowed),
-    # positions into Beat 9, everything else into Beat 4/5 if needed.
-    def _default_beat_for(kid: str) -> int:
-        cat = ""
-        for k in keyword_constraints or []:
-            try:
-                if str(k.get("id") or "").strip().lower() == kid:
-                    cat = str(k.get("category") or "").strip().lower()
-                    break
-            except Exception:
-                continue
-        if cat == "sexual position":
-            return 9
-        if cat == "sexual activity":
-            return 10
-        return 5
-
-    for kid in missing:
-        bn = _default_beat_for(kid)
-        normalized.setdefault(bn, [])
-        normalized[bn].append(kid)
-
-    # Dependency rule: if both anal and ass_to_mouth, co-locate in the same beat (Beat 10 by default)
-    if "anal" in selected_ids and "ass_to_mouth" in selected_ids:
-        # find where anal is
-        anal_beat = None
-        for bn, ids in normalized.items():
-            if "anal" in ids:
-                anal_beat = bn
-                break
-        if anal_beat is None:
-            anal_beat = 10
-            normalized.setdefault(anal_beat, []).append("anal")
-        # ensure ass_to_mouth in same beat
-        # remove from other beats first
-        for bn, ids in list(normalized.items()):
-            if bn != anal_beat and "ass_to_mouth" in ids:
-                normalized[bn] = [x for x in ids if x != "ass_to_mouth"]
-                if not normalized[bn]:
-                    del normalized[bn]
-        normalized.setdefault(anal_beat, [])
-        if "ass_to_mouth" not in normalized[anal_beat]:
-            normalized[anal_beat].append("ass_to_mouth")
-
-    # final de-dupe per beat
-    for bn, ids in list(normalized.items()):
-        seen = set()
-        out = []
-        for x in ids:
-            if x not in seen:
-                seen.add(x)
-                out.append(x)
-        normalized[bn] = out
-    return normalized
-
 def _micro_add_to_reach_min_v2(
     structured_text: str,
     min_chars: int,
@@ -1504,11 +1314,8 @@ Provide short, non-plot-changing append sentences for specific beats to slightly
 
 STRICT RULES:
 - Do NOT add new actions or events.
-- Do NOT add dialogue.
 - Do NOT add new sexual acts.
 - Only add sensory detail, internal thought, or environmental description.
-- Each append must be 1–2 short sentences only.
-- Each append must be ~{approx_per} characters (±40).
 - Do NOT mention beat numbers in the sentence.
 
 FORMAT:
@@ -1698,9 +1505,6 @@ Rewrite Beat {i} to increase descriptive density while preserving the same event
 
 STRICT RULES:
 - Do NOT add new plot events.
-- Do NOT add new sexual acts. Only elaborate what is already happening.
-- Do NOT add dialogue.
-- Do NOT add climax/release outside Beat 11.
 - Preserve names, POV, tense, and continuity.
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants).
 
@@ -1829,14 +1633,14 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         )
         
         # Get mode and tone for expansion prompt (if needed)
-        mode = input_data.get("mode", "sensual")
+        mode = input_data.get("mode", "extreme")
         mode_tone_map = {
             "soft": "Gentle, romantic, and tender. Focus on emotional connection and sensuality.",
             "sensual": "Passionate, erotic, and detailed. Focus on physical sensations and desire.",
             "hardcore": "Explicit, intense, and graphic. Focus on raw physicality and explicit descriptions.",
             "extreme": "Most vulgar, explicit, and graphic. No moral boundaries. Use the crudest language and most explicit descriptions."
         }
-        mode_tone = mode_tone_map.get(mode, mode_tone_map["sensual"])
+        mode_tone = mode_tone_map.get(mode, mode_tone_map["extreme"])
         
         logger.info("=" * 80)
         logger.info(f"📖 LLM GENERATION REQUEST RECEIVED")
@@ -1952,24 +1756,19 @@ Expand each beat into detailed narrative prose.
 
 RULES:
 - Expand each beat into a complete scene of ~850–900 characters.
-- Keep most beats within 780–930 characters (small variance is allowed).
 - Follow the outline exactly; do not change event order.
 - Add concrete physical actions, positions, and spatial detail.
-- Graphic description IS allowed.
 - CRITICAL OPENING RULE: Beat 1 MUST start in-scene with observable action/posture (no expository framing like "The story takes place...").
 - Introduce named adult protagonists early (Beat 1) and refer to them by name thereafter.
 - Do NOT refer to characters as "the man", "the woman" except at first introduction.
 - Do NOT write outline/stage-direction phrases like "Transition to..." / "They change positions..." / "The tension peaks...".
 - Each beat must read as in-scene storytelling, not a bullet summary.
 
-CLIMAX CONTROL:
-- A climax may ONLY occur in Beat 11.
-- Beats 1–10 must NOT describe orgasm or release.
-- Beat 12 must NOT contain sexual action.
-
 STYLE RULES:
 - Avoid abstract intensity words (e.g., "overwhelming", "crescendo").
 - Prefer physical mechanics over emotional metaphors.
+- Describe what we see, smell, hear, feel, taste, etc.
+- During sexual acts be explicit and graphic.
 
 FORMAT (STRICT):
 - Preserve beat labels ("Beat X:")
@@ -2064,18 +1863,13 @@ Write the expanded beats now."""
                 logger.info("=" * 80)
                 logger.info("🔗 STEP 3: Transitions (JSON-only; applied in code)...")
                 logger.info("=" * 80)
-                step3_system = """We are a narrative flow editor.
+                step3_system = """We are a narrative flow editor who combines beats.
 
 TASK:
-Write short transition sentences that create anticipation between beats.
+Write short transitions between beats that create anticipation of the upcoming beat. Don't reveal what's coming next, but lead into the next beat with natural storytelling.
 
 ABSOLUTE RULES:
-- Do NOT describe physical actions.
-- Do NOT describe sexual acts.
-- Do NOT describe position changes.
-- Do NOT describe anatomy or contact.
 - Do NOT state what happens next.
-- Do NOT add dialogue.
 - Do NOT rewrite beats.
 
 ALLOWED CONTENT:
@@ -2089,7 +1883,7 @@ ALLOWED CONTENT:
 
 CONSTRAINTS:
 - 1–2 short sentences.
-- Max 180 characters total.
+- Max 240 characters total.
 - Avoid stage-direction/meta phrasing ("Transition to...", "Cut to...", "Shift to...").
 - Refer to characters by name/pronouns (avoid "the man", "the woman").
 
@@ -2176,7 +1970,9 @@ Add or refine dialogue for ONE beat only.
 RULES:
 - Do NOT add new physical actions.
 - Do NOT escalate sexual intensity.
+- All dialogue must be in the same language as the story.
 - Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
+- Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
 - Max 240 additional characters total.
 - Add at most 1–2 short lines of dialogue.
 - Avoid generic labels ("the man", "the woman"); use names/pronouns.
