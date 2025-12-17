@@ -399,6 +399,10 @@ def _load_model():
         model_path_obj = Path(model_path)
         use_local_path = model_path_obj.exists() and model_path_obj.is_dir()
         
+        # Treat anything that looks like AWQ as AWQ, even if the quant config file naming differs.
+        # vLLM can often detect awq_marlin compatibility even when the folder doesn't contain 'awq' in filenames.
+        awq_hint = ("awq" in str(model_path).lower()) or ("awq" in str(model_name).lower())
+
         if use_local_path:
             logger.info(f"📦 Loading model from network volume: {model_path}")
             logger.info(f"🔍 Checking model directory contents...")
@@ -412,9 +416,11 @@ def _load_model():
             
             # Check if this is an AWQ quantized model
             model_files = list(model_path_obj.iterdir())
-            is_awq = any(
+            is_awq = awq_hint or any(
                 'awq' in f.name.lower() or 
                 f.name == 'quant_config.json' or 
+                f.name == 'quantize_config.json' or
+                f.name == 'quantization_config.json' or
                 (f.is_dir() and 'awq' in f.name.lower())
                 for f in model_files
             )
@@ -425,6 +431,12 @@ def _load_model():
                     raise RuntimeError(
                         "AWQ model requires vLLM, but vLLM is not available. "
                         "Please ensure vLLM is installed in the container."
+                    )
+                if _device != "cuda":
+                    raise RuntimeError(
+                        "AWQ model requires a CUDA GPU. "
+                        "This worker appears to be CPU-only (torch.cuda.is_available() == False). "
+                        "Fix: run this endpoint on a GPU instance / ensure the container has NVIDIA runtime."
                     )
                 
                 # Retry vLLM loading with exponential backoff for CUDA busy errors
@@ -455,6 +467,13 @@ def _load_model():
                         
                     except RuntimeError as vllm_error:
                         error_str = str(vllm_error).lower()
+                        # If CUDA/driver isn't available, do NOT fall back to transformers for AWQ.
+                        if "cuda driver initialization failed" in error_str or "you might not have a cuda gpu" in error_str:
+                            raise RuntimeError(
+                                "CUDA driver initialization failed while loading an AWQ model with vLLM. "
+                                "This usually means the RunPod worker has no usable GPU or the NVIDIA driver/runtime isn't available. "
+                                "Fix: ensure the endpoint is configured with a GPU and the container uses the NVIDIA runtime."
+                            ) from vllm_error
                         if ("busy" in error_str or "unavailable" in error_str) and attempt < max_retries - 1:
                             wait_time = base_delay * (2 ** attempt)
                             logger.warning(f"⚠️ CUDA device busy, waiting {wait_time}s before retry...")
@@ -524,6 +543,15 @@ def _load_model():
                             else:
                                 break
                 
+                # If this is actually an AWQ model (based on name/path hint), do NOT fall back to transformers.
+                # Transformers+AWQ integration is brittle and may fail depending on package versions.
+                if awq_hint:
+                    raise RuntimeError(
+                        "Model appears to be AWQ (AWQ hint in model path/name), but AWQ config wasn't detected in files. "
+                        "vLLM loading failed and transformers fallback is disabled for AWQ. "
+                        "Fix: ensure GPU is available and use vLLM for AWQ models."
+                    )
+
                 # Fallback to transformers for non-AWQ models
                 from transformers import AutoModelForCausalLM
                 logger.info("🔧 Loading standard model with transformers...")
