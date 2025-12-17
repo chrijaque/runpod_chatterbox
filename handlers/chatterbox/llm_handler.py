@@ -120,8 +120,8 @@ def _extract_beats(content: str) -> list:
         # Fallback: Try beat labels
         elif '### Beat' in content or 'Beat' in content:
             import re
-            # Match patterns like "### Beat 1:", "Beat 1:", etc.
-            beat_pattern = r'(?:###\s*)?Beat\s*\d+\s*:'
+            # Match patterns like "### Beat 1:", "Beat 1:", "Beat I:", etc.
+            beat_pattern = r'(?:###\s*)?Beat\s*(?:\d+|[IVXLCDM]+)\s*:'
             parts = re.split(beat_pattern, content, flags=re.IGNORECASE)
             beats = [beat.strip() for beat in parts if beat.strip()]
         else:
@@ -858,6 +858,36 @@ _BEAT_MIN = 780
 _BEAT_TARGET = 850
 _BEAT_MAX = 930
 
+# Canonical beat label style: Roman numerals (I..XII)
+_ROMAN_MAP = {
+    1: "I",
+    2: "II",
+    3: "III",
+    4: "IV",
+    5: "V",
+    6: "VI",
+    7: "VII",
+    8: "VIII",
+    9: "IX",
+    10: "X",
+    11: "XI",
+    12: "XII",
+}
+_ROMAN_REVERSE = {v: k for k, v in _ROMAN_MAP.items()}
+
+def _beat_label(n: int) -> str:
+    """Canonical beat label: Beat I: .. Beat XII: (falls back to digits if out of range)."""
+    r = _ROMAN_MAP.get(int(n))
+    return f"Beat {r}:" if r else f"Beat {int(n)}:"
+
+def _is_expected_beat_prefix(s: str, n: int) -> bool:
+    """Accept either Roman or Arabic beat labels for robustness; we canonicalize to Roman later."""
+    try:
+        t = (s or "").lstrip()
+        return t.startswith(f"Beat {int(n)}:") or t.startswith(_beat_label(n))
+    except Exception:
+        return False
+
 def _normalize_workflow_type(input_data: Dict[str, Any], metadata: Dict[str, Any]) -> str:
     """Return normalized workflow type (accepts workflow_type or workflow_version)."""
     wt = (
@@ -885,7 +915,7 @@ def _validate_beats_strict(beats: list, expected_beats: int = 12) -> tuple[bool,
             return False, f"expected {expected_beats} beats, got {len(beats)}"
         for i in range(1, expected_beats + 1):
             b = beats[i - 1].lstrip()
-            if not b.startswith(f"Beat {i}:"):
+            if not _is_expected_beat_prefix(b, i):
                 return False, f"beat {i} missing required label prefix"
             if "⁂" in beats[i - 1]:
                 return False, f"beat {i} contains separator glyph"
@@ -927,9 +957,9 @@ FORBIDDEN:
 
 FORMAT (STRICT):
 - Output exactly {expected_beats} beats.
-- Each beat MUST start with: Beat X: (X = 1..{expected_beats})
+- Each beat MUST start with: Beat <RomanNumeral>: using Roman numerals in order (I..{_ROMAN_MAP.get(expected_beats, str(expected_beats))})
 - Separate beats using \"\\n\\n⁂\\n\\n\" ONLY.
-- Start immediately with \"Beat 1:\".
+- Start immediately with \"{_beat_label(1)}\".
 - Do NOT include the separator (⁂) inside any beat.
 
 OUTPUT:
@@ -1567,10 +1597,10 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
     for i, beat in enumerate(beats, 1):
         if ":" in beat:
             label, body = beat.split(":", 1)
-            label = f"Beat {i}:"
+            label = _beat_label(i)
             body = body
         else:
-            label = f"Beat {i}:"
+            label = _beat_label(i)
             body = beat
         # Normalize newlines and strip whitespace/quotes per line
         body = body.replace("\r\n", "\n").replace("\r", "\n")
@@ -1578,7 +1608,7 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
         body = re.sub(r'(?m)^\s*\d+\s*[:.)]\s*', '', body)  # remove "0:" etc
         body = "\n".join(line.strip() for line in body.split("\n"))
         # Remove accidental nested beat labels inside the body
-        body = re.sub(r'(?im)\bBeat\s*\d+\s*:\s*', '', body)
+        body = re.sub(r'(?im)\bBeat\s*(?:\d+|[IVXLCDM]+)\s*:\s*', '', body)
         # Collapse blank lines
         body = re.sub(r"\n{3,}", "\n\n", body).strip()
         # Beat 1: strip expository framing if it leaked into the beat body
@@ -1679,7 +1709,7 @@ LENGTH SAFETY (CRITICAL):
 
 FORMAT:
 - Output ONLY the revised Beat {i} text.
-- Keep the label exactly: \"Beat {i}:\"."""
+- Keep the label exactly: \"{_beat_label(i)}\"."""
 
         user = f"""Constraints for Beat {i}:
 {_beat_constraint_snippet(i)}
@@ -1699,8 +1729,8 @@ Return ONLY the revised Beat {i} text."""
             device=device,
         )
         revised = (revised or "").strip()
-        if not revised.lstrip().startswith(f"Beat {i}:"):
-            revised = f"Beat {i}: " + revised
+        if not _is_expected_beat_prefix(revised, i):
+            revised = f"{_beat_label(i)} " + revised
         # Trim if wildly over
         revised = _trim_beat_to_max(revised, _BEAT_MAX)
         beats[i - 1] = revised
@@ -1734,6 +1764,17 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         input_data = event.get("input", {})
         metadata = event.get("metadata", {})
+
+        # Keywords are intentionally disabled for multi-step-v2 now.
+        # They pushed the model into checklist-compliance mode and degraded prose quality.
+        try:
+            if isinstance(input_data, dict):
+                input_data.pop("keyword_constraints", None)
+                md = input_data.get("metadata")
+                if isinstance(md, dict):
+                    md.pop("keyword_constraints", None)
+        except Exception:
+            pass
         
         # Extract callback_url early and log it
         # Check multiple locations: top-level input, top-level metadata, and nested input.metadata
@@ -1853,7 +1894,8 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             enable_transitions = bool(input_data.get("enable_transitions", False))
             enable_dialogue = bool(input_data.get("enable_dialogue", False))
             enable_motifs = bool(input_data.get("enable_motifs", False))
-            keyword_constraints = input_data.get("keyword_constraints", []) or []
+            # Keywords are intentionally disabled in v2; keep variables for compatibility but empty.
+            keyword_constraints = []
 
             # Tight step budgets (can be overridden via input_data)
             outline_max_tokens_v2 = int(input_data.get("outline_max_tokens", 800) or 800)
@@ -1896,27 +1938,8 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
                 step_name="Step1_outline",
             )
 
-            # NEW: Keyword → Beat binding (JSON-only) so keywords can't silently drop.
+            # Keywords disabled: no keyword → beat binding.
             beat_keyword_map: Dict[int, list] = {}
-            if keyword_constraints:
-                logger.info("=" * 80)
-                logger.info("🏷️ STEP 1.5: Assigning keywords to beats (JSON-only)...")
-                logger.info("=" * 80)
-                beat_keyword_map = _assign_keywords_to_beats_with_llm(
-                    outline_text,
-                    keyword_constraints,
-                    model_or_engine=model_or_engine,
-                    tokenizer=tokenizer,
-                    use_vllm=use_vllm,
-                    device=device,
-                )
-                # Guarantee every selected keyword is assigned at least once (and normalize ids/names).
-                beat_keyword_map = _ensure_all_keywords_assigned(beat_keyword_map, keyword_constraints)
-                # Store for debugging
-                try:
-                    metadata["beatKeywordMap"] = {str(k): v for k, v in beat_keyword_map.items()}
-                except Exception:
-                    pass
 
             # Step 2: Physicalization (expanded beats, no climax except Beat 11)
             logger.info("=" * 80)
@@ -1938,8 +1961,6 @@ RULES:
 - Do NOT refer to characters as "the man", "the woman" except at first introduction.
 - Do NOT write outline/stage-direction phrases like "Transition to..." / "They change positions..." / "The tension peaks...".
 - Each beat must read as in-scene storytelling, not a bullet summary.
-- If a beat has a keyword constraint for a sexual act, you MUST depict the act explicitly with act-specific anatomy and mechanics.
-- Do not euphemize or generalize; include the required lexical anchors when provided.
 
 CLIMAX CONTROL:
 - A climax may ONLY occur in Beat 11.
@@ -1958,8 +1979,6 @@ FORMAT (STRICT):
 OUTPUT:
 A fully expanded 12-beat story."""
 
-            keyword_constraints_text = _build_keyword_constraints_text(beat_keyword_map, keyword_constraints)
-
             step2_user = f"""Expand the outline below into 12 expanded beats.
 
 IMPORTANT:
@@ -1967,8 +1986,6 @@ IMPORTANT:
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
 - Aim for ~850–900 characters per beat. Keep most beats within 780–930.
-
-{keyword_constraints_text if keyword_constraints_text else ''}
 
 OUTLINE:
 {outline_text}
@@ -1998,48 +2015,7 @@ Write the expanded beats now."""
             expanded_text = _sanitize_structured_beats(expanded_text, expected_beats=expected_beats)
             beats = _split_beats_strict(expanded_text)
 
-            # Keyword validation after Step 2 (retry once if missing)
-            if keyword_constraints and beat_keyword_map:
-                missing = _validate_keyword_coverage(beats, beat_keyword_map, keyword_constraints)
-                if missing:
-                    logger.warning(f"⚠️ Step2 keyword validation failed (missing): {missing}. Retrying Step 2 once with stronger enforcement.")
-                    missing_lines = []
-                    for bn in sorted(missing.keys()):
-                        missing_lines.append(f"- Beat {bn} missing: {', '.join(missing[bn])}")
-                    enforcement = (
-                        "\n\nCRITICAL RETRY NOTE:\n"
-                        "Your previous output failed the keyword constraints.\n"
-                        "You MUST explicitly depict the missing items in the specified beats, using explicit anatomy/mechanics and the lexical anchors when provided.\n"
-                        + "\n".join(missing_lines)
-                    )
-                    step2_user_retry = step2_user + enforcement
-                    expanded_text_retry2, step2_time_retry2 = _generate_content(
-                        [{"role": "system", "content": step2_system}, {"role": "user", "content": step2_user_retry}],
-                        model_or_engine,
-                        tokenizer,
-                        use_vllm,
-                        temperature,
-                        max_tokens=step2_max_tokens,
-                        device=device
-                    )
-                    expanded_text_retry2 = _ensure_structured_beats(
-                        expanded_text_retry2,
-                        expected_beats,
-                        model_or_engine=model_or_engine,
-                        tokenizer=tokenizer,
-                        use_vllm=use_vllm,
-                        device=device,
-                        step_name="Step2_physicalization_keyword_retry",
-                    )
-                    beats_retry2 = _split_beats_strict(expanded_text_retry2)
-                    missing2 = _validate_keyword_coverage(beats_retry2, beat_keyword_map, keyword_constraints)
-                    if missing2:
-                        logger.warning(f"⚠️ Step2 keyword retry still missing: {missing2}. Proceeding; final story may not include all keywords.")
-                        metadata["missingKeywordMap"] = {str(k): v for k, v in missing2.items()}
-                    else:
-                        expanded_text = expanded_text_retry2
-                        step2_time = step2_time + step2_time_retry2
-                        beats = beats_retry2
+            # Keyword validation intentionally removed (keywords disabled).
 
             # Step 2 checkpoint: reject and retry if out of allowed buffer.
             # We do NOT proceed to later steps if Step 2 fails the length contract.
@@ -2214,7 +2190,7 @@ Return ONLY the revised beat text."""
 CRITICAL:
 - Do not add actions, positions, or new events.
 - Do not escalate intensity.
-- Keep the beat label intact: Beat {i}:
+- Keep the beat label intact: {_beat_label(i)}
 
 BEAT TO REVISE:
 {beat}
@@ -2230,8 +2206,8 @@ Return ONLY the revised beat text."""
                         device=device
                     )
                     revised = revised.strip()
-                    if not revised.lstrip().startswith(f"Beat {i}:"):
-                        revised = f"Beat {i}: " + revised
+                    if not _is_expected_beat_prefix(revised, i):
+                        revised = f"{_beat_label(i)} " + revised
                     revised_beats.append(revised)
                 beats = revised_beats
 
@@ -2258,7 +2234,7 @@ Return only Beat 11 text."""
 
 CRITICAL:
 - Return only the revised Beat 11 text.
-- Keep the label intact: Beat 11:
+- Keep the label intact: {_beat_label(11)}
 
 BEAT 11:
 {beat11}"""
@@ -2272,8 +2248,8 @@ BEAT 11:
                 device=device
             )
             beat11_revised = beat11_revised.strip()
-            if not beat11_revised.lstrip().startswith("Beat 11:"):
-                beat11_revised = "Beat 11: " + beat11_revised
+            if not _is_expected_beat_prefix(beat11_revised, 11):
+                beat11_revised = f"{_beat_label(11)} " + beat11_revised
             if len(beats) >= 11:
                 beats[10] = beat11_revised
 
@@ -3238,8 +3214,8 @@ def clean_story(text: str) -> str:
     # Remove "⁂" dividers with surrounding whitespace
     text = re.sub(r'\s*[⁂]+\s*', '\n\n', text, flags=re.MULTILINE)
     
-    # Remove Beat labels like: Beat '8:, Beat 8:, etc.
-    text = re.sub(r"Beat\s*['\"]?\d+['\"]?:?", '', text, flags=re.IGNORECASE)
+    # Remove Beat labels like: Beat '8:, Beat 8:, Beat I:, Beat 'XI:, etc.
+    text = re.sub(r"Beat\s*['\"]?(?:\d+|[IVXLCDM]+)['\"]?:?", '', text, flags=re.IGNORECASE)
     
     # Remove accidental escaped newlines like "\n\n"
     text = text.replace('\\n', '\n')
