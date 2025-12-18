@@ -389,7 +389,45 @@ def _load_model():
         model_path = os.getenv("MODEL_PATH", "/runpod-volume/models/Qwen2.5-32B-Instruct-AWQ")
         model_name = os.getenv("MODEL_NAME", "Qwen2.5-32B-Instruct-AWQ")  # Fallback model name
         
-        _device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Diagnostic logging for CUDA availability
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"🔍 CUDA Detection: torch.cuda.is_available() = {cuda_available}")
+        
+        if cuda_available:
+            try:
+                cuda_device_count = torch.cuda.device_count()
+                cuda_device_name = torch.cuda.get_device_name(0) if cuda_device_count > 0 else "Unknown"
+                logger.info(f"🔍 CUDA Devices: {cuda_device_count} device(s) found")
+                logger.info(f"🔍 CUDA Device Name: {cuda_device_name}")
+                logger.info(f"🔍 CUDA Version: {torch.version.cuda}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to get CUDA device info: {e}")
+        else:
+            # Check for NVIDIA runtime indicators
+            nvidia_runtime = os.getenv("NVIDIA_VISIBLE_DEVICES")
+            cuda_visible_devices = os.getenv("CUDA_VISIBLE_DEVICES")
+            logger.warning(f"⚠️ CUDA not available - torch.cuda.is_available() = False")
+            logger.warning(f"⚠️ NVIDIA_VISIBLE_DEVICES: {nvidia_runtime}")
+            logger.warning(f"⚠️ CUDA_VISIBLE_DEVICES: {cuda_visible_devices}")
+            logger.warning(f"⚠️ PyTorch version: {torch.__version__}")
+            logger.warning(f"⚠️ PyTorch CUDA version: {torch.version.cuda}")
+            
+            # Check if nvidia-smi is available
+            import subprocess
+            try:
+                nvidia_smi_result = subprocess.run(["nvidia-smi"], capture_output=True, text=True, timeout=5)
+                if nvidia_smi_result.returncode == 0:
+                    logger.warning(f"⚠️ nvidia-smi is available but PyTorch doesn't see CUDA:")
+                    logger.warning(f"⚠️ {nvidia_smi_result.stdout[:500]}")
+                else:
+                    logger.warning(f"⚠️ nvidia-smi not available or failed: {nvidia_smi_result.stderr}")
+            except FileNotFoundError:
+                logger.warning(f"⚠️ nvidia-smi command not found")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to run nvidia-smi: {e}")
+        
+        _device = "cuda" if cuda_available else "cpu"
+        logger.info(f"🔍 Selected device: {_device}")
         
         # Ensure CUDA is ready before attempting to load model
         if _device == "cuda":
@@ -433,11 +471,25 @@ def _load_model():
                         "Please ensure vLLM is installed in the container."
                     )
                 if _device != "cuda":
-                    raise RuntimeError(
+                    # Provide detailed diagnostic information
+                    nvidia_runtime = os.getenv("NVIDIA_VISIBLE_DEVICES", "Not set")
+                    cuda_visible = os.getenv("CUDA_VISIBLE_DEVICES", "Not set")
+                    error_msg = (
                         "AWQ model requires a CUDA GPU. "
-                        "This worker appears to be CPU-only (torch.cuda.is_available() == False). "
-                        "Fix: run this endpoint on a GPU instance / ensure the container has NVIDIA runtime."
+                        "This worker appears to be CPU-only (torch.cuda.is_available() == False).\n"
+                        f"Diagnostics:\n"
+                        f"  - PyTorch version: {torch.__version__}\n"
+                        f"  - PyTorch CUDA version: {torch.version.cuda}\n"
+                        f"  - NVIDIA_VISIBLE_DEVICES: {nvidia_runtime}\n"
+                        f"  - CUDA_VISIBLE_DEVICES: {cuda_visible}\n"
+                        f"Fix:\n"
+                        f"  1. Ensure your Runpod endpoint is configured with GPU workers (not CPU-only)\n"
+                        f"  2. Check that the endpoint template uses GPU instance types (e.g., RTX A6000, A100)\n"
+                        f"  3. Verify the container runtime has NVIDIA GPU access enabled\n"
+                        f"  4. Check Runpod endpoint settings -> GPU configuration"
                     )
+                    logger.error(f"❌ {error_msg}")
+                    raise RuntimeError(error_msg)
                 
                 # Retry vLLM loading with exponential backoff for CUDA busy errors
                 max_retries = 3
