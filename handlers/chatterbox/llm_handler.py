@@ -534,7 +534,7 @@ def _load_model():
             try:
                 model_files = list(model_path_obj.glob("*"))
                 logger.info(f"📁 Found {len(model_files)} files/directories in model path")
-                for f in model_files[:10]:  # Log first 10 files
+                for f in model_files[:10]:  # Log first 10
                     logger.info(f"   - {f.name} ({f.stat().st_size / (1024**2):.1f} MB)" if f.is_file() else f"   - {f.name}/ (dir)")
             except Exception as e:
                 logger.warning(f"⚠️ Could not list model directory: {e}")
