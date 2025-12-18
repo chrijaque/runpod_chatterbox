@@ -239,6 +239,92 @@ def _log_story_generation_details(story_id: str, title: str, content: str, previ
         import traceback
         logger.warning(f"⚠️ Traceback: {traceback.format_exc()}")
 
+def _normalize_language_to_code(language: str) -> str:
+    """Convert language name (e.g., 'English') to language code (e.g., 'en').
+    If already a code or unknown, return as-is (with fallback to 'en').
+    """
+    if not language or not isinstance(language, str):
+        return "en"
+    
+    language_lower = language.lower().strip()
+    
+    # Language name to code mapping (matching godnathistorie/src/constants/languages.ts)
+    language_map = {
+        "afrikaans": "af",
+        "arabic": "ar",
+        "armenian": "hy",
+        "azerbaijani": "az",
+        "belarusian": "be",
+        "bosnian": "bs",
+        "bulgarian": "bg",
+        "catalan": "ca",
+        "chinese": "zh",
+        "croatian": "hr",
+        "czech": "cs",
+        "danish": "da",
+        "dutch": "nl",
+        "english": "en",
+        "estonian": "et",
+        "finnish": "fi",
+        "french": "fr",
+        "galician": "gl",
+        "german": "de",
+        "greek": "el",
+        "hebrew": "he",
+        "hindi": "hi",
+        "hungarian": "hu",
+        "icelandic": "is",
+        "indonesian": "id",
+        "italian": "it",
+        "japanese": "ja",
+        "kannada": "kn",
+        "kazakh": "kk",
+        "korean": "ko",
+        "latvian": "lv",
+        "lithuanian": "lt",
+        "macedonian": "mk",
+        "malay": "ms",
+        "marathi": "mr",
+        "maori": "mi",
+        "nepali": "ne",
+        "norwegian": "no",
+        "polish": "pl",
+        "portuguese": "pt",
+        "romanian": "ro",
+        "russian": "ru",
+        "serbian": "sr",
+        "slovak": "sk",
+        "slovenian": "sl",
+        "spanish": "es",
+        "swedish": "sv",
+        "tagalog": "tl",
+        "tamil": "ta",
+        "thai": "th",
+        "turkish": "tr",
+        "ukrainian": "uk",
+        "urdu": "ur",
+        "vietnamese": "vi",
+        "welsh": "cy",
+    }
+    
+    # If it's already a 2-letter code, return as-is
+    if len(language_lower) == 2 and language_lower in language_map.values():
+        return language_lower
+    
+    # Try to find the code by name
+    code = language_map.get(language_lower)
+    if code:
+        return code
+    
+    # If not found, assume it's already a code or return default
+    # But log a warning if it looks like a name (longer than 2 chars and not a known code)
+    if len(language_lower) > 2:
+        logger.warning(f"⚠️ Unknown language name '{language}', defaulting to 'en'")
+        return "en"
+    
+    # Return as-is if it's a short code (might be valid but not in our map)
+    return language_lower if len(language_lower) == 2 else "en"
+
 def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata: Dict[str, Any]):
     """Save story directly to Firestore. Detects if it's a default story and saves to the correct collection."""
     try:
@@ -247,8 +333,9 @@ def _save_story_to_firestore(story_id: str, user_id: str, content: str, metadata
             logger.warning("⚠️ Firestore not available, skipping story save")
             return False
         
-        # Extract metadata
-        language = metadata.get("language", "en")
+        # Extract metadata and normalize language to code
+        language_raw = metadata.get("language", "en")
+        language = _normalize_language_to_code(language_raw)
         genre = metadata.get("genre", "")
         age_range = metadata.get("age_range", "")
         
@@ -1564,6 +1651,7 @@ STRICT RULES:
 - Do NOT add new plot events.
 - Preserve names, POV, tense, and continuity.
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants).
+- You MAY add more sensory detail, internal thought, graphic descriptions or environmental description.
 
 LENGTH SAFETY (CRITICAL):
 - Beat body MUST be {_BEAT_MIN}–{_BEAT_MAX} characters (aim ~{_BEAT_TARGET}).
@@ -1653,17 +1741,19 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         messages = input_data.get("messages", [])
         temperature = input_data.get("temperature", 0.7)
         # Check multiple locations for language (similar to callback_url extraction)
-        language = (
+        language_raw = (
             input_data.get("language")
             or metadata.get("language")
             or input_metadata.get("language")
             or "en"  # Default fallback
         )
+        # Normalize language to code (convert "English" -> "en")
+        language = _normalize_language_to_code(language_raw)
         genre = input_data.get("genre") or metadata.get("genre") or input_metadata.get("genre")
         age_range = input_data.get("age_range") or metadata.get("age_range") or input_metadata.get("age_range")
         
         # Log extracted parameters for debugging
-        logger.info(f"🌍 Language extracted: {language} (from input_data: {input_data.get('language')}, metadata: {metadata.get('language')}, input_metadata: {input_metadata.get('language')})")
+        logger.info(f"🌍 Language extracted: {language_raw} -> normalized to: {language} (from input_data: {input_data.get('language')}, metadata: {metadata.get('language')}, input_metadata: {input_metadata.get('language')})")
         logger.info(f"📚 Genre extracted: {genre}")
         logger.info(f"👶 Age range extracted: {age_range}")
         
@@ -1766,9 +1856,9 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         # MULTI-STEP-V2 WORKFLOW: Deterministic 12-beat pipeline (Steps 2–8 orchestrated server-side)
         if is_multi_step_v2:
             expected_beats = 12
-            enable_transitions = bool(input_data.get("enable_transitions", False))
-            enable_dialogue = bool(input_data.get("enable_dialogue", False))
-            enable_motifs = bool(input_data.get("enable_motifs", False))
+            enable_transitions = bool(input_data.get("enable_transitions", True))
+            enable_dialogue = bool(input_data.get("enable_dialogue", True))
+            enable_motifs = bool(input_data.get("enable_motifs", True))
             # Keywords are intentionally disabled in v2; keep variables for compatibility but empty.
             keyword_constraints = []
 
@@ -1777,7 +1867,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             step2_max_tokens = int(input_data.get("max_tokens", 6000) or 6000)  # Step 2 budget
             step3_max_tokens = int(input_data.get("transitions_max_tokens", 800) or 800)
             step4_max_tokens = int(input_data.get("motifs_max_tokens", 1200) or 1200)
-            step5_max_tokens = int(input_data.get("dialogue_max_tokens", 600) or 600)
+            step5_max_tokens = int(input_data.get("dialogue_max_tokens", 800) or 1000)
             step6_max_tokens = int(input_data.get("climax_max_tokens", 800) or 800)
             step7_max_tokens = int(input_data.get("dedup_max_tokens", 7500) or 7500)
             step8a_max_tokens = int(input_data.get("metadata_max_tokens", 1500) or 1500)
@@ -2041,7 +2131,7 @@ OUTLINE:
                 step5_system = """We are a dialogue specialist.
 
 TASK:
-Add or refine dialogue for ONE beat only.
+Add or refine dialogue.
 
 RULES:
 - Do NOT add new physical actions.
@@ -2049,7 +2139,6 @@ RULES:
 - All dialogue must be in the same language as the story.
 - Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
 - Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
-- Max 240 additional characters total.
 - Add at most 1–2 short lines of dialogue.
 - Avoid generic labels ("the man", "the woman"); use names/pronouns.
 - Preserve POV exactly (do not switch between first-person and third-person).
@@ -2088,17 +2177,17 @@ Return ONLY the revised beat text."""
             logger.info("=" * 80)
             logger.info("💥 STEP 6: Climax refinement (Beat 11 only)...")
             logger.info("=" * 80)
-            step6_system = """We are an erotic climax specialist.
+            step6_system = """You are an erotic climax specialist.
 
 TASK:
-Rewrite Beat 11 to deliver a single, sharp climax.
+Rewrite Beat 11 to deliver sharp climax to the characters.
 
 RULES:
 - This is the ONLY beat allowed to climax.
-- Do NOT extend length beyond +15%.
 - LENGTH SAFETY (CRITICAL): Do NOT shrink the beat. Maintain the original beat length within ±5%.
 - Do NOT repeat phrasing.
 - No aftermath.
+- Be explicit and graphic.
 
 OUTPUT:
 Return only Beat 11 text."""
@@ -2880,8 +2969,10 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
         # Save story directly to Firestore
         if story_id and user_id:
             logger.info(f"💾 Saving story {story_id} to Firestore...")
+            # Normalize language to code format for Firestore save
+            language_code_for_save = _normalize_language_to_code(language) if language else "en"
             save_metadata = {
-                "language": language,
+                "language": language_code_for_save,  # Always use language code, not full name
                 "genre": genre,
                 "age_range": age_range,
                 "temperature": temperature,
@@ -2909,9 +3000,10 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 
                 # Send success callback
                 # Include generated metadata in callback payload so the main app can skip OpenAI fallback.
-                # Ensure language is always included (with fallback to "en" if somehow None)
+                # Normalize language to code format (e.g., "English" -> "en") for callback
+                language_code = _normalize_language_to_code(language) if language else "en"
                 callback_metadata = {
-                    "language": language or "en",  # Ensure language is never None
+                    "language": language_code,  # Always use language code, not full name
                     "genre": genre,
                     "age_range": age_range,
                     "temperature": temperature,
