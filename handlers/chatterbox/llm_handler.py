@@ -1702,6 +1702,9 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         
         # Get mode and tone for expansion prompt (if needed)
         mode = input_data.get("mode", "extreme")
+        pov = input_data.get("pov", "third-person")
+        if pov not in ("first-person", "third-person"):
+            pov = "third-person"
         mode_tone_map = {
             "soft": "Gentle, romantic, and tender. Focus on emotional connection and sensuality.",
             "sensual": "Passionate, erotic, and detailed. Focus on physical sensations and desire.",
@@ -1823,6 +1826,10 @@ TASK:
 Expand each beat into detailed narrative prose.
 
 RULES:
+- POV (CRITICAL):
+  - Write in the requested point of view and keep it consistent across ALL beats.
+  - If POV is first-person: use "I/me/my" and write from the protagonist's lived perspective.
+  - If POV is third-person: use names + "he/she/they" and do NOT use "I".
 - Expand each beat into a complete scene of ~850–900 characters.
 - Follow the outline exactly; do not change event order.
 - Add concrete physical actions, positions, and spatial detail.
@@ -1849,10 +1856,11 @@ A fully expanded 12-beat story."""
             step2_user = f"""Expand the outline below into 12 expanded beats.
 
 IMPORTANT:
-- Preserve the beat labels exactly (Beat 1..Beat 12).
+- Preserve the beat labels exactly (Beat I..Beat XII).
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
 - Aim for ~850–900 characters per beat. Keep most beats within 780–930.
+- Requested POV: {pov}
 
 OUTLINE:
 {outline_text}
@@ -2044,6 +2052,7 @@ RULES:
 - Max 240 additional characters total.
 - Add at most 1–2 short lines of dialogue.
 - Avoid generic labels ("the man", "the woman"); use names/pronouns.
+- Preserve POV exactly (do not switch between first-person and third-person).
 
 OUTPUT:
 Return ONLY the revised beat text."""
@@ -2133,6 +2142,7 @@ STRICT RULES:
 - Do NOT add new content.
 - Do NOT intensify sexual acts.
 - Do NOT add dialogue.
+- Preserve POV exactly (do not switch between first-person and third-person).
 - LENGTH SAFETY (CRITICAL):
   - Do NOT reduce the length of any beat.
   - Maintain each beat length within ±5%.
