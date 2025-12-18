@@ -113,14 +113,21 @@ def _extract_beats(content: str) -> list:
     """Extract beats from story content using separators."""
     beats = []
     try:
+        import re
         # Primary method: Use ⁂ separator (expected format)
         if '⁂' in content:
             beats = content.split('\n\n⁂\n\n')
-            beats = [beat.strip() for beat in beats if beat.strip()]
+            # Remove [BEAT X] labels if present
+            beats = [re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', beat, flags=re.IGNORECASE).strip() 
+                     for beat in beats if beat.strip()]
         # Fallback: Try beat labels
+        elif re.search(r'\[BEAT\s+[IVXLCDM]+\]', content, re.IGNORECASE):
+            # New format with [BEAT I] labels
+            parts = re.split(r'\n\n⁂\n\n', content)
+            beats = [re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', part, flags=re.IGNORECASE).strip() 
+                     for part in parts if part.strip()]
         elif '### Beat' in content or 'Beat' in content:
-            import re
-            # Match patterns like "### Beat 1:", "Beat 1:", "Beat I:", etc.
+            # Old format with Beat X: labels (backward compatibility)
             beat_pattern = r'(?:###\s*)?Beat\s*(?:\d+|[IVXLCDM]+)\s*:'
             parts = re.split(beat_pattern, content, flags=re.IGNORECASE)
             beats = [beat.strip() for beat in parts if beat.strip()]
@@ -1020,15 +1027,18 @@ _ROMAN_MAP = {
 _ROMAN_REVERSE = {v: k for k, v in _ROMAN_MAP.items()}
 
 def _beat_label(n: int) -> str:
-    """Canonical beat label: Beat I: .. Beat XII: (falls back to digits if out of range)."""
+    """Canonical beat label: [BEAT I] .. [BEAT XII] (falls back to digits if out of range)."""
     r = _ROMAN_MAP.get(int(n))
-    return f"Beat {r}:" if r else f"Beat {int(n)}:"
+    return f"[BEAT {r}]" if r else f"[BEAT {int(n)}]"
 
 def _is_expected_beat_prefix(s: str, n: int) -> bool:
     """Accept either Roman or Arabic beat labels for robustness; we canonicalize to Roman later."""
     try:
         t = (s or "").lstrip()
-        return t.startswith(f"Beat {int(n)}:") or t.startswith(_beat_label(n))
+        # Accept both uppercase [BEAT I] and lowercase [Beat I] for robustness
+        return (t.startswith(f"[BEAT {int(n)}]") or 
+                t.startswith(f"[Beat {int(n)}]") or 
+                t.startswith(_beat_label(n)))
     except Exception:
         return False
 
@@ -1101,7 +1111,7 @@ FORBIDDEN:
 
 FORMAT (STRICT):
 - Output exactly {expected_beats} beats.
-- Each beat MUST start with: Beat <RomanNumeral>: using Roman numerals in order (I..{_ROMAN_MAP.get(expected_beats, str(expected_beats))})
+- Each beat MUST start with: [BEAT <RomanNumeral>] using Roman numerals in order (I..{_ROMAN_MAP.get(expected_beats, str(expected_beats))})
 - Separate beats using \"\\n\\n⁂\\n\\n\" ONLY.
 - Start immediately with \"{_beat_label(1)}\".
 - Do NOT include the separator (⁂) inside any beat.
@@ -1368,7 +1378,7 @@ RULES:
 - Do NOT write story text.
 - Do NOT invent new keywords.
 - Each keyword must be assigned to at least one beat.
-- Sexual acts/positions should be assigned only to beats where sexual activity occurs (typically Beats 6–11).
+- Sexual acts/positions should be assigned only to beats where sexual activity occurs.
 }"""
 
     user = f"""Outline:
@@ -1546,20 +1556,27 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
     import re
     cleaned = []
     for i, beat in enumerate(beats, 1):
-        if ":" in beat:
-            label, body = beat.split(":", 1)
-            label = _beat_label(i)
-            body = body
-        else:
-            label = _beat_label(i)
-            body = beat
+        label = _beat_label(i)
+        body = beat
+        
+        # Remove [BEAT X] label from start of beat if present (case-insensitive)
+        # This handles both [BEAT I] and [Beat I] formats
+        body = re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', body, flags=re.IGNORECASE)
+        
+        # Also handle old format with colon (backward compatibility)
+        if ":" in body[:30]:  # Only check first 30 chars to avoid false positives
+            parts = body.split(":", 1)
+            if len(parts) == 2 and re.match(r'^\s*\[?BEAT\s+[IVXLCDM]+\]?\s*$', parts[0], re.IGNORECASE):
+                body = parts[1]
+        
         # Normalize newlines and strip whitespace/quotes per line
         body = body.replace("\r\n", "\n").replace("\r", "\n")
-        body = re.sub(r'(?m)^\s*["“”]\s*', '', body)
+        body = re.sub(r'(?m)^\s*["""]\s*', '', body)
         body = re.sub(r'(?m)^\s*\d+\s*[:.)]\s*', '', body)  # remove "0:" etc
         body = "\n".join(line.strip() for line in body.split("\n"))
-        # Remove accidental nested beat labels inside the body
-        body = re.sub(r'(?im)\bBeat\s*(?:\d+|[IVXLCDM]+)\s*:\s*', '', body)
+        # Remove accidental nested beat labels inside the body (both formats)
+        body = re.sub(r'(?im)\[BEAT\s+[IVXLCDM]+\]', '', body)  # Remove [BEAT X] format
+        body = re.sub(r'(?im)\bBeat\s*(?:\d+|[IVXLCDM]+)\s*:\s*', '', body)  # Remove old Beat X: format
         # Collapse blank lines
         body = re.sub(r"\n{3,}", "\n\n", body).strip()
         # Beat 1: strip expository framing if it leaked into the beat body
@@ -1937,7 +1954,7 @@ STYLE RULES:
 - During sexual acts be explicit and graphic.
 
 FORMAT (STRICT):
-- Preserve beat labels ("Beat X:")
+- Preserve beat labels ("[BEAT X]")
 - Preserve "\\n\\n⁂\\n\\n" separators
 - No titles, no commentary.
 
@@ -1947,7 +1964,7 @@ A fully expanded 12-beat story."""
             step2_user = f"""Expand the outline below into 12 expanded beats.
 
 IMPORTANT:
-- Preserve the beat labels exactly (Beat I..Beat XII).
+- Preserve the beat labels exactly ([BEAT I]..[BEAT XII]).
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
 - Aim for ~850–900 characters per beat. Keep most beats within 780–930.
@@ -2243,7 +2260,7 @@ STRICT RULES:
 
 FORMAT:
 Return the full story with identical structure:
-- Preserve beat labels ("Beat X:") and order
+- Preserve beat labels ("[BEAT X]") and order
 - Preserve "\\n\\n⁂\\n\\n" separators
 - No title, no headings, no meta commentary."""
             step7_user = f"""Edit the story below by removing repetition and improving variation.
