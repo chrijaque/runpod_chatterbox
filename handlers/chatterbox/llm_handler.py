@@ -534,7 +534,7 @@ def _load_model():
             try:
                 model_files = list(model_path_obj.glob("*"))
                 logger.info(f"📁 Found {len(model_files)} files/directories in model path")
-                for f in model_files[:10]:  # Log first 10
+                for f in model_files[:10]:  # Log first 10 files
                     logger.info(f"   - {f.name} ({f.stat().st_size / (1024**2):.1f} MB)" if f.is_file() else f"   - {f.name}/ (dir)")
             except Exception as e:
                 logger.warning(f"⚠️ Could not list model directory: {e}")
@@ -1710,148 +1710,165 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
         }
     }
     """
-    try:
-        input_data = event.get("input", {})
-        metadata = event.get("metadata", {})
+    max_handler_retries = int(os.getenv("LLM_HANDLER_RETRIES", "2") or "2")
+    retry_delay_seconds = int(os.getenv("LLM_HANDLER_RETRY_DELAY", "6") or "6")
 
-        # Keywords are intentionally disabled for multi-step-v2 now.
-        # They pushed the model into checklist-compliance mode and degraded prose quality.
+    def _is_transient_cuda_error(err: Exception) -> bool:
+        msg = str(err).lower()
+        transient_signals = [
+            "cuda driver initialization failed",
+            "you might not have a cuda gpu",
+            "torch.cuda.is_available() == false",
+            "cuda not available",
+            "awq model requires a cuda gpu",
+        ]
+        return any(s in msg for s in transient_signals)
+
+    last_error = None
+
+    for attempt in range(max_handler_retries):
         try:
-            if isinstance(input_data, dict):
-                input_data.pop("keyword_constraints", None)
-                md = input_data.get("metadata")
-                if isinstance(md, dict):
-                    md.pop("keyword_constraints", None)
-        except Exception:
-            pass
-        
-        # Extract callback_url early and log it
-        # Check multiple locations: top-level input, top-level metadata, and nested input.metadata
-        input_metadata = input_data.get("metadata", {})
-        callback_url = (
-            input_data.get("callback_url") 
-            or metadata.get("callback_url") 
-            or input_metadata.get("callback_url")
-        )
-        logger.info(f"🔔 Callback URL received: {callback_url if callback_url else 'NOT PROVIDED'}")
-        logger.info(f"📋 Input data keys: {list(input_data.keys())}")
-        logger.info(f"📋 Metadata keys: {list(metadata.keys())}")
-        
-        # Extract parameters
-        messages = input_data.get("messages", [])
-        temperature = input_data.get("temperature", 0.7)
-        # Check multiple locations for language (similar to callback_url extraction)
-        language_raw = (
-            input_data.get("language")
-            or metadata.get("language")
-            or input_metadata.get("language")
-            or "en"  # Default fallback
-        )
-        # Normalize language to code (convert "English" -> "en")
-        language = _normalize_language_to_code(language_raw)
-        genre = input_data.get("genre") or metadata.get("genre") or input_metadata.get("genre")
-        age_range = input_data.get("age_range") or metadata.get("age_range") or input_metadata.get("age_range")
-        
-        # Log extracted parameters for debugging
-        logger.info(f"🌍 Language extracted: {language_raw} -> normalized to: {language} (from input_data: {input_data.get('language')}, metadata: {metadata.get('language')}, input_metadata: {input_metadata.get('language')})")
-        logger.info(f"📚 Genre extracted: {genre}")
-        logger.info(f"👶 Age range extracted: {age_range}")
-        
-        # Workflow selection
-        workflow_type = _normalize_workflow_type(input_data, metadata)
-        outline_messages = input_data.get("outline_messages", [])
-        story_messages = input_data.get("story_messages", [])
-        is_multi_step_v2 = workflow_type == "multi-step-v2"
-        # Legacy two-step workflow (outline + story prompt injection)
-        needs_two_step = (workflow_type == "two-step") or (outline_messages and story_messages and not is_multi_step_v2)
-        
-        # Default max_tokens (only used for single-step workflow)
-        # For two-step workflow, we use configurable values: outline_max_tokens (default 5000) and max_tokens (default 5000 for story)
-        # Token analysis:
-        # - Outline: ~475-725 tokens needed, but can be longer with detailed beats, 5000 allows for expansion
-        # - Story: ~3,025-3,425 tokens needed, 5000 is safer
-        # - Single-step Qwen3: ~3,025-3,425 tokens needed, 4000 is tight but acceptable
-        default_max_tokens = 4000 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
-        max_tokens = input_data.get("max_tokens", default_max_tokens)
-        outline_max_tokens = input_data.get("outline_max_tokens", 5000)  # Default 5000 for beat creation
-        expansion_max_tokens = input_data.get("expansion_max_tokens", 4000)  # Default 4000 for Step 3 expansion
-        finetune_max_tokens = input_data.get("finetune_max_tokens", 4000)  # Default 4000 for Step 4 finetuning
-        
-        # Qwen3 is adult-oriented, not age-specific - use +18 as default
-        if genre and genre.lower() in ['qwen3', 'qwen']:
-            age_range = "+18"
-        
-        user_id = input_data.get("user_id") or metadata.get("user_id")
-        story_id = input_data.get("story_id") or metadata.get("story_id")
-        # Re-check callback_url (may have been set earlier, but ensure we have the latest)
-        callback_url = (
-            input_data.get("callback_url") 
-            or metadata.get("callback_url") 
-            or input_metadata.get("callback_url")
-        )
-        
-        # Get mode and tone for expansion prompt (if needed)
-        mode = input_data.get("mode", "extreme")
-        pov = input_data.get("pov", "third-person")
-        if pov not in ("first-person", "third-person"):
-            pov = "third-person"
-        mode_tone_map = {
-            "soft": "Gentle, romantic, and tender. Focus on emotional connection and sensuality.",
-            "sensual": "Passionate, erotic, and detailed. Focus on physical sensations and desire.",
-            "hardcore": "Explicit, intense, and graphic. Focus on raw physicality and explicit descriptions.",
-            "extreme": "Most vulgar, explicit, and graphic. No moral boundaries. Use the crudest language and most explicit descriptions."
-        }
-        mode_tone = mode_tone_map.get(mode, mode_tone_map["extreme"])
-        
-        logger.info("=" * 80)
-        logger.info(f"📖 LLM GENERATION REQUEST RECEIVED")
-        logger.info("=" * 80)
-        logger.info(f"📊 Story ID: {story_id}")
-        logger.info(f"👤 User ID: {user_id}")
-        logger.info(f"📝 Messages count: {len(messages)}")
-        logger.info(f"🌡️ Temperature: {temperature}")
-        logger.info(f"🔢 Max tokens: {max_tokens}")
-        logger.info(f"🏷️ Genre: {genre}")
-        logger.info(f"👶 Age Range: {age_range}")
-        logger.info(f"🌍 Language: {language}")
-        logger.info(f"🔄 Two-step workflow: {needs_two_step}")
-        logger.info(f"🧩 Multi-step-v2 workflow: {is_multi_step_v2}")
-        if needs_two_step:
-            logger.info(f"📝 Outline messages count: {len(outline_messages)}")
-            logger.info(f"📖 Story messages count: {len(story_messages)}")
-            if outline_messages:
+            input_data = event.get("input", {})
+            metadata = event.get("metadata", {})
+
+            # Keywords are intentionally disabled for multi-step-v2 now.
+            # They pushed the model into checklist-compliance mode and degraded prose quality.
+            try:
+                if isinstance(input_data, dict):
+                    input_data.pop("keyword_constraints", None)
+                    md = input_data.get("metadata")
+                    if isinstance(md, dict):
+                        md.pop("keyword_constraints", None)
+            except Exception:
+                pass
+            
+            # Extract callback_url early and log it
+            # Check multiple locations: top-level input, top-level metadata, and nested input.metadata
+            input_metadata = input_data.get("metadata", {})
+            callback_url = (
+                input_data.get("callback_url") 
+                or metadata.get("callback_url") 
+                or input_metadata.get("callback_url")
+            )
+            logger.info(f"🔔 Callback URL received: {callback_url if callback_url else 'NOT PROVIDED'}")
+            logger.info(f"📋 Input data keys: {list(input_data.keys())}")
+            logger.info(f"📋 Metadata keys: {list(metadata.keys())}")
+            
+            # Extract parameters
+            messages = input_data.get("messages", [])
+            temperature = input_data.get("temperature", 0.7)
+            # Check multiple locations for language (similar to callback_url extraction)
+            language_raw = (
+                input_data.get("language")
+                or metadata.get("language")
+                or input_metadata.get("language")
+                or "en"  # Default fallback
+            )
+            # Normalize language to code (convert "English" -> "en")
+            language = _normalize_language_to_code(language_raw)
+            genre = input_data.get("genre") or metadata.get("genre") or input_metadata.get("genre")
+            age_range = input_data.get("age_range") or metadata.get("age_range") or input_metadata.get("age_range")
+            
+            # Log extracted parameters for debugging
+            logger.info(f"🌍 Language extracted: {language_raw} -> normalized to: {language} (from input_data: {input_data.get('language')}, metadata: {metadata.get('language')}, input_metadata: {input_metadata.get('language')})")
+            logger.info(f"📚 Genre extracted: {genre}")
+            logger.info(f"👶 Age range extracted: {age_range}")
+            
+            # Workflow selection
+            workflow_type = _normalize_workflow_type(input_data, metadata)
+            outline_messages = input_data.get("outline_messages", [])
+            story_messages = input_data.get("story_messages", [])
+            is_multi_step_v2 = workflow_type == "multi-step-v2"
+            # Legacy two-step workflow (outline + story prompt injection)
+            needs_two_step = (workflow_type == "two-step") or (outline_messages and story_messages and not is_multi_step_v2)
+            
+            # Default max_tokens (only used for single-step workflow)
+            # For two-step workflow, we use configurable values: outline_max_tokens (default 5000) and max_tokens (default 5000 for story)
+            # Token analysis:
+            # - Outline: ~475-725 tokens needed, but can be longer with detailed beats, 5000 allows for expansion
+            # - Story: ~3,025-3,425 tokens needed, 5000 is safer
+            # - Single-step Qwen3: ~3,025-3,425 tokens needed, 4000 is tight but acceptable
+            default_max_tokens = 4000 if genre and genre.lower() in ['qwen3', 'qwen'] else 4000
+            max_tokens = input_data.get("max_tokens", default_max_tokens)
+            outline_max_tokens = input_data.get("outline_max_tokens", 5000)  # Default 5000 for beat creation
+            expansion_max_tokens = input_data.get("expansion_max_tokens", 4000)  # Default 4000 for Step 3 expansion
+            finetune_max_tokens = input_data.get("finetune_max_tokens", 4000)  # Default 4000 for Step 4 finetuning
+            
+            # Qwen3 is adult-oriented, not age-specific - use +18 as default
+            if genre and genre.lower() in ['qwen3', 'qwen']:
+                age_range = "+18"
+            
+            user_id = input_data.get("user_id") or metadata.get("user_id")
+            story_id = input_data.get("story_id") or metadata.get("story_id")
+            # Re-check callback_url (may have been set earlier, but ensure we have the latest)
+            callback_url = (
+                input_data.get("callback_url") 
+                or metadata.get("callback_url") 
+                or input_metadata.get("callback_url")
+            )
+            
+            # Get mode and tone for expansion prompt (if needed)
+            mode = input_data.get("mode", "extreme")
+            pov = input_data.get("pov", "third-person")
+            if pov not in ("first-person", "third-person"):
+                pov = "third-person"
+            mode_tone_map = {
+                "soft": "Gentle, romantic, and tender. Focus on emotional connection and sensuality.",
+                "sensual": "Passionate, erotic, and detailed. Focus on physical sensations and desire.",
+                "hardcore": "Explicit, intense, and graphic. Focus on raw physicality and explicit descriptions.",
+                "extreme": "Most vulgar, explicit, and graphic. No moral boundaries. Use the crudest language and most explicit descriptions."
+            }
+            mode_tone = mode_tone_map.get(mode, mode_tone_map["extreme"])
+            
+            logger.info("=" * 80)
+            logger.info(f"📖 LLM GENERATION REQUEST RECEIVED")
+            logger.info("=" * 80)
+            logger.info(f"📊 Story ID: {story_id}")
+            logger.info(f"👤 User ID: {user_id}")
+            logger.info(f"📝 Messages count: {len(messages)}")
+            logger.info(f"🌡️ Temperature: {temperature}")
+            logger.info(f"🔢 Max tokens: {max_tokens}")
+            logger.info(f"🏷️ Genre: {genre}")
+            logger.info(f"👶 Age Range: {age_range}")
+            logger.info(f"🌍 Language: {language}")
+            logger.info(f"🔄 Two-step workflow: {needs_two_step}")
+            logger.info(f"🧩 Multi-step-v2 workflow: {is_multi_step_v2}")
+            if needs_two_step:
+                logger.info(f"📝 Outline messages count: {len(outline_messages)}")
+                logger.info(f"📖 Story messages count: {len(story_messages)}")
+                if outline_messages:
+                    logger.info("=" * 80)
+                    logger.info("📝 FULL OUTLINE PROMPT:")
+                    logger.info("=" * 80)
+                    for i, msg in enumerate(outline_messages, 1):
+                        logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
+                        logger.info(msg.get("content", ""))
+                    logger.info("=" * 80)
+                if story_messages:
+                    logger.info("=" * 80)
+                    logger.info("📖 FULL STORY PROMPT:")
+                    logger.info("=" * 80)
+                    for i, msg in enumerate(story_messages, 1):
+                        logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
+                        logger.info(msg.get("content", ""))
+                    logger.info("=" * 80)
+            
+            # Log message preview
+            if messages:
                 logger.info("=" * 80)
-                logger.info("📝 FULL OUTLINE PROMPT:")
+                logger.info("📝 FULL MESSAGES PROMPT:")
                 logger.info("=" * 80)
-                for i, msg in enumerate(outline_messages, 1):
+                for i, msg in enumerate(messages, 1):
                     logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
                     logger.info(msg.get("content", ""))
                 logger.info("=" * 80)
-            if story_messages:
-                logger.info("=" * 80)
-                logger.info("📖 FULL STORY PROMPT:")
-                logger.info("=" * 80)
-                for i, msg in enumerate(story_messages, 1):
-                    logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
-                    logger.info(msg.get("content", ""))
-                logger.info("=" * 80)
-        
-        # Log message preview
-        if messages:
-            logger.info("=" * 80)
-            logger.info("📝 FULL MESSAGES PROMPT:")
-            logger.info("=" * 80)
-            for i, msg in enumerate(messages, 1):
-                logger.info(f"\n--- Message {i} ({msg.get('role', 'unknown')}) ---")
-                logger.info(msg.get("content", ""))
-            logger.info("=" * 80)
-        
-        if not messages and not needs_two_step and not is_multi_step_v2:
-            raise ValueError("messages is required (or outline_messages + story_messages for two-step)")
-        
-        # Load model if not already loaded
-        model_or_engine, tokenizer, device = _load_model()
-        use_vllm = _use_vllm
+            
+            if not messages and not needs_two_step and not is_multi_step_v2:
+                raise ValueError("messages is required (or outline_messages + story_messages for two-step)")
+            
+            # Load model if not already loaded
+            model_or_engine, tokenizer, device = _load_model()
+            use_vllm = _use_vllm
 
         # MULTI-STEP-V2 WORKFLOW: Deterministic 12-beat pipeline (Steps 2–8 orchestrated server-side)
         if is_multi_step_v2:
@@ -1913,16 +1930,24 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             step2_system = """We are a precision erotic writer.
 
 TASK:
-Expand each beat into detailed narrative prose.
+Expand each beat into detailed narrative prose. Each beat must be ~850–900 characters.
 
 RULES:
 - POV (CRITICAL):
   - Write in the requested point of view and keep it consistent across ALL beats.
   - If POV is first-person: use "I/me/my" and write from the protagonist's lived perspective.
   - If POV is third-person: use names + "he/she/they" and do NOT use "I".
-- Expand each beat into a complete scene of ~850–900 characters.
+  - Write from the perspective of one primary protagonist, chosen by you.
+
+First-person rules:
+- The narrator is that protagonist.
+- "I" refers only to the narrator.
+- Never refer to the narrator by name in narration.
+- Other characters may be named normally.
+- All descriptions are limited to the narrator’s perceptions, thoughts, and physical sensations.
+
 - Follow the outline exactly; do not change event order.
-- Add concrete physical actions, positions, and spatial detail.
+- Add physical actions, positions, and detail.
 - CRITICAL OPENING RULE: Beat 1 MUST start in-scene with observable action/posture (no expository framing like "The story takes place...").
 - Introduce named adult protagonists early (Beat 1) and refer to them by name thereafter.
 - Do NOT refer to characters as "the man", "the woman" except at first introduction.
@@ -2138,7 +2163,7 @@ RULES:
 - Do NOT escalate sexual intensity.
 - All dialogue must be in the same language as the story.
 - Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
-- Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
+- Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc. during sexual acts.
 - Add at most 1–2 short lines of dialogue.
 - Avoid generic labels ("the man", "the woman"); use names/pronouns.
 - Preserve POV exactly (do not switch between first-person and third-person).
@@ -2225,7 +2250,7 @@ BEAT 11:
             step7_system = """We are a professional prose editor.
 
 TASK:
-Remove repetition and improve variation.
+Improve variation by rewriting duplicated dialogue and descriptions.
 
 STRICT RULES:
 - Do NOT add new content.
@@ -2234,9 +2259,9 @@ STRICT RULES:
 - Preserve POV exactly (do not switch between first-person and third-person).
 - LENGTH SAFETY (CRITICAL):
   - Do NOT reduce the length of any beat.
-  - Maintain each beat length within ±5%.
-  - If removing repetition, replace it with equivalent concrete physical/sensory detail.
+  - Replace duplicated dialogue and descriptions with equivalent concrete physical/sensory detail.
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants, broken prefixes).
+- DON'T remove content
 
 FORMAT:
 Return the full story with identical structure:
@@ -3062,57 +3087,69 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 except Exception:
                     pass
         
-        return {
-            "status": "success",
-            "content": generated_text,
-            "metadata": {
-                "language": language,
-                "genre": genre,
-                "age_range": age_range,
+            return {
+                "status": "success",
+                "content": generated_text,
+                "metadata": {
+                    "language": language,
+                    "genre": genre,
+                    "age_range": age_range,
+                }
             }
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ LLM generation error: {e}")
-        import traceback
-        logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        
-        # Send error callback if callback_url is available
-        try:
-            input_data = event.get("input", {})
-            metadata = event.get("metadata", {})
-            input_metadata = input_data.get("metadata", {})
-            callback_url = (
-                input_data.get("callback_url") 
-                or metadata.get("callback_url") 
-                or input_metadata.get("callback_url")
-            )
-            story_id = input_data.get("story_id") or metadata.get("story_id")
-            user_id = input_data.get("user_id") or metadata.get("user_id")
+
+        except Exception as e:
+            import traceback
+            last_error = e
+            logger.error(f"❌ LLM generation error: {e}")
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+            # Retry early for transient CUDA/driver readiness issues, without notifying the app yet.
+            if _is_transient_cuda_error(e) and attempt < max_handler_retries - 1:
+                wait = retry_delay_seconds * (attempt + 1)
+                logger.warning(f"⚠️ Transient CUDA/driver error detected, retrying attempt {attempt + 2}/{max_handler_retries} after {wait}s...")
+                time.sleep(wait)
+                continue
             
-            if callback_url:
-                if "/api/llm/callback" in callback_url:
-                    error_callback_url = callback_url.replace("/api/llm/callback", "/api/llm/error-callback")
-                else:
-                    base_url = callback_url.rstrip("/")
-                    error_callback_url = f"{base_url}/error-callback"
-                
-                notify_error_callback(
-                    error_callback_url=error_callback_url,
-                    story_id=story_id or "unknown",
-                    error_message=str(e),
-                    error_details=f"LLM handler error: {type(e).__name__}",
-                    user_id=user_id,
-                    job_id=event.get("id"),
-                    metadata={"error_type": type(e).__name__}
+            # Send error callback if callback_url is available (only after retries exhausted or non-transient error)
+            try:
+                input_data = event.get("input", {})
+                metadata = event.get("metadata", {})
+                input_metadata = input_data.get("metadata", {})
+                callback_url = (
+                    input_data.get("callback_url") 
+                    or metadata.get("callback_url") 
+                    or input_metadata.get("callback_url")
                 )
-        except Exception as callback_error:
-            logger.error(f"❌ Failed to send error callback: {callback_error}")
-        
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+                story_id = input_data.get("story_id") or metadata.get("story_id")
+                user_id = input_data.get("user_id") or metadata.get("user_id")
+                
+                if callback_url:
+                    if "/api/llm/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/llm/callback", "/api/llm/error-callback")
+                    else:
+                        base_url = callback_url.rstrip("/")
+                        error_callback_url = f"{base_url}/error-callback"
+                    
+                    notify_error_callback(
+                        error_callback_url=error_callback_url,
+                        story_id=story_id or "unknown",
+                        error_message=str(e),
+                        error_details=f"LLM handler error: {type(e).__name__}",
+                        user_id=user_id,
+                        job_id=event.get("id"),
+                        metadata={"error_type": type(e).__name__}
+                    )
+            except Exception as callback_error:
+                logger.error(f"❌ Failed to send error callback: {callback_error}")
+            
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+
+    if last_error:
+        return {"status": "error", "error": str(last_error)}
+    return {"status": "error", "error": "Unknown handler error"}
 
 def clean_story(text: str) -> str:
     """
@@ -3201,4 +3238,3 @@ if __name__ == '__main__':
     logger.info("🚀 LLM Handler starting...")
     logger.info("✅ LLM Handler ready")
     runpod.serverless.start({"handler": handler})
-
