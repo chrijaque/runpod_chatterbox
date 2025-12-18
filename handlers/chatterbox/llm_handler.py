@@ -996,7 +996,7 @@ def notify_error_callback(error_callback_url: str, story_id: str, error_message:
 _BEAT_SEPARATOR = "\n\n⁂\n\n"
 _SOFT_MIN_CHARS = 9000
 _HARD_MAX_CHARS = 11500
-_STEP2_GATE_MIN = 8800
+_STEP2_GATE_MIN = 4000
 _STEP2_GATE_MAX = 11800
 _BEAT_MIN = 780
 _BEAT_TARGET = 850
@@ -1858,12 +1858,13 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             expected_beats = 12
             enable_transitions = bool(input_data.get("enable_transitions", True))
             enable_dialogue = bool(input_data.get("enable_dialogue", True))
-            enable_motifs = bool(input_data.get("enable_motifs", True))
+            enable_motifs = bool(input_data.get("enable_motifs", False))
+            enable_climax = bool(input_data.get("enable_climax", False))
             # Keywords are intentionally disabled in v2; keep variables for compatibility but empty.
             keyword_constraints = []
 
             # Tight step budgets (can be overridden via input_data)
-            outline_max_tokens_v2 = int(input_data.get("outline_max_tokens", 800) or 800)
+            outline_max_tokens_v2 = int(input_data.get("outline_max_tokens", 1000) or 1000)
             step2_max_tokens = int(input_data.get("max_tokens", 6000) or 6000)  # Step 2 budget
             step3_max_tokens = int(input_data.get("transitions_max_tokens", 800) or 800)
             step4_max_tokens = int(input_data.get("motifs_max_tokens", 1200) or 1200)
@@ -1876,7 +1877,7 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("=" * 80)
             logger.info("🧩 MULTI-STEP-V2 PIPELINE START")
             logger.info("=" * 80)
-            logger.info(f"Flags: transitions={enable_transitions}, dialogue={enable_dialogue}, motifs={enable_motifs}")
+            logger.info(f"Flags: transitions={enable_transitions}, dialogue={enable_dialogue}, motifs={enable_motifs}, climax={enable_climax}")
 
             # Step 1: Generate outline (beats skeleton) using provided outline_messages
             if not outline_messages:
@@ -2128,7 +2129,9 @@ OUTLINE:
                 logger.info("=" * 80)
                 logger.info("🗣️ STEP 5: Dialogue pass (per beat)...")
                 logger.info("=" * 80)
-                step5_system = """We are a dialogue specialist.
+                # Use language_raw for full name (e.g., "English") or fallback to code (e.g., "en")
+                language_display = language_raw if language_raw and len(language_raw) > 2 else language
+                step5_system = f"""We are a dialogue specialist.
 
 TASK:
 Add or refine dialogue.
@@ -2136,10 +2139,9 @@ Add or refine dialogue.
 RULES:
 - Do NOT add new physical actions.
 - Do NOT escalate sexual intensity.
-- All dialogue must be in the same language as the story.
+- All dialogue MUST be in {language_display} no matter the characters origin.
 - Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
 - Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
-- Add at most 1–2 short lines of dialogue.
 - Avoid generic labels ("the man", "the woman"); use names/pronouns.
 - Preserve POV exactly (do not switch between first-person and third-person).
 
@@ -2173,11 +2175,12 @@ Return ONLY the revised beat text."""
                     revised_beats.append(revised)
                 beats = revised_beats
 
-            # Step 6: Climax pass (Beat 11 only)
-            logger.info("=" * 80)
-            logger.info("💥 STEP 6: Climax refinement (Beat 11 only)...")
-            logger.info("=" * 80)
-            step6_system = """You are an erotic climax specialist.
+            # Step 6 (optional): Climax pass (Beat 11 only)
+            if enable_climax:
+                logger.info("=" * 80)
+                logger.info("💥 STEP 6: Climax refinement (Beat 11 only)...")
+                logger.info("=" * 80)
+                step6_system = """You are an erotic climax specialist.
 
 TASK:
 Rewrite Beat 11 to deliver sharp climax to the characters.
@@ -2191,8 +2194,8 @@ RULES:
 
 OUTPUT:
 Return only Beat 11 text."""
-            beat11 = beats[10] if len(beats) >= 11 else ""
-            step6_user = f"""Rewrite ONLY Beat 11 for a single, sharp climax.
+                beat11 = beats[10] if len(beats) >= 11 else ""
+                step6_user = f"""Rewrite ONLY Beat 11 for a single, sharp climax.
 
 CRITICAL:
 - Return only the revised Beat 11 text.
@@ -2200,20 +2203,20 @@ CRITICAL:
 
 BEAT 11:
 {beat11}"""
-            beat11_revised, _t6 = _generate_content(
-                [{"role": "system", "content": step6_system}, {"role": "user", "content": step6_user}],
-                model_or_engine,
-                tokenizer,
-                use_vllm,
-                temperature=0.6,
-                max_tokens=step6_max_tokens,
-                device=device
-            )
-            beat11_revised = beat11_revised.strip()
-            if not _is_expected_beat_prefix(beat11_revised, 11):
-                beat11_revised = f"{_beat_label(11)} " + beat11_revised
-            if len(beats) >= 11:
-                beats[10] = beat11_revised
+                beat11_revised, _t6 = _generate_content(
+                    [{"role": "system", "content": step6_system}, {"role": "user", "content": step6_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.6,
+                    max_tokens=step6_max_tokens,
+                    device=device
+                )
+                beat11_revised = beat11_revised.strip()
+                if not _is_expected_beat_prefix(beat11_revised, 11):
+                    beat11_revised = f"{_beat_label(11)} " + beat11_revised
+                if len(beats) >= 11:
+                    beats[10] = beat11_revised
 
             # Re-assemble structured story (still beat-labeled + separators)
             structured_story = _BEAT_SEPARATOR.join([b.strip() for b in beats])
@@ -2660,6 +2663,8 @@ Here is the story to expand:
             logger.info("=" * 80)
             
             # Build finetune prompt dynamically
+            # Use language_raw for full name (e.g., "English") or fallback to code (e.g., "en")
+            language_display_finetune = language_raw if language_raw and len(language_raw) > 2 else language
             finetune_system_prompt = f"""You're an expert editor specializing in refining narrative prose. Your task is to improve story quality by rewriting duplicated, flat or repetitive dialogue and descriptions.
 
 CRITICAL RULES:
@@ -2670,7 +2675,8 @@ CRITICAL RULES:
 - Preserve all beat labels ("Beat 1:", "Beat 2:", etc.) exactly as they are
 - Preserve all \\n\\n⁂\\n\\n separators between beats exactly as they are
 - Only rewrite duplicated dialogue and descriptions to make them more varied and engaging
-- Maintain the same meaning and context when rewriting"""
+- Maintain the same meaning and context when rewriting
+- All dialogue MUST be in the same {language_display_finetune} as the story no matter the characters origin."""
             
             finetune_user_prompt = f"""Rewrite the following story to improve quality by nuancing dialogue and descriptions.
 
