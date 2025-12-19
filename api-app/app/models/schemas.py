@@ -168,6 +168,7 @@ class LLMGenerateRequest(BaseModel):
     expansion_max_tokens: Optional[int] = 4000  # Max tokens for Step 3 expansion (if story < 8500 chars)
     finetune_max_tokens: Optional[int] = 4000  # Max tokens for Step 4 finetuning (rewrite duplicated dialogue/descriptions)
     mode: Optional[str] = "sensual"  # NSFW mode for tone (soft, sensual, hardcore, extreme)
+    preformatted_beats: Optional[str] = None  # Structured beats text (skips Step 1 if provided for multi-step-v2)
     
     @model_validator(mode='after')
     def validate_messages(self):

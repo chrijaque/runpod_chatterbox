@@ -67,6 +67,7 @@ async def generate_story_llm(request: LLMGenerateRequest, http_req: Request):
             expansion_max_tokens=request.expansion_max_tokens,
             finetune_max_tokens=request.finetune_max_tokens,
             mode=request.mode,
+            preformatted_beats=request.preformatted_beats,
         )
         
         logger.info(f"✅ RunPod LLM call completed")

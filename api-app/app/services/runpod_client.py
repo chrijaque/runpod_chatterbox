@@ -464,7 +464,8 @@ class RunPodClient:
         outline_max_tokens: Optional[int] = None,
         expansion_max_tokens: Optional[int] = None,
         finetune_max_tokens: Optional[int] = None,
-        mode: Optional[str] = None
+        mode: Optional[str] = None,
+        preformatted_beats: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate LLM completion using RunPod Qwen 2.5 instruct model
@@ -531,6 +532,7 @@ class RunPodClient:
                     "expansion_max_tokens": expansion_max_tokens,
                     "finetune_max_tokens": finetune_max_tokens,
                     "mode": mode,
+                    "preformatted_beats": preformatted_beats,
                     "metadata": {
                         "user_id": user_id,
                         "story_id": story_id,

@@ -117,15 +117,19 @@ def _extract_beats(content: str) -> list:
         # Primary method: Use ⁂ separator (expected format)
         if '⁂' in content:
             beats = content.split('\n\n⁂\n\n')
-            # Remove [BEAT X] labels if present
-            beats = [re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', beat, flags=re.IGNORECASE).strip() 
+            # Remove [BEAT X] labels if present (handle flexible whitespace inside brackets)
+            beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat, flags=re.IGNORECASE).strip() 
                      for beat in beats if beat.strip()]
+            # Remove any remaining standalone brackets (safety cleanup)
+            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
         # Fallback: Try beat labels
         elif re.search(r'\[BEAT\s+[IVXLCDM]+\]', content, re.IGNORECASE):
             # New format with [BEAT I] labels
             parts = re.split(r'\n\n⁂\n\n', content)
-            beats = [re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', part, flags=re.IGNORECASE).strip() 
+            beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', part, flags=re.IGNORECASE).strip() 
                      for part in parts if part.strip()]
+            # Remove any remaining standalone brackets (safety cleanup)
+            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
         elif '### Beat' in content or 'Beat' in content:
             # Old format with Beat X: labels (backward compatibility)
             beat_pattern = r'(?:###\s*)?Beat\s*(?:\d+|[IVXLCDM]+)\s*:'
@@ -1561,7 +1565,10 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
         
         # Remove [BEAT X] label from start of beat if present (case-insensitive)
         # This handles both [BEAT I] and [Beat I] formats
-        body = re.sub(r'^\s*\[BEAT\s+[IVXLCDM]+\]\s*', '', body, flags=re.IGNORECASE)
+        # Handle flexible whitespace inside brackets
+        body = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', body, flags=re.IGNORECASE)
+        # Remove any remaining standalone brackets (safety cleanup)
+        body = re.sub(r'\[\s*\]', '', body)
         
         # Also handle old format with colon (backward compatibility)
         if ":" in body[:30]:  # Only check first 30 chars to avoid false positives
@@ -1575,8 +1582,10 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
         body = re.sub(r'(?m)^\s*\d+\s*[:.)]\s*', '', body)  # remove "0:" etc
         body = "\n".join(line.strip() for line in body.split("\n"))
         # Remove accidental nested beat labels inside the body (both formats)
-        body = re.sub(r'(?im)\[BEAT\s+[IVXLCDM]+\]', '', body)  # Remove [BEAT X] format
+        body = re.sub(r'(?im)\[\s*BEAT\s+[IVXLCDM]+\s*\]', '', body)  # Remove [BEAT X] format
         body = re.sub(r'(?im)\bBeat\s*(?:\d+|[IVXLCDM]+)\s*:\s*', '', body)  # Remove old Beat X: format
+        # Remove any remaining standalone brackets (safety cleanup)
+        body = re.sub(r'\[\s*\]', '', body)
         # Collapse blank lines
         body = re.sub(r"\n{3,}", "\n\n", body).strip()
         # Beat 1: strip expository framing if it leaked into the beat body
@@ -1896,30 +1905,53 @@ def handler(event: Dict[str, Any]) -> Dict[str, Any]:
             logger.info("=" * 80)
             logger.info(f"Flags: transitions={enable_transitions}, dialogue={enable_dialogue}, motifs={enable_motifs}, climax={enable_climax}")
 
-            # Step 1: Generate outline (beats skeleton) using provided outline_messages
-            if not outline_messages:
-                raise ValueError("multi-step-v2 requires outline_messages (Step 1 prompt)")
-            logger.info("=" * 80)
-            logger.info("📝 STEP 1: Generating beat skeleton (outline)...")
-            logger.info("=" * 80)
-            outline_text, outline_time = _generate_content(
-                outline_messages,
-                model_or_engine,
-                tokenizer,
-                use_vllm,
-                temperature,
-                max_tokens=outline_max_tokens_v2,
-                device=device
-            )
-            outline_text = _ensure_structured_beats(
-                outline_text,
-                expected_beats,
-                model_or_engine=model_or_engine,
-                tokenizer=tokenizer,
-                use_vllm=use_vllm,
-                device=device,
-                step_name="Step1_outline",
-            )
+            # Check for preformatted beats (advanced mode - skip Step 1)
+            preformatted_beats = input_data.get("preformatted_beats") or metadata.get("preformatted_beats")
+            
+            if preformatted_beats:
+                # Advanced mode: User-provided beats are already formatted
+                # Skip Step 1, use preformatted beats directly for Step 2
+                logger.info("=" * 80)
+                logger.info("📝 STEP 1: SKIPPED (using preformatted beats from advanced mode)")
+                logger.info("=" * 80)
+                outline_text = preformatted_beats.strip()
+                outline_time = 0.0  # No generation time for preformatted beats
+                
+                # Validate structure
+                outline_text = _ensure_structured_beats(
+                    outline_text,
+                    expected_beats,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                    step_name="Step1_preformatted",
+                )
+            else:
+                # Standard mode: Generate outline from outline_messages
+                if not outline_messages:
+                    raise ValueError("multi-step-v2 requires outline_messages (Step 1 prompt) or preformatted_beats")
+                logger.info("=" * 80)
+                logger.info("📝 STEP 1: Generating beat skeleton (outline)...")
+                logger.info("=" * 80)
+                outline_text, outline_time = _generate_content(
+                    outline_messages,
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature,
+                    max_tokens=outline_max_tokens_v2,
+                    device=device
+                )
+                outline_text = _ensure_structured_beats(
+                    outline_text,
+                    expected_beats,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                    step_name="Step1_outline",
+                )
 
             # Keywords disabled: no keyword → beat binding.
             beat_keyword_map: Dict[int, list] = {}
