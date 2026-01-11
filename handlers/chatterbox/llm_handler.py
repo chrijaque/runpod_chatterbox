@@ -1061,10 +1061,98 @@ def _normalize_workflow_type(input_data: Dict[str, Any], metadata: Dict[str, Any
         return ""
 
 def _split_beats_strict(text: str) -> list:
-    """Split a structured beat-labeled story into beats using the canonical separator."""
-    parts = text.split(_BEAT_SEPARATOR) if _BEAT_SEPARATOR in text else [text]
-    beats = [p.strip() for p in parts if p and p.strip()]
-    return beats
+    """Split a structured beat-labeled story into beats using beat labels as primary method."""
+    import re
+    
+    logger.info(f"🔍 _split_beats_strict: Input length: {len(text)} chars")
+    
+    # Count beat labels to see how many we expect
+    beat_label_pattern = r'\[BEAT\s+[IVXLCDM]+\]'
+    beat_labels = re.findall(beat_label_pattern, text, re.IGNORECASE)
+    beat_label_count = len(beat_labels)
+    logger.info(f"🔍 _split_beats_strict: Found {beat_label_count} beat labels in text: {beat_labels[:5]}...")
+    
+    # PRIMARY METHOD: Split by beat labels (most reliable)
+    if beat_label_count > 0:
+        logger.info(f"🔍 _split_beats_strict: Using beat label splitting (primary method)")
+        # Split by beat labels - capturing group returns: [text_before_label1, label1, text_after_label1, label2, text_after_label2, ...]
+        parts = re.split(r'(\[BEAT\s+[IVXLCDM]+\])', text, flags=re.IGNORECASE)
+        
+        # Recombine labels with their content
+        # After split with capturing group: [text_before, label1, content1, label2, content2, ...]
+        beats = []
+        i = 0
+        
+        # Skip any text before the first label
+        while i < len(parts) and not re.match(r'\[BEAT\s+[IVXLCDM]+\]', parts[i], re.IGNORECASE):
+            i += 1
+        
+        # Process pairs: label at i, content at i+1, next label at i+2, etc.
+        while i < len(parts):
+            if re.match(r'\[BEAT\s+[IVXLCDM]+\]', parts[i], re.IGNORECASE):
+                label = parts[i].strip()
+                # Get content after this label (before next label)
+                content = ""
+                if i + 1 < len(parts):
+                    content = parts[i + 1].strip()
+                
+                beat = (label + " " + content).strip()
+                if beat:
+                    beats.append(beat)
+                i += 2  # Skip to next label (label + content)
+            else:
+                i += 1
+        
+        logger.info(f"🔍 _split_beats_strict: Split by labels into {len(beats)} beats")
+        
+        # Validate we got the right number
+        if len(beats) == beat_label_count:
+            logger.info(f"✅ _split_beats_strict: Successfully split into {len(beats)} beats using labels")
+            # Log first few beats to verify
+            for i, beat in enumerate(beats[:3], 1):
+                logger.info(f"🔍 _split_beats_strict: Beat {i} preview (first 100 chars): {beat[:100]}")
+            return beats
+        else:
+            logger.warning(f"⚠️ _split_beats_strict: Label split got {len(beats)} beats but expected {beat_label_count}, trying separator method...")
+    
+    # SECONDARY METHOD: Try separator-based splitting
+    logger.info(f"🔍 _split_beats_strict: Trying separator-based splitting...")
+    logger.info(f"🔍 _split_beats_strict: Separator present: {_BEAT_SEPARATOR in text}")
+    logger.info(f"🔍 _split_beats_strict: Separator repr: {repr(_BEAT_SEPARATOR)}")
+    
+    if _BEAT_SEPARATOR in text:
+        parts = text.split(_BEAT_SEPARATOR)
+        logger.info(f"🔍 _split_beats_strict: Split into {len(parts)} parts using exact separator")
+        beats = [p.strip() for p in parts if p and p.strip()]
+        logger.info(f"🔍 _split_beats_strict: After filtering empty: {len(beats)} beats")
+        
+        if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
+            logger.info(f"✅ _split_beats_strict: Successfully split using separator")
+            return beats
+    else:
+        # Try flexible regex patterns for separator
+        if '⁂' in text:
+            logger.info(f"🔍 _split_beats_strict: Found '⁂' character, trying flexible regex split...")
+            patterns = [
+                r'\n\n⁂\n\n',  # Exact pattern
+                r'\n\s*⁂\s*\n',  # Flexible whitespace
+                r'\n+⁂\n+',  # One or more newlines
+            ]
+            
+            for pattern in patterns:
+                parts = re.split(pattern, text)
+                logger.info(f"🔍 _split_beats_strict: Pattern {pattern} split into {len(parts)} parts")
+                if len(parts) > 1:
+                    beats = [p.strip() for p in parts if p and p.strip()]
+                    logger.info(f"🔍 _split_beats_strict: After filtering: {len(beats)} beats")
+                    if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
+                        logger.info(f"✅ _split_beats_strict: Successfully split using pattern: {pattern}")
+                        return beats
+    
+    # FALLBACK: Return as single beat if nothing worked
+    logger.warning(f"⚠️ _split_beats_strict: All methods failed, returning as single beat")
+    logger.warning(f"⚠️ _split_beats_strict: Found {beat_label_count} labels but couldn't split properly")
+    return [text.strip()] if text.strip() else []
 
 def _validate_beats_strict(beats: list, expected_beats: int = 12) -> tuple[bool, str]:
     """Validate strict beat format: count, labels, and separator safety."""
@@ -1095,12 +1183,19 @@ def _ensure_structured_beats(
     Ensure text is in strict Beat 1..N + separator format.
     If invalid, attempt a single 'format-only' repair pass.
     """
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Input length: {len(text)} chars")
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Input preview (first 500 chars): {text[:500]}")
+    
     beats = _split_beats_strict(text)
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Split into {len(beats)} beats")
+    
     ok, reason = _validate_beats_strict(beats, expected_beats=expected_beats)
     if ok:
+        logger.info(f"✅ _ensure_structured_beats ({step_name}): Validation passed, returning original text")
         return text.strip()
 
     logger.warning(f"⚠️ {step_name}: invalid structured beats ({reason}), attempting format-only repair")
+    logger.warning(f"⚠️ {step_name}: Original text had {len(beats)} beats, expected {expected_beats}")
 
     format_system = f"""You are a strict formatter.
 
@@ -1135,10 +1230,16 @@ Return the reformatted beats only."""
         device=device,
     )
 
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Repair attempt returned {len(repaired)} chars")
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Repair preview (first 500 chars): {repaired[:500]}")
+    
     repaired_beats = _split_beats_strict(repaired)
+    logger.info(f"🔍 _ensure_structured_beats ({step_name}): Repaired text split into {len(repaired_beats)} beats")
+    
     ok2, reason2 = _validate_beats_strict(repaired_beats, expected_beats=expected_beats)
     if not ok2:
         logger.warning(f"⚠️ {step_name}: format-only repair failed ({reason2}); returning original output")
+        logger.warning(f"⚠️ {step_name}: Original text length: {len(text)} chars")
         return text.strip()
 
     logger.info(f"✅ {step_name}: format-only repair succeeded")
@@ -2026,9 +2127,26 @@ Write the expanded beats now."""
                 step_name="Step2_physicalization",
             )
 
+            logger.info(f"🔍 Post-Step-2: expanded_text length: {len(expanded_text)} chars")
+            logger.info(f"🔍 Post-Step-2: expanded_text contains separator: {_BEAT_SEPARATOR in expanded_text}")
+            logger.info(f"🔍 Post-Step-2: expanded_text preview (first 500 chars): {expanded_text[:500]}")
+            
             beats = _split_beats_strict(expanded_text)
+            logger.info(f"🔍 Post-Step-2: After first _split_beats_strict: {len(beats)} beats")
+            
             expanded_text = _sanitize_structured_beats(expanded_text, expected_beats=expected_beats)
+            logger.info(f"🔍 Post-Step-2: After _sanitize_structured_beats: length {len(expanded_text)} chars")
+            logger.info(f"🔍 Post-Step-2: After _sanitize_structured_beats: contains separator: {_BEAT_SEPARATOR in expanded_text}")
+            
             beats = _split_beats_strict(expanded_text)
+            logger.info(f"🔍 Post-Step-2: After second _split_beats_strict: {len(beats)} beats")
+            
+            if len(beats) != expected_beats:
+                logger.error(f"❌ Post-Step-2: Beat count mismatch! Expected {expected_beats}, got {len(beats)}")
+                # Try to recover by re-splitting the original expanded_text
+                logger.warning(f"⚠️ Post-Step-2: Attempting recovery by re-splitting original expanded_text")
+                beats = _split_beats_strict(expanded_text)
+                logger.info(f"🔍 Post-Step-2: Recovery attempt: {len(beats)} beats")
 
             # Keyword validation intentionally removed (keywords disabled).
 
@@ -2181,13 +2299,29 @@ OUTLINE:
                 
                 # CRITICAL: Re-split and validate beats before Step 5
                 # Ensure beats are properly split (in case transitions or other steps modified structure)
+                logger.info(f"🔍 Pre-Step-5: Current beats list length: {len(beats)}")
+                logger.info(f"🔍 Pre-Step-5: Expected beats: {expected_beats}")
+                
+                # Log first beat to see its structure
+                if beats:
+                    logger.info(f"🔍 Pre-Step-5: First beat preview (first 200 chars): {beats[0][:200]}")
+                    logger.info(f"🔍 Pre-Step-5: First beat contains separator: {_BEAT_SEPARATOR in beats[0] or '⁂' in beats[0]}")
+                
                 structured_story_before_step5 = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+                logger.info(f"🔍 Pre-Step-5: Structured story length: {len(structured_story_before_step5)} chars")
+                logger.info(f"🔍 Pre-Step-5: Structured story contains separator: {_BEAT_SEPARATOR in structured_story_before_step5}")
+                logger.info(f"🔍 Pre-Step-5: Structured story preview (first 500 chars): {structured_story_before_step5[:500]}")
+                
                 beats = _split_beats_strict(structured_story_before_step5)
+                logger.info(f"🔍 Pre-Step-5: After _split_beats_strict: {len(beats)} beats found")
                 
                 # Validate beat count before Step 5
                 if len(beats) != expected_beats:
                     logger.error(f"❌ Pre-Step-5 validation failed: Expected {expected_beats} beats, got {len(beats)}")
                     logger.error(f"⚠️ Skipping Step 5 (dialogue) to preserve structure")
+                    # Log what we actually got
+                    for i, beat in enumerate(beats[:5], 1):
+                        logger.error(f"🔍 Pre-Step-5: Beat {i} preview (first 200 chars): {beat[:200]}")
                     enable_dialogue = False  # Disable Step 5 if structure is already broken
                 
                 if enable_dialogue:
@@ -2366,13 +2500,29 @@ BEAT 11:
                     beats[10] = beat11_revised
 
             # Re-assemble structured story (still beat-labeled + separators)
+            logger.info(f"🔍 Pre-Step-7: Current beats list length: {len(beats)}")
+            logger.info(f"🔍 Pre-Step-7: Expected beats: {expected_beats}")
+            
+            # Log first beat to see its structure
+            if beats:
+                logger.info(f"🔍 Pre-Step-7: First beat preview (first 200 chars): {beats[0][:200]}")
+                logger.info(f"🔍 Pre-Step-7: First beat contains separator: {_BEAT_SEPARATOR in beats[0] or '⁂' in beats[0]}")
+            
             structured_story = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+            logger.info(f"🔍 Pre-Step-7: Structured story length: {len(structured_story)} chars")
+            logger.info(f"🔍 Pre-Step-7: Structured story contains separator: {_BEAT_SEPARATOR in structured_story}")
+            logger.info(f"🔍 Pre-Step-7: Structured story preview (first 500 chars): {structured_story[:500]}")
             
             # CRITICAL: Validate beats before Step 7
             beats_before_step7 = _split_beats_strict(structured_story)
+            logger.info(f"🔍 Pre-Step-7: After _split_beats_strict: {len(beats_before_step7)} beats found")
+            
             if len(beats_before_step7) != expected_beats:
                 logger.error(f"❌ Pre-Step-7 validation failed: Expected {expected_beats} beats, got {len(beats_before_step7)}")
                 logger.error(f"⚠️ Skipping Step 7 (deduplication) to preserve structure")
+                # Log what we actually got
+                for i, beat in enumerate(beats_before_step7[:5], 1):
+                    logger.error(f"🔍 Pre-Step-7: Beat {i} preview (first 200 chars): {beat[:200]}")
                 # Skip Step 7, use current structured_story
                 generated_text = structured_story
                 generation_time = outline_time + step2_time
