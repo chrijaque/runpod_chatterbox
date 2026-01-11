@@ -2178,51 +2178,149 @@ OUTLINE:
                 logger.info("=" * 80)
                 logger.info("🗣️ STEP 5: Dialogue pass (per beat)...")
                 logger.info("=" * 80)
-                # Use language_raw for full name (e.g., "English") or fallback to code (e.g., "en")
-                language_display = language_raw if language_raw and len(language_raw) > 2 else language
-                step5_system = f"""We are a dialogue specialist.
+                
+                # CRITICAL: Re-split and validate beats before Step 5
+                # Ensure beats are properly split (in case transitions or other steps modified structure)
+                structured_story_before_step5 = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+                beats = _split_beats_strict(structured_story_before_step5)
+                
+                # Validate beat count before Step 5
+                if len(beats) != expected_beats:
+                    logger.error(f"❌ Pre-Step-5 validation failed: Expected {expected_beats} beats, got {len(beats)}")
+                    logger.error(f"⚠️ Skipping Step 5 (dialogue) to preserve structure")
+                    enable_dialogue = False  # Disable Step 5 if structure is already broken
+                
+                if enable_dialogue:
+                    import re
+                    # Use language_raw for full name (e.g., "English") or fallback to code (e.g., "en")
+                    language_display = language_raw if language_raw and len(language_raw) > 2 else language
+                    
+                    step5_system = f"""You are a dialogue editor for a single story beat.
 
-TASK:
-Add or refine dialogue.
+CRITICAL STRUCTURE REQUIREMENTS (MOST IMPORTANT):
+- You MUST return ONLY ONE beat
+- You MUST start your output with the exact beat label provided (e.g., [BEAT I])
+- You MUST preserve ALL existing narrative content (every sentence, every action, every description)
+- You MUST NOT remove any content
+- You MUST NOT add new actions or events
+- You MUST NOT include separators (⁂) or other beat labels
 
-RULES:
-- Do NOT add new physical actions.
-- Do NOT escalate sexual intensity.
-- All dialogue MUST be in {language_display} no matter the characters origin.
-- Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues.
-- Dialogue CAN include "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
-- Avoid generic labels ("the man", "the woman"); use names/pronouns.
-- Preserve POV exactly (do not switch between first-person and third-person).
+DIALOGUE TASK:
+- Add or refine dialogue naturally within the existing text
+- All dialogue MUST be in {language_display} no matter the characters origin
+- Dialogue can include sounds like "ahh...", "ohh...", "yes...", "fuck...", "harder...", etc.
+- Dialogue should reveal personality (voice, humor, insecurity, confidence) and consent cues
+- Preserve POV exactly (do not switch between first-person and third-person)
 
-OUTPUT:
-Return ONLY the revised beat text."""
-                revised_beats = []
-                for i, beat in enumerate(beats, 1):
-                    step5_user = f"""Revise ONLY the dialogue inside this beat.
+OUTPUT FORMAT:
+- Start with: [BEAT <RomanNumeral>] (use the exact label provided)
+- Include ALL original content
+- Add dialogue naturally within existing sentences
+- Return ONLY this one beat, nothing else"""
+                    
+                    revised_beats = []
+                    for i, beat in enumerate(beats, 1):
+                        # Extract beat body - remove label if present to avoid confusion
+                        beat_body = beat.strip()
+                        beat_label = _beat_label(i)
+                        
+                        # Remove label from input if present
+                        if beat_body.startswith(beat_label):
+                            beat_body = beat_body[len(beat_label):].strip()
+                        # Also handle case where label might be in brackets or have different formatting
+                        beat_body = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat_body, flags=re.IGNORECASE)
+                        beat_body = beat_body.strip()
+                        
+                        # Store original length for validation
+                        original_length = len(beat_body)
+                        
+                        # Ensure we're only processing ONE beat (safety check)
+                        if _BEAT_SEPARATOR in beat_body or '⁂' in beat_body:
+                            logger.warning(f"⚠️ Step 5 Beat {i}: Input contains separator, splitting...")
+                            # If separator found, take only the first part
+                            beat_body = beat_body.split(_BEAT_SEPARATOR)[0].split('⁂')[0].strip()
+                        
+                        step5_user = f"""Add or refine dialogue in this ONE beat. Preserve ALL existing content.
 
-CRITICAL:
-- Do not add actions, positions, or new events.
-- Do not escalate intensity.
-- Keep the beat label intact: {_beat_label(i)}
+BEAT LABEL TO USE: {beat_label}
 
-BEAT TO REVISE:
-{beat}
+CRITICAL REQUIREMENTS:
+1. Your output MUST start with: {beat_label}
+2. Preserve ALL existing narrative content (actions, descriptions, physical details) - do NOT remove anything
+3. Only ADD or REFINE dialogue - do NOT remove any existing content
+4. Return ONLY this beat, no other beats, no separators
 
-Return ONLY the revised beat text."""
-                    revised, _t5 = _generate_content(
-                        [{"role": "system", "content": step5_system}, {"role": "user", "content": step5_user}],
-                        model_or_engine,
-                        tokenizer,
-                        use_vllm,
-                        temperature=0.5,
-                        max_tokens=step5_max_tokens,
-                        device=device
-                    )
-                    revised = revised.strip()
-                    if not _is_expected_beat_prefix(revised, i):
-                        revised = f"{_beat_label(i)} " + revised
-                    revised_beats.append(revised)
-                beats = revised_beats
+BEAT CONTENT (beat {i} of {expected_beats}):
+{beat_body}
+
+Return the complete revised beat starting with {beat_label}."""
+                        
+                        revised, _t5 = _generate_content(
+                            [{"role": "system", "content": step5_system}, {"role": "user", "content": step5_user}],
+                            model_or_engine,
+                            tokenizer,
+                            use_vllm,
+                            temperature=0.4,  # Lower temperature for more conservative changes
+                            max_tokens=step5_max_tokens,
+                            device=device
+                        )
+                        revised = revised.strip()
+                        
+                        # IMMEDIATE VALIDATION - before accepting the revision
+                        validation_passed = False
+                        
+                        # Check 1: Must start with correct label
+                        if not _is_expected_beat_prefix(revised, i):
+                            logger.warning(f"⚠️ Step 5 Beat {i}: Missing or incorrect label, fixing...")
+                            revised = f"{beat_label} " + revised.lstrip()
+                        
+                        # Check 2: Must not contain other beat labels (model tried to add other beats)
+                        other_beat_labels = [_beat_label(j) for j in range(1, expected_beats + 1) if j != i]
+                        contains_other_beats = any(label in revised for label in other_beat_labels)
+                        if contains_other_beats:
+                            logger.warning(f"⚠️ Step 5 Beat {i}: Contains other beat labels, using original")
+                            revised = beat  # Use original beat
+                            validation_passed = False
+                        else:
+                            # Check 3: Must not contain separator (model tried to add structure)
+                            if _BEAT_SEPARATOR in revised or '⁂' in revised:
+                                logger.warning(f"⚠️ Step 5 Beat {i}: Contains separator, using original")
+                                revised = beat  # Use original beat
+                                validation_passed = False
+                            else:
+                                # Check 4: Content preservation check - ensure no content was deleted
+                                # (We allow length increase from added dialogue, but must preserve all original content)
+                                revised_body = revised.replace(beat_label, "", 1).strip() if revised.startswith(beat_label) else revised
+                                # Also remove label if it's in brackets format
+                                revised_body = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', revised_body, flags=re.IGNORECASE).strip()
+                                
+                                if len(revised_body) < original_length * 0.75:  # Lost more than 25% - likely deleted content
+                                    logger.warning(f"⚠️ Step 5 Beat {i}: Lost too much content ({len(revised_body)} vs {original_length}), using original")
+                                    revised = beat  # Use original beat
+                                    validation_passed = False
+                                else:
+                                    validation_passed = True
+                        
+                        # Final fix: ensure label is present and correct
+                        if not revised.startswith(beat_label):
+                            # Remove any existing label first
+                            revised = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', revised, flags=re.IGNORECASE).strip()
+                            revised = f"{beat_label} " + revised
+                        
+                        revised_beats.append(revised)
+                        
+                        if validation_passed:
+                            logger.info(f"✅ Step 5 Beat {i}: Validated successfully")
+                        else:
+                            logger.warning(f"⚠️ Step 5 Beat {i}: Using original beat due to validation failure")
+                    
+                    # Final validation: ensure we still have the right number of beats
+                    if len(revised_beats) == expected_beats:
+                        beats = revised_beats
+                        logger.info(f"✅ Step 5: All {expected_beats} beats validated")
+                    else:
+                        logger.error(f"❌ Step 5: Beat count mismatch! Expected {expected_beats}, got {len(revised_beats)}. Using original beats.")
+                        # beats remains unchanged (uses original from before Step 5)
 
             # Step 6 (optional): Climax pass (Beat 11 only)
             if enable_climax:
@@ -2269,63 +2367,98 @@ BEAT 11:
 
             # Re-assemble structured story (still beat-labeled + separators)
             structured_story = _BEAT_SEPARATOR.join([b.strip() for b in beats])
-
-            # Step 7: Deduplication / polish (single full-story pass)
-            logger.info("=" * 80)
-            logger.info("🧼 STEP 7: Deduplication / polish (single full-story pass)...")
-            logger.info("=" * 80)
-            step7_system = """We are a professional prose editor.
+            
+            # CRITICAL: Validate beats before Step 7
+            beats_before_step7 = _split_beats_strict(structured_story)
+            if len(beats_before_step7) != expected_beats:
+                logger.error(f"❌ Pre-Step-7 validation failed: Expected {expected_beats} beats, got {len(beats_before_step7)}")
+                logger.error(f"⚠️ Skipping Step 7 (deduplication) to preserve structure")
+                # Skip Step 7, use current structured_story
+                generated_text = structured_story
+                generation_time = outline_time + step2_time
+            else:
+                # Step 7: Deduplication / polish (single full-story pass)
+                logger.info("=" * 80)
+                logger.info("🧼 STEP 7: Deduplication / polish (single full-story pass)...")
+                logger.info("=" * 80)
+                step7_system = """We are a professional prose editor.
 
 TASK:
-Remove repetition and improve variation.
+Remove repetition and improve variation in word choice and phrasing.
 
-STRICT RULES:
+CRITICAL STRUCTURE RULES (MOST IMPORTANT):
+- You MUST return EXACTLY {expected_beats} beats
+- Each beat MUST start with its label: [BEAT I], [BEAT II], etc. (use Roman numerals I-XII)
+- You MUST preserve the separator "\\n\\n⁂\\n\\n" between EVERY beat
+- You MUST preserve the exact beat order (I, II, III, IV, V, VI, VII, VIII, IX, X, XI, XII)
+- You MUST NOT combine beats or remove any beats
+
+CONTENT RULES:
 - Do NOT add new content.
 - Do NOT intensify sexual acts.
 - Do NOT add dialogue.
 - Preserve POV exactly (do not switch between first-person and third-person).
 - LENGTH SAFETY (CRITICAL):
-  - Do NOT reduce the length of any beat.
+  - Do NOT reduce the length of any beat by more than 5%.
   - Maintain each beat length within ±5%.
   - If removing repetition, replace it with equivalent concrete physical/sensory detail.
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants, broken prefixes).
 
-FORMAT:
-Return the full story with identical structure:
-- Preserve beat labels ("[BEAT X]") and order
-- Preserve "\\n\\n⁂\\n\\n" separators
+OUTPUT FORMAT (STRICT):
+- Start with: [BEAT I]
+- End with: [BEAT XII]
+- Use "\\n\\n⁂\\n\\n" between each beat
+- Return the full story with identical structure
 - No title, no headings, no meta commentary."""
-            step7_user = f"""Edit the story below by removing repetition and improving variation.
+                step7_user = f"""Edit the story below by removing repetition and improving variation.
 
-CRITICAL:
+CRITICAL STRUCTURE REQUIREMENTS:
+- Return EXACTLY {expected_beats} beats
+- Each beat must have its label: [BEAT I] through [BEAT XII]
+- Use "\\n\\n⁂\\n\\n" between beats
+- Do NOT combine or remove any beats
+
+CONTENT REQUIREMENTS:
 - Do not add new content.
 - Do not add dialogue.
 - Do not intensify sexual acts.
 - Keep the exact beat structure and separators.
+- Only vary word choice and phrasing to reduce repetition.
 
-STORY:
-{structured_story}"""
-            dedup_text, step7_time = _generate_content(
-                [{"role": "system", "content": step7_system}, {"role": "user", "content": step7_user}],
-                model_or_engine,
-                tokenizer,
-                use_vllm,
-                temperature=0.3,
-                max_tokens=step7_max_tokens,
-                device=device
-            )
-            dedup_text = _ensure_structured_beats(
-                dedup_text,
-                expected_beats,
-                model_or_engine=model_or_engine,
-                tokenizer=tokenizer,
-                use_vllm=use_vllm,
-                device=device,
-                step_name="Step7_deduplicate",
-            )
-            dedup_text = _sanitize_structured_beats(dedup_text, expected_beats=expected_beats)
-            generated_text = dedup_text
-            generation_time = outline_time + step2_time + step7_time
+STORY ({expected_beats} beats):
+{structured_story}
+
+Return the complete story with all {expected_beats} beats."""
+                dedup_text, step7_time = _generate_content(
+                    [{"role": "system", "content": step7_system}, {"role": "user", "content": step7_user}],
+                    model_or_engine,
+                    tokenizer,
+                    use_vllm,
+                    temperature=0.3,
+                    max_tokens=step7_max_tokens,
+                    device=device
+                )
+                
+                # Validate output immediately
+                dedup_beats = _split_beats_strict(dedup_text)
+                if len(dedup_beats) != expected_beats:
+                    logger.error(f"❌ Step 7: Output validation failed! Expected {expected_beats} beats, got {len(dedup_beats)}")
+                    logger.error(f"⚠️ Using pre-Step-7 story instead")
+                    dedup_text = structured_story
+                    step7_time = 0
+                
+                dedup_text = _ensure_structured_beats(
+                    dedup_text,
+                    expected_beats,
+                    model_or_engine=model_or_engine,
+                    tokenizer=tokenizer,
+                    use_vllm=use_vllm,
+                    device=device,
+                    step_name="Step7_deduplicate",
+                )
+                dedup_text = _sanitize_structured_beats(dedup_text, expected_beats=expected_beats)
+                generated_text = dedup_text
+                generation_time = outline_time + step2_time + step7_time
             logger.info(f"✅ multi-step-v2 generated structured story: {len(generated_text)} chars")
             logger.info(f"⏱️ multi-step-v2 generation time (core): {generation_time:.2f}s")
 
