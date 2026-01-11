@@ -2703,6 +2703,10 @@ Return the complete story with all {expected_beats} beats."""
                     title_guidelines_text = ""
 
                 # Step 8a: Title + preview + tags (JSON)
+                # Check for custom preview - if provided, skip preview generation
+                custom_preview = input_data.get("custom_preview") or metadata.get("custom_preview") or input_metadata.get("custom_preview")
+                custom_title = input_data.get("custom_title") or metadata.get("custom_title") or input_metadata.get("custom_title")
+                
                 allowed_themes = [
                     "betrayal", "redemption", "trust", "duty-vs-desire", "power-and-corruption",
                     "forbidden-knowledge", "mystery", "discovery", "legacy", "loss-and-grief"
@@ -2764,19 +2768,63 @@ Story:
 
 Generate a non-explicit, abstract title, preview, and tags for this {genre} story."""
 
-                title_preview_text, _t8a = _generate_content(
-                    [{"role": "system", "content": title_preview_system}, {"role": "user", "content": title_preview_user}],
-                    model_or_engine,
-                    tokenizer,
-                    use_vllm,
-                    temperature=0.7,
-                    max_tokens=step8a_max_tokens,
-                    device=device
-                )
-                title_preview_json = _parse_json_from_text(title_preview_text) or {}
-                title = title_preview_json.get("title", "Untitled Story")
-                preview = title_preview_json.get("preview", "")
-                tags_raw = title_preview_json.get("tags", {}) if isinstance(title_preview_json.get("tags", {}), dict) else {}
+                # Check for custom title and preview - only generate what's missing
+                if custom_title and custom_title.strip():
+                    title = custom_title.strip()
+                    logger.info(f"✅ Using custom title: {title[:50]}...")
+                else:
+                    title = "Untitled Story"  # Will be generated below
+                
+                if custom_preview and custom_preview.strip():
+                    preview = custom_preview.strip()
+                    logger.info(f"✅ Using custom preview: {preview[:50]}...")
+                else:
+                    preview = ""  # Will be generated below
+                
+                # Generate title/preview/tags only if we need to
+                if not (custom_title and custom_title.strip()) or not (custom_preview and custom_preview.strip()):
+                    title_preview_text, _t8a = _generate_content(
+                        [{"role": "system", "content": title_preview_system}, {"role": "user", "content": title_preview_user}],
+                        model_or_engine,
+                        tokenizer,
+                        use_vllm,
+                        temperature=0.7,
+                        max_tokens=step8a_max_tokens,
+                        device=device
+                    )
+                    title_preview_json = _parse_json_from_text(title_preview_text) or {}
+                    if not (custom_title and custom_title.strip()):
+                        title = title_preview_json.get("title", "Untitled Story")
+                    if not (custom_preview and custom_preview.strip()):
+                        preview = title_preview_json.get("preview", "")
+                    tags_raw = title_preview_json.get("tags", {}) if isinstance(title_preview_json.get("tags", {}), dict) else {}
+                else:
+                    # Both title and preview are custom - still need tags
+                    # Generate tags only with a simplified prompt
+                    tags_only_system = """You are a story analyst. Return ONLY valid JSON with tags:
+{
+  "tags": {
+    "themes": ["..."],
+    "themeFreeform": ["..."],
+    "tones": ["..."],
+    "settings": ["..."],
+    "artifacts": ["..."],
+    "conflicts": ["..."],
+    "motifs": ["..."]
+  }
+}"""
+                    tags_only_user = f"""Story: {story_for_metadata[:2000]}\n\nGenerate tags only."""
+                    tags_text, _ = _generate_content(
+                        [{"role": "system", "content": tags_only_system}, {"role": "user", "content": tags_only_user}],
+                        model_or_engine,
+                        tokenizer,
+                        use_vllm,
+                        temperature=0.7,
+                        max_tokens=800,
+                        device=device
+                    )
+                    tags_json = _parse_json_from_text(tags_text) or {}
+                    tags_raw = tags_json.get("tags", {}) if isinstance(tags_json.get("tags", {}), dict) else {}
 
                 tags = None
                 if tags_raw:
@@ -3063,6 +3111,11 @@ Here is the story to finetune:
             except Exception:
                 erotic_like = False
 
+            # Check for custom values in two-step workflow
+            custom_preview_two_step = input_data.get("custom_preview") or metadata.get("custom_preview") or input_metadata.get("custom_preview")
+            custom_title_two_step = input_data.get("custom_title") or metadata.get("custom_title") or input_metadata.get("custom_title")
+            has_custom_cover_two_step = input_data.get("cover_image") or metadata.get("cover_image") or input_metadata.get("cover_image")
+
             if erotic_like:
                 logger.info("=" * 80)
                 logger.info("📝 STEP 5: Generating title, preview, tags, and cover prompt...")
@@ -3156,20 +3209,22 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 logger.info(f"✅ Generated metadata in {metadata_time:.2f}s")
                 logger.info(f"⏱️ Total generation time: {generation_time:.2f}s")
                 
-                # Parse metadata JSON
-                title = "Untitled Story"
-                preview = ""
+                # Parse metadata JSON - use custom values if provided
+                title = custom_title_two_step.strip() if (custom_title_two_step and custom_title_two_step.strip()) else "Untitled Story"
+                preview = custom_preview_two_step.strip() if (custom_preview_two_step and custom_preview_two_step.strip()) else ""
                 coverPrompt = ""
                 tags = None
                 
                 try:
-                    # Extract JSON from response
+                    # Extract JSON from response (only if we need to generate something)
                     import re
                     json_match = re.search(r'\{[\s\S]*\}', metadata_response)
                     if json_match:
                         metadata_json = json.loads(json_match.group(0))
-                        title = metadata_json.get("title", "Untitled Story")
-                        preview = metadata_json.get("preview", "")
+                        if not (custom_title_two_step and custom_title_two_step.strip()):
+                            title = metadata_json.get("title", "Untitled Story")
+                        if not (custom_preview_two_step and custom_preview_two_step.strip()):
+                            preview = metadata_json.get("preview", "")
                         coverPrompt = metadata_json.get("coverPrompt", "")
                         tags_raw = metadata_json.get("tags", {})
                         
@@ -3194,6 +3249,30 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                     logger.warning(f"⚠️ Failed to parse metadata JSON: {parse_error}")
                     logger.warning(f"⚠️ Raw metadata response: {metadata_response[:500]}")
                 
+                # Only generate cover prompt if user hasn't uploaded a cover image
+                if has_custom_cover_two_step:
+                    logger.info("User uploaded cover image, skipping cover prompt generation")
+                    coverPrompt = ""
+                elif not coverPrompt:
+                    # Cover prompt wasn't in JSON, generate it separately if needed
+                    try:
+                        cover_system_prompt = """You create detailed image prompts for abstract, erotic noir-style book covers.
+Generate a cover image prompt (25–60 words) in an abstract erotic noir style."""
+                        cover_user_prompt = f"""Title: {title}\nGenre: {genre}\n\nStory context: {story_for_metadata[:1000]}\n\nCreate a cover prompt."""
+                        cover_response, _ = _generate_content(
+                            [{"role": "system", "content": cover_system_prompt}, {"role": "user", "content": cover_user_prompt}],
+                            model_or_engine,
+                            tokenizer,
+                            use_vllm,
+                            temperature=0.7,
+                            max_tokens=250,
+                            device=device
+                        )
+                        coverPrompt = (cover_response or "").strip()
+                    except Exception as cover_error:
+                        logger.warning(f"⚠️ Failed to generate cover prompt: {cover_error}")
+                        coverPrompt = ""
+                
                 # Store metadata for later use in _save_story_to_firestore AND for callback payload.
                 # _save_story_to_firestore currently reads generated_* keys.
                 metadata["generated_title"] = title
@@ -3209,13 +3288,16 @@ Generate a non-explicit, abstract title, preview, tags, and cover prompt for thi
                 metadata["cover_prompt"] = coverPrompt
                 metadata["coverPrompt"] = coverPrompt
             else:
-                # For non-erotic stories, set defaults
-                metadata["generated_title"] = "Untitled Story"
-                metadata["generated_preview"] = ""
+                # For non-erotic stories, check for custom values
+                custom_title_non_erotic = input_data.get("custom_title") or metadata.get("custom_title") or input_metadata.get("custom_title")
+                custom_preview_non_erotic = input_data.get("custom_preview") or metadata.get("custom_preview") or input_metadata.get("custom_preview")
+                
+                metadata["generated_title"] = custom_title_non_erotic.strip() if (custom_title_non_erotic and custom_title_non_erotic.strip()) else "Untitled Story"
+                metadata["generated_preview"] = custom_preview_non_erotic.strip() if (custom_preview_non_erotic and custom_preview_non_erotic.strip()) else ""
                 metadata["generated_coverPrompt"] = ""
                 metadata["generated_tags"] = None
-                metadata["title"] = "Untitled Story"
-                metadata["preview"] = ""
+                metadata["title"] = metadata["generated_title"]
+                metadata["preview"] = metadata["generated_preview"]
                 metadata["tags"] = None
                 metadata["cover_prompt"] = ""
                 metadata["coverPrompt"] = ""
