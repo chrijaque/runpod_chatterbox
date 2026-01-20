@@ -738,32 +738,49 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
         story_id = api_metadata.get("story_id") if isinstance(api_metadata, dict) else ""
     
     # Extract genre from metadata to determine TTS parameters
+    # Check multiple possible keys and locations
     genre = None
     if isinstance(api_metadata, dict):
-        genre = api_metadata.get("genre") or api_metadata.get("story_genre")
+        genre = (api_metadata.get("genre") or 
+                 api_metadata.get("story_genre") or
+                 api_metadata.get("storyGenre"))
+    
+    # Log genre extraction for debugging
+    logger.info(f"🔍 Genre extraction in call_tts_model_generate_tts_story:")
+    logger.info(f"   api_metadata type: {type(api_metadata)}")
+    if isinstance(api_metadata, dict):
+        logger.info(f"   api_metadata keys: {list(api_metadata.keys())}")
+        logger.info(f"   genre from api_metadata: {api_metadata.get('genre')}")
+        logger.info(f"   story_genre from api_metadata: {api_metadata.get('story_genre')}")
+    logger.info(f"   Final extracted genre: {genre}")
     
     # Normalize genre for comparison
     genre_normalized = None
     if genre:
         genre_normalized = str(genre).lower().strip()
+        logger.info(f"   Normalized genre: {genre_normalized}")
     
     # Determine if this is an erotic story
-    is_erotic = genre_normalized in ['erotic', 'advanced-erotic', 'hardcore erotic', 'hardcore-erotic', 'advanced erotic']
+    erotic_genres = ['erotic', 'advanced-erotic', 'hardcore erotic', 'hardcore-erotic', 'advanced erotic']
+    is_erotic = genre_normalized in erotic_genres if genre_normalized else False
+    logger.info(f"   Is erotic story: {is_erotic}")
+    if is_erotic:
+        logger.info(f"   Matched erotic genre: {genre_normalized}")
     
     # Set TTS parameters based on story type
     if is_erotic:
-        # Erotic stories: slower narration, more monotone dialogue, less exaggeration
+        # Erotic stories: slower narration, more deliberate pacing
         temperature = 0.65  # Lower temperature for more consistent, less varied delivery
-        exaggeration = 0.25  # Much lower exaggeration for monotone dialogue (default is 0.5)
-        cfg_weight = 0.6  # Slightly higher CFG for more adherence to voice profile
+        exaggeration = None  # Use default (0.5) for all genres
+        cfg_weight = 0.3  # Lower CFG for slower, more deliberate pacing (default is 0.5)
         pause_scale = 1.4  # Slower narration (default is 1.15)
         logger.info(f"🎭 Erotic story detected - applying specialized TTS parameters")
-        logger.info(f"   temperature={temperature}, exaggeration={exaggeration}, cfg_weight={cfg_weight}, pause_scale={pause_scale}")
+        logger.info(f"   temperature={temperature}, exaggeration=0.5 (default), cfg_weight={cfg_weight}, pause_scale={pause_scale}")
     else:
         # Default parameters for other story types
         temperature = None  # Use model default (0.8)
         exaggeration = None  # Use model default (0.5)
-        cfg_weight = None  # Use model default (0.5)
+        cfg_weight = 0.5  # Explicit default CFG weight for non-erotic stories
         pause_scale = 1.15  # Default pause scale
     
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
@@ -779,6 +796,11 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     logger.info(f"  profile_path: {profile_path}")
     logger.info(f"  user_id: {user_id}")
     logger.info(f"  story_id: {story_id}")
+    logger.info(f"🔍 TTS Parameters to be used:")
+    logger.info(f"  temperature: {temperature if temperature is not None else 'default (0.8)'}")
+    logger.info(f"  exaggeration: {exaggeration if exaggeration is not None else 'default (0.5)'}")
+    logger.info(f"  cfg_weight: {cfg_weight if cfg_weight is not None else 'default (0.5)'}")
+    logger.info(f"  pause_scale: {pause_scale}")
     
     start_time = time.time()
     
@@ -912,6 +934,22 @@ def handler(event, responseFormat="base64"):
     story_id = api_metadata.get("story_id") or event["input"].get("story_id")
     story_name = api_metadata.get("story_name") or event["input"].get("story_name")
     voice_name = api_metadata.get("voice_name") or event["input"].get("voice_name")
+    
+    # Extract genre from multiple locations (similar to callback_url extraction)
+    genre = (event["input"].get("genre") or 
+             (api_metadata.get("genre") if isinstance(api_metadata, dict) else None) or
+             (event.get("metadata", {}).get("genre") if isinstance(event.get("metadata"), dict) else None))
+    
+    # Ensure genre is in api_metadata for call_tts_model_generate_tts_story to use
+    if genre and isinstance(api_metadata, dict):
+        api_metadata["genre"] = genre
+    
+    # Log genre extraction for debugging
+    logger.info(f"🔍 Genre extraction:")
+    logger.info(f"   From event['input']: {event['input'].get('genre')}")
+    logger.info(f"   From api_metadata: {api_metadata.get('genre') if isinstance(api_metadata, dict) else None}")
+    logger.info(f"   From event['metadata']: {event.get('metadata', {}).get('genre') if isinstance(event.get('metadata'), dict) else None}")
+    logger.info(f"   Final genre: {genre}")
     
     # ===== METADATA BREAKDOWN LOGGING =====
     logger.info("🔍 ===== TTS METADATA BREAKDOWN =====")
