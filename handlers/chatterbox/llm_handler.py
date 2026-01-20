@@ -109,6 +109,49 @@ def _initialize_firebase():
         return None
 
 
+def _clean_brackets_from_beats(beats: list) -> list:
+    """Remove standalone [] brackets and malformed beat labels from beats."""
+    import re
+    cleaned = []
+    for beat in beats:
+        # First, remove valid [BEAT X] labels if they weren't already removed
+        cleaned_beat = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Remove any bracket pattern that contains BE/BEAT but is malformed
+        # This is a catch-all for patterns like [BE[], [BEAT[], [BEAT I[], [BE[, etc.
+        # Match [ followed by BE or BEAT, then any characters until ]
+        # The [^\]]* pattern matches any character except ], which handles nested brackets
+        # This will match [BE[], [BEAT[], [BEAT I[], etc. as complete patterns
+        cleaned_beat = re.sub(r'\[\s*BE(?:AT)?[^\]]*\]', '', cleaned_beat, flags=re.IGNORECASE)
+        
+        # Also handle cases where malformed patterns don't have closing bracket
+        # Remove [BE or [BEAT patterns at start of lines that aren't valid (no closing ])
+        cleaned_beat = re.sub(r'^\s*\[\s*BE(?:AT)?(?:\s+[IVXLCDM]+)?\s*(?!\])', '', cleaned_beat, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Remove any remaining malformed patterns that might have been missed
+        # This catches edge cases like [BE[ without closing, or other malformed variants
+        cleaned_beat = re.sub(r'\[\s*BE(?:AT)?\s*(?:[IVXLCDM]+\s*)?\[', '', cleaned_beat, flags=re.IGNORECASE)
+        
+        # Remove [] on their own lines (with optional whitespace)
+        cleaned_beat = re.sub(r'^\s*\[\s*\]\s*$', '', cleaned_beat, flags=re.MULTILINE)
+        
+        # Remove any remaining standalone [] patterns (not on their own line)
+        cleaned_beat = re.sub(r'\[\s*\]', '', cleaned_beat)
+        
+        # Remove any remaining incomplete brackets (just [ or ]) on their own lines
+        cleaned_beat = re.sub(r'^\s*\[\s*$', '', cleaned_beat, flags=re.MULTILINE)
+        cleaned_beat = re.sub(r'^\s*\]\s*$', '', cleaned_beat, flags=re.MULTILINE)
+        
+        # Clean up multiple consecutive newlines that might result from bracket removal
+        cleaned_beat = re.sub(r'\n{3,}', '\n\n', cleaned_beat)
+        
+        # Clean up leading/trailing whitespace and newlines
+        cleaned_beat = cleaned_beat.strip()
+        
+        if cleaned_beat:  # Only add non-empty beats
+            cleaned.append(cleaned_beat)
+    return cleaned
+
 def _extract_beats(content: str) -> list:
     """Extract beats from story content using separators."""
     beats = []
@@ -120,16 +163,16 @@ def _extract_beats(content: str) -> list:
             # Remove [BEAT X] labels if present (handle flexible whitespace inside brackets)
             beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat, flags=re.IGNORECASE).strip() 
                      for beat in beats if beat.strip()]
-            # Remove any remaining standalone brackets (safety cleanup)
-            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
+            # Remove any remaining standalone brackets using helper function
+            beats = _clean_brackets_from_beats(beats)
         # Fallback: Try beat labels
         elif re.search(r'\[BEAT\s+[IVXLCDM]+\]', content, re.IGNORECASE):
             # New format with [BEAT I] labels
             parts = re.split(r'\n\n⁂\n\n', content)
             beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', part, flags=re.IGNORECASE).strip() 
                      for part in parts if part.strip()]
-            # Remove any remaining standalone brackets (safety cleanup)
-            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
+            # Remove any remaining standalone brackets using helper function
+            beats = _clean_brackets_from_beats(beats)
         elif '### Beat' in content or 'Beat' in content:
             # Old format with Beat X: labels (backward compatibility)
             beat_pattern = r'(?:###\s*)?Beat\s*(?:\d+|[IVXLCDM]+)\s*:'
@@ -159,6 +202,9 @@ def _extract_beats(content: str) -> list:
                     current_length = 0
             if current_beat:
                 beats.append('\n\n'.join(current_beat))
+        
+        # Clean brackets from all beats (applies to all code paths)
+        beats = _clean_brackets_from_beats(beats)
         
         # Filter out empty beats and very short ones (likely not actual beats)
         beats = [beat for beat in beats if len(beat) > 50]
@@ -1108,6 +1154,8 @@ def _split_beats_strict(text: str) -> list:
         # Validate we got the right number
         if len(beats) == beat_label_count:
             logger.info(f"✅ _split_beats_strict: Successfully split into {len(beats)} beats using labels")
+            # Clean brackets from beats before returning
+            beats = _clean_brackets_from_beats(beats)
             # Log first few beats to verify
             for i, beat in enumerate(beats[:3], 1):
                 logger.info(f"🔍 _split_beats_strict: Beat {i} preview (first 100 chars): {beat[:100]}")
@@ -1128,6 +1176,7 @@ def _split_beats_strict(text: str) -> list:
         
         if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
             logger.info(f"✅ _split_beats_strict: Successfully split using separator")
+            beats = _clean_brackets_from_beats(beats)
             return beats
     else:
         # Try flexible regex patterns for separator
@@ -1147,12 +1196,14 @@ def _split_beats_strict(text: str) -> list:
                     logger.info(f"🔍 _split_beats_strict: After filtering: {len(beats)} beats")
                     if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
                         logger.info(f"✅ _split_beats_strict: Successfully split using pattern: {pattern}")
+                        beats = _clean_brackets_from_beats(beats)
                         return beats
     
     # FALLBACK: Return as single beat if nothing worked
     logger.warning(f"⚠️ _split_beats_strict: All methods failed, returning as single beat")
     logger.warning(f"⚠️ _split_beats_strict: Found {beat_label_count} labels but couldn't split properly")
-    return [text.strip()] if text.strip() else []
+    fallback_beats = [text.strip()] if text.strip() else []
+    return _clean_brackets_from_beats(fallback_beats)
 
 def _validate_beats_strict(beats: list, expected_beats: int = 12) -> tuple[bool, str]:
     """Validate strict beat format: count, labels, and separator safety."""

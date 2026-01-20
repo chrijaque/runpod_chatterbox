@@ -185,6 +185,7 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
                 story_name=getattr(request, 'story_name', None),
                 output_basename=getattr(request, 'output_basename', None),
                 voice_name=getattr(request, 'voice_name', None),
+                genre=getattr(request, 'genre', None),  # Pass genre for TTS parameter adjustment
             )
             logger.info(f"✅ RunPod call completed successfully")
         except Exception as e:

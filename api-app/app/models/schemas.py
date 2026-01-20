@@ -52,6 +52,8 @@ class TTSGenerateRequest(BaseModel):
     # Geo/bucket routing (optional)
     bucket_name: Optional[str] = None
     country_code: Optional[str] = None  # e.g., 'AU'
+    # Story metadata for TTS parameter adjustment
+    genre: Optional[str] = None  # Genre for TTS parameter adjustment (e.g., 'erotic')
 
 class TTSGenerateResponse(BaseModel):
     status: str

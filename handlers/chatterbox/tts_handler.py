@@ -737,12 +737,43 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     if not story_id:
         story_id = api_metadata.get("story_id") if isinstance(api_metadata, dict) else ""
     
+    # Extract genre from metadata to determine TTS parameters
+    genre = None
+    if isinstance(api_metadata, dict):
+        genre = api_metadata.get("genre") or api_metadata.get("story_genre")
+    
+    # Normalize genre for comparison
+    genre_normalized = None
+    if genre:
+        genre_normalized = str(genre).lower().strip()
+    
+    # Determine if this is an erotic story
+    is_erotic = genre_normalized in ['erotic', 'advanced-erotic', 'hardcore erotic', 'hardcore-erotic', 'advanced erotic']
+    
+    # Set TTS parameters based on story type
+    if is_erotic:
+        # Erotic stories: slower narration, more monotone dialogue, less exaggeration
+        temperature = 0.65  # Lower temperature for more consistent, less varied delivery
+        exaggeration = 0.25  # Much lower exaggeration for monotone dialogue (default is 0.5)
+        cfg_weight = 0.6  # Slightly higher CFG for more adherence to voice profile
+        pause_scale = 1.4  # Slower narration (default is 1.15)
+        logger.info(f"🎭 Erotic story detected - applying specialized TTS parameters")
+        logger.info(f"   temperature={temperature}, exaggeration={exaggeration}, cfg_weight={cfg_weight}, pause_scale={pause_scale}")
+    else:
+        # Default parameters for other story types
+        temperature = None  # Use model default (0.8)
+        exaggeration = None  # Use model default (0.5)
+        cfg_weight = None  # Use model default (0.5)
+        pause_scale = 1.15  # Default pause scale
+    
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
     logger.info(f"  voice_id: {voice_id}")
     logger.info(f"  voice_name: {voice_name}")
     logger.info(f"  language: {language}")
     logger.info(f"  story_type: {story_type}")
+    logger.info(f"  genre: {genre}")
+    logger.info(f"  is_erotic: {is_erotic}")
     logger.info(f"  is_kids_voice: {is_kids_voice}")
     logger.info(f"  text_length: {len(text)} characters")
     logger.info(f"  profile_path: {profile_path}")
@@ -777,7 +808,11 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                     voice_name=voice_name,
                     profile_path=profile_path,
                     user_id=user_id,
-                    story_id=story_id
+                    story_id=story_id,
+                    pause_scale=pause_scale,
+                    temperature=temperature,
+                    exaggeration=exaggeration,
+                    cfg_weight=cfg_weight
                 )
                 generation_time = time.time() - start_time
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
