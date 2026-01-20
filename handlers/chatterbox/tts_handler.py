@@ -936,13 +936,22 @@ def handler(event, responseFormat="base64"):
     voice_name = api_metadata.get("voice_name") or event["input"].get("voice_name")
     
     # Extract genre from multiple locations (similar to callback_url extraction)
-    genre = (event["input"].get("genre") or 
-             (api_metadata.get("genre") if isinstance(api_metadata, dict) else None) or
-             (event.get("metadata", {}).get("genre") if isinstance(event.get("metadata"), dict) else None))
+    genre = (
+        event["input"].get("genre")
+        or event["input"].get("story_genre")
+        or event["input"].get("storyGenre")
+        or (api_metadata.get("genre") if isinstance(api_metadata, dict) else None)
+        or (api_metadata.get("story_genre") if isinstance(api_metadata, dict) else None)
+        or (api_metadata.get("storyGenre") if isinstance(api_metadata, dict) else None)
+        or (event.get("metadata", {}).get("genre") if isinstance(event.get("metadata"), dict) else None)
+        or (event.get("metadata", {}).get("story_genre") if isinstance(event.get("metadata"), dict) else None)
+        or (event.get("metadata", {}).get("storyGenre") if isinstance(event.get("metadata"), dict) else None)
+    )
     
     # Ensure genre is in api_metadata for call_tts_model_generate_tts_story to use
     if genre and isinstance(api_metadata, dict):
         api_metadata["genre"] = genre
+        api_metadata.setdefault("story_genre", genre)
     
     # Log genre extraction for debugging
     logger.info(f"🔍 Genre extraction:")

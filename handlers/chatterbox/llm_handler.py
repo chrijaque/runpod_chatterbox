@@ -109,49 +109,6 @@ def _initialize_firebase():
         return None
 
 
-def _clean_brackets_from_beats(beats: list) -> list:
-    """Remove standalone [] brackets and malformed beat labels from beats."""
-    import re
-    cleaned = []
-    for beat in beats:
-        # First, remove valid [BEAT X] labels if they weren't already removed
-        cleaned_beat = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat, flags=re.IGNORECASE | re.MULTILINE)
-        
-        # Remove any bracket pattern that contains BE/BEAT but is malformed
-        # This is a catch-all for patterns like [BE[], [BEAT[], [BEAT I[], [BE[, etc.
-        # Match [ followed by BE or BEAT, then any characters until ]
-        # The [^\]]* pattern matches any character except ], which handles nested brackets
-        # This will match [BE[], [BEAT[], [BEAT I[], etc. as complete patterns
-        cleaned_beat = re.sub(r'\[\s*BE(?:AT)?[^\]]*\]', '', cleaned_beat, flags=re.IGNORECASE)
-        
-        # Also handle cases where malformed patterns don't have closing bracket
-        # Remove [BE or [BEAT patterns at start of lines that aren't valid (no closing ])
-        cleaned_beat = re.sub(r'^\s*\[\s*BE(?:AT)?(?:\s+[IVXLCDM]+)?\s*(?!\])', '', cleaned_beat, flags=re.IGNORECASE | re.MULTILINE)
-        
-        # Remove any remaining malformed patterns that might have been missed
-        # This catches edge cases like [BE[ without closing, or other malformed variants
-        cleaned_beat = re.sub(r'\[\s*BE(?:AT)?\s*(?:[IVXLCDM]+\s*)?\[', '', cleaned_beat, flags=re.IGNORECASE)
-        
-        # Remove [] on their own lines (with optional whitespace)
-        cleaned_beat = re.sub(r'^\s*\[\s*\]\s*$', '', cleaned_beat, flags=re.MULTILINE)
-        
-        # Remove any remaining standalone [] patterns (not on their own line)
-        cleaned_beat = re.sub(r'\[\s*\]', '', cleaned_beat)
-        
-        # Remove any remaining incomplete brackets (just [ or ]) on their own lines
-        cleaned_beat = re.sub(r'^\s*\[\s*$', '', cleaned_beat, flags=re.MULTILINE)
-        cleaned_beat = re.sub(r'^\s*\]\s*$', '', cleaned_beat, flags=re.MULTILINE)
-        
-        # Clean up multiple consecutive newlines that might result from bracket removal
-        cleaned_beat = re.sub(r'\n{3,}', '\n\n', cleaned_beat)
-        
-        # Clean up leading/trailing whitespace and newlines
-        cleaned_beat = cleaned_beat.strip()
-        
-        if cleaned_beat:  # Only add non-empty beats
-            cleaned.append(cleaned_beat)
-    return cleaned
-
 def _extract_beats(content: str) -> list:
     """Extract beats from story content using separators."""
     beats = []
@@ -163,16 +120,16 @@ def _extract_beats(content: str) -> list:
             # Remove [BEAT X] labels if present (handle flexible whitespace inside brackets)
             beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', beat, flags=re.IGNORECASE).strip() 
                      for beat in beats if beat.strip()]
-            # Remove any remaining standalone brackets using helper function
-            beats = _clean_brackets_from_beats(beats)
+            # Remove any remaining standalone brackets (safety cleanup)
+            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
         # Fallback: Try beat labels
         elif re.search(r'\[BEAT\s+[IVXLCDM]+\]', content, re.IGNORECASE):
             # New format with [BEAT I] labels
             parts = re.split(r'\n\n⁂\n\n', content)
             beats = [re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', part, flags=re.IGNORECASE).strip() 
                      for part in parts if part.strip()]
-            # Remove any remaining standalone brackets using helper function
-            beats = _clean_brackets_from_beats(beats)
+            # Remove any remaining standalone brackets (safety cleanup)
+            beats = [re.sub(r'\[\s*\]', '', beat).strip() for beat in beats]
         elif '### Beat' in content or 'Beat' in content:
             # Old format with Beat X: labels (backward compatibility)
             beat_pattern = r'(?:###\s*)?Beat\s*(?:\d+|[IVXLCDM]+)\s*:'
@@ -202,9 +159,6 @@ def _extract_beats(content: str) -> list:
                     current_length = 0
             if current_beat:
                 beats.append('\n\n'.join(current_beat))
-        
-        # Clean brackets from all beats (applies to all code paths)
-        beats = _clean_brackets_from_beats(beats)
         
         # Filter out empty beats and very short ones (likely not actual beats)
         beats = [beat for beat in beats if len(beat) > 50]
@@ -1086,9 +1040,13 @@ def _is_expected_beat_prefix(s: str, n: int) -> bool:
     try:
         t = (s or "").lstrip()
         # Accept both uppercase [BEAT I] and lowercase [Beat I] for robustness
+        # Also accept with or without colon after the label
         return (t.startswith(f"[BEAT {int(n)}]") or 
+                t.startswith(f"[BEAT {int(n)}]:") or 
                 t.startswith(f"[Beat {int(n)}]") or 
-                t.startswith(_beat_label(n)))
+                t.startswith(f"[Beat {int(n)}]:") or 
+                t.startswith(_beat_label(n)) or
+                t.startswith(_beat_label(n) + ":"))
     except Exception:
         return False
 
@@ -1154,8 +1112,6 @@ def _split_beats_strict(text: str) -> list:
         # Validate we got the right number
         if len(beats) == beat_label_count:
             logger.info(f"✅ _split_beats_strict: Successfully split into {len(beats)} beats using labels")
-            # Clean brackets from beats before returning
-            beats = _clean_brackets_from_beats(beats)
             # Log first few beats to verify
             for i, beat in enumerate(beats[:3], 1):
                 logger.info(f"🔍 _split_beats_strict: Beat {i} preview (first 100 chars): {beat[:100]}")
@@ -1176,7 +1132,6 @@ def _split_beats_strict(text: str) -> list:
         
         if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
             logger.info(f"✅ _split_beats_strict: Successfully split using separator")
-            beats = _clean_brackets_from_beats(beats)
             return beats
     else:
         # Try flexible regex patterns for separator
@@ -1196,14 +1151,12 @@ def _split_beats_strict(text: str) -> list:
                     logger.info(f"🔍 _split_beats_strict: After filtering: {len(beats)} beats")
                     if len(beats) == beat_label_count or (beat_label_count == 0 and len(beats) > 0):
                         logger.info(f"✅ _split_beats_strict: Successfully split using pattern: {pattern}")
-                        beats = _clean_brackets_from_beats(beats)
                         return beats
     
     # FALLBACK: Return as single beat if nothing worked
     logger.warning(f"⚠️ _split_beats_strict: All methods failed, returning as single beat")
     logger.warning(f"⚠️ _split_beats_strict: Found {beat_label_count} labels but couldn't split properly")
-    fallback_beats = [text.strip()] if text.strip() else []
-    return _clean_brackets_from_beats(fallback_beats)
+    return [text.strip()] if text.strip() else []
 
 def _validate_beats_strict(beats: list, expected_beats: int = 12) -> tuple[bool, str]:
     """Validate strict beat format: count, labels, and separator safety."""
@@ -1261,9 +1214,9 @@ FORBIDDEN:
 
 FORMAT (STRICT):
 - Output exactly {expected_beats} beats.
-- Each beat MUST start with: [BEAT <RomanNumeral>] using Roman numerals in order (I..{_ROMAN_MAP.get(expected_beats, str(expected_beats))})
+- Each beat MUST start with: [BEAT <RomanNumeral>]: (colon after label) using Roman numerals in order (I..{_ROMAN_MAP.get(expected_beats, str(expected_beats))})
 - Separate beats using \"\\n\\n⁂\\n\\n\" ONLY.
-- Start immediately with \"{_beat_label(1)}\".
+- Start immediately with \"{_beat_label(1)}:\".
 - Do NOT include the separator (⁂) inside any beat.
 
 OUTPUT:
@@ -1759,7 +1712,8 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
                     body = parts[1].lstrip()
                 else:
                     body = ""
-        cleaned.append(f"{label} {body}".strip())
+        # Add colon after label for consistent format: [BEAT I]: content
+        cleaned.append(f"{label}: {body}".strip())
     return _BEAT_SEPARATOR.join(cleaned).strip()
 
 def _recover_length_per_beat_v2(
@@ -1836,7 +1790,7 @@ LENGTH SAFETY (CRITICAL):
 
 FORMAT:
 - Output ONLY the revised Beat {i} text.
-- Keep the label exactly: \"{_beat_label(i)}\"."""
+- Keep the label exactly with colon: \"{_beat_label(i)}:\"."""
 
         user = f"""Constraints for Beat {i}:
 {_beat_constraint_snippet(i)}
@@ -1857,7 +1811,7 @@ Return ONLY the revised Beat {i} text."""
         )
         revised = (revised or "").strip()
         if not _is_expected_beat_prefix(revised, i):
-            revised = f"{_beat_label(i)} " + revised
+            revised = f"{_beat_label(i)}: " + revised
         # Trim if wildly over
         revised = _trim_beat_to_max(revised, _BEAT_MAX)
         beats[i - 1] = revised
@@ -2148,7 +2102,7 @@ A fully expanded 12-beat story."""
             step2_user = f"""Expand the outline below into 12 expanded beats.
 
 IMPORTANT:
-- Preserve the beat labels exactly ([BEAT I]..[BEAT XII]).
+- Preserve the beat labels exactly ([BEAT I]: .. [BEAT XII]:) with colon after each label.
 - Keep the same number of beats and the same beat order.
 - Keep the same separator between beats: \\n\\n⁂\\n\\n.
 - Aim for ~850–900 characters per beat. Keep most beats within 780–930.
@@ -2398,7 +2352,7 @@ DIALOGUE TASK:
 - Preserve POV exactly (do not switch between first-person and third-person)
 
 OUTPUT FORMAT:
-- Start with: [BEAT <RomanNumeral>] (use the exact label provided)
+- Start with: [BEAT <RomanNumeral>]: (colon after label - use the exact label provided)
 - Include ALL original content
 - Add dialogue naturally within existing sentences
 - Return ONLY this one beat, nothing else"""
@@ -2427,10 +2381,10 @@ OUTPUT FORMAT:
                         
                         step5_user = f"""Add or refine dialogue in this ONE beat. Preserve ALL existing content.
 
-BEAT LABEL TO USE: {beat_label}
+BEAT LABEL TO USE: {beat_label}:
 
 CRITICAL REQUIREMENTS:
-1. Your output MUST start with: {beat_label}
+1. Your output MUST start with: {beat_label}: (with colon)
 2. Preserve ALL existing narrative content (actions, descriptions, physical details) - do NOT remove anything
 3. Only ADD or REFINE dialogue - do NOT remove any existing content
 4. Return ONLY this beat, no other beats, no separators
@@ -2438,7 +2392,7 @@ CRITICAL REQUIREMENTS:
 BEAT CONTENT (beat {i} of {expected_beats}):
 {beat_body}
 
-Return the complete revised beat starting with {beat_label}."""
+Return the complete revised beat starting with {beat_label}:"""
                         
                         revised, _t5 = _generate_content(
                             [{"role": "system", "content": step5_system}, {"role": "user", "content": step5_user}],
@@ -2486,11 +2440,15 @@ Return the complete revised beat starting with {beat_label}."""
                                 else:
                                     validation_passed = True
                         
-                        # Final fix: ensure label is present and correct
-                        if not revised.startswith(beat_label):
+                        # Final fix: ensure label is present and correct (with colon)
+                        if not revised.startswith(beat_label + ":") and not revised.startswith(beat_label):
                             # Remove any existing label first
+                            revised = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]:\s*', '', revised, flags=re.IGNORECASE).strip()
                             revised = re.sub(r'^\s*\[\s*BEAT\s+[IVXLCDM]+\s*\]\s*', '', revised, flags=re.IGNORECASE).strip()
-                            revised = f"{beat_label} " + revised
+                            revised = f"{beat_label}: " + revised
+                        elif revised.startswith(beat_label) and not revised.startswith(beat_label + ":"):
+                            # Has label but missing colon - add it
+                            revised = beat_label + ": " + revised[len(beat_label):].lstrip()
                         
                         revised_beats.append(revised)
                         
@@ -2531,7 +2489,7 @@ Return only Beat 11 text."""
 
 CRITICAL:
 - Return only the revised Beat 11 text.
-- Keep the label intact: {_beat_label(11)}
+- Keep the label intact with colon: {_beat_label(11)}:
 
 BEAT 11:
 {beat11}"""
@@ -2546,7 +2504,7 @@ BEAT 11:
                 )
                 beat11_revised = beat11_revised.strip()
                 if not _is_expected_beat_prefix(beat11_revised, 11):
-                    beat11_revised = f"{_beat_label(11)} " + beat11_revised
+                    beat11_revised = f"{_beat_label(11)}: " + beat11_revised
                 if len(beats) >= 11:
                     beats[10] = beat11_revised
 
@@ -2606,8 +2564,8 @@ CONTENT RULES:
 - You MAY remove non-narrative artifacts (e.g., stray numbering like ".0:", formatting remnants, broken prefixes).
 
 OUTPUT FORMAT (STRICT):
-- Start with: [BEAT I]
-- End with: [BEAT XII]
+- Start with: [BEAT I]: (colon after label)
+- End with: [BEAT XII]: (colon after label)
 - Use "\\n\\n⁂\\n\\n" between each beat
 - Return the full story with identical structure
 - No title, no headings, no meta commentary."""
@@ -2615,7 +2573,7 @@ OUTPUT FORMAT (STRICT):
 
 CRITICAL STRUCTURE REQUIREMENTS:
 - Return EXACTLY {expected_beats} beats
-- Each beat must have its label: [BEAT I] through [BEAT XII]
+- Each beat must have its label with colon: [BEAT I]: through [BEAT XII]:
 - Use "\\n\\n⁂\\n\\n" between beats
 - Do NOT combine or remove any beats
 
