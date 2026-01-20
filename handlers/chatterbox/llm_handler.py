@@ -1050,6 +1050,113 @@ def _is_expected_beat_prefix(s: str, n: int) -> bool:
     except Exception:
         return False
 
+def _repair_broken_beat_labels(text: str) -> str:
+    """
+    Repair common "broken" beat label artifacts produced by LLM output/streaming.
+
+    Observed failure mode (from RunPod logs):
+      - A label gets split across a newline inside the token "BEAT", e.g.
+        "[BE\\nBEAT XI]" (or similar partial prefixes on one line + "BEAT XI]" on the next)
+
+    This breaks the strict splitter which expects the literal substring "[BEAT".
+    We only repair when the tail clearly looks like a beat label with a Roman numeral + ']'.
+    """
+    if not text:
+        return text
+    import re
+
+    t = str(text)
+
+    # Case A: partial prefix + newline + full "BEAT <Roman>]"
+    # Examples: "[BE\\nBEAT XI]" or "[B\\nBEAT XI]" or "[BEA\\nBEAT XI]" or "[BEAT\\nBEAT XI]"
+    t = re.sub(
+        r"\[\s*B(?:E(?:A(?:T)?)?)?\s*\n\s*BEAT(\s+[IVXLCDM]+\s*\])",
+        r"[BEAT\1",
+        t,
+        flags=re.IGNORECASE,
+    )
+
+    # Case B: letters separated by whitespace/newlines (rare but easy to support), e.g. "[B E A T XI]"
+    t = re.sub(
+        r"\[\s*B\s*E\s*A\s*T(\s+[IVXLCDM]+\s*\])",
+        r"[BEAT\1",
+        t,
+        flags=re.IGNORECASE,
+    )
+
+    return t
+
+def _extract_leading_beat_num(text: str) -> Optional[int]:
+    """Extract leading beat number from a beat string like '[BEAT XI]' or '[BEAT XI]:'."""
+    if not text:
+        return None
+    import re
+
+    m = re.match(r"^\s*\[\s*BEAT\s+([IVXLCDM]+)\s*\]\s*:?", str(text), flags=re.IGNORECASE)
+    if not m:
+        return None
+    roman = (m.group(1) or "").upper().strip()
+    return _ROMAN_REVERSE.get(roman)
+
+def _align_beats_to_expected(beats: list, expected_beats: int) -> tuple[list, list]:
+    """
+    Best-effort alignment when structure is partially broken.
+
+    Returns:
+      - aligned_beats: list of length expected_beats (missing beats become label-only placeholders)
+      - present_mask:  list[bool] indicating which beats were originally present (True) vs placeholder (False)
+
+    We align by parsing the leading beat label where possible (e.g. [BEAT XII]).
+    This keeps downstream steps that assume 'beat 11 is index 10' from operating on the wrong beat.
+    """
+    expected_beats = int(expected_beats or 0)
+    if expected_beats <= 0:
+        return list(beats or []), [True for _ in (beats or [])]
+
+    beats = list(beats or [])
+    slots: list = [None] * expected_beats
+    present: list = [False] * expected_beats
+    extras: list[str] = []
+
+    for b in beats:
+        try:
+            bt = (b or "").strip()
+        except Exception:
+            bt = str(b)
+        n = _extract_leading_beat_num(bt)
+        if isinstance(n, int) and 1 <= n <= expected_beats and slots[n - 1] is None:
+            slots[n - 1] = bt
+            present[n - 1] = True
+        else:
+            # Preserve anything we couldn't place deterministically.
+            if bt:
+                extras.append(bt)
+
+    # Fill missing beats with label-only placeholders to preserve 12-slot structure.
+    for i in range(1, expected_beats + 1):
+        if slots[i - 1] is None:
+            slots[i - 1] = f"{_beat_label(i)}:"
+
+    # If there are "extra" chunks, attach them to the last present beat (or Beat 1) without adding separators.
+    if extras:
+        target_idx = None
+        for i in range(expected_beats, 0, -1):
+            if present[i - 1]:
+                target_idx = i - 1
+                break
+        if target_idx is None:
+            target_idx = 0
+        safe_extras = []
+        for e in extras:
+            e2 = (e or "").replace(_BEAT_SEPARATOR, "\n\n").replace("⁂", "\n\n").strip()
+            if e2:
+                safe_extras.append(e2)
+        if safe_extras:
+            slots[target_idx] = (slots[target_idx].rstrip() + "\n\n" + "\n\n".join(safe_extras)).strip()
+            present[target_idx] = True
+
+    return slots, present
+
 def _normalize_workflow_type(input_data: Dict[str, Any], metadata: Dict[str, Any]) -> str:
     """Return normalized workflow type (accepts workflow_type or workflow_version)."""
     wt = (
@@ -1068,6 +1175,12 @@ def _split_beats_strict(text: str) -> list:
     """Split a structured beat-labeled story into beats using beat labels as primary method."""
     import re
     
+    # Repair common label breakage before counting/splitting.
+    repaired_text = _repair_broken_beat_labels(text)
+    if repaired_text != text:
+        logger.warning("⚠️ _split_beats_strict: Repaired broken beat label artifacts before splitting")
+    text = repaired_text
+
     logger.info(f"🔍 _split_beats_strict: Input length: {len(text)} chars")
     
     # Count beat labels to see how many we expect
@@ -1650,6 +1763,34 @@ def _trim_beat_to_max(beat_text: str, max_body_chars: int) -> str:
     cut = cut.rstrip()
     return f"{label} {cut}".strip() if label else cut
 
+def _remove_bracket_artifacts(text: str) -> str:
+    """
+    Final cleanup pass to remove any remaining bracket artifacts, partial beat labels,
+    and standalone brackets that may have been left behind.
+    """
+    import re
+    
+    # Remove partial beat labels: [B, [BE, [BEA, [BEAT (with optional whitespace and closing bracket)
+    # These often appear on their own line
+    text = re.sub(r'(?m)^\s*\[\s*B(?:E(?:A(?:T\s*)?)?)?\s*\]?\s*$', '', text)
+    
+    # Remove standalone empty brackets on their own line
+    text = re.sub(r'(?m)^\s*\[\s*\]\s*$', '', text)
+    
+    # Remove standalone empty brackets anywhere (with optional whitespace inside)
+    text = re.sub(r'\[\s*\]', '', text)
+    
+    # Remove orphaned opening brackets on their own line
+    text = re.sub(r'(?m)^\s*\[\s*$', '', text)
+    
+    # Remove orphaned closing brackets on their own line
+    text = re.sub(r'(?m)^\s*\]\s*$', '', text)
+    
+    # Collapse excessive blank lines that may result from cleanup
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
+
 def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
     """
     Clean a structured Beat 1..N story without destroying the structure.
@@ -1689,8 +1830,17 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
         # Remove accidental nested beat labels inside the body (both formats)
         body = re.sub(r'(?im)\[\s*BEAT\s+[IVXLCDM]+\s*\]', '', body)  # Remove [BEAT X] format
         body = re.sub(r'(?im)\bBeat\s*(?:\d+|[IVXLCDM]+)\s*:\s*', '', body)  # Remove old Beat X: format
-        # Remove any remaining standalone brackets (safety cleanup)
+        
+        # COMPREHENSIVE bracket cleanup - remove partial/broken beat labels and standalone brackets
+        # Remove partial beat labels at start of lines: [B, [BE, [BEA, [BEAT, [BEAT , etc.
+        body = re.sub(r'(?m)^\s*\[\s*B(?:E(?:A(?:T\s*)?)?)?\s*\]?\s*$', '', body)
+        # Remove standalone brackets (empty or with whitespace only) on their own line
+        body = re.sub(r'(?m)^\s*\[\s*\]\s*$', '', body)
+        # Remove standalone brackets anywhere in the text
         body = re.sub(r'\[\s*\]', '', body)
+        # Remove partial opening brackets at start of lines that aren't complete
+        body = re.sub(r'(?m)^\s*\[\s*$', '', body)
+        
         # Collapse blank lines
         body = re.sub(r"\n{3,}", "\n\n", body).strip()
         # Beat 1: strip expository framing if it leaked into the beat body
@@ -1714,7 +1864,11 @@ def _sanitize_structured_beats(text: str, expected_beats: int = 12) -> str:
                     body = ""
         # Add colon after label for consistent format: [BEAT I]: content
         cleaned.append(f"{label}: {body}".strip())
-    return _BEAT_SEPARATOR.join(cleaned).strip()
+    
+    # Final cleanup: remove any bracket artifacts that slipped through
+    result = _BEAT_SEPARATOR.join(cleaned).strip()
+    result = _remove_bracket_artifacts(result)
+    return result
 
 def _recover_length_per_beat_v2(
     structured_text: str,
@@ -2152,6 +2306,14 @@ Write the expanded beats now."""
                 logger.warning(f"⚠️ Post-Step-2: Attempting recovery by re-splitting original expanded_text")
                 beats = _split_beats_strict(expanded_text)
                 logger.info(f"🔍 Post-Step-2: Recovery attempt: {len(beats)} beats")
+                if len(beats) != expected_beats:
+                    logger.warning(
+                        f"⚠️ Post-Step-2: Still mismatched ({len(beats)}/{expected_beats}). "
+                        f"Aligning beats by label and inserting placeholders to keep downstream steps running."
+                    )
+                    beats, _present_mask = _align_beats_to_expected(beats, expected_beats)
+                    expanded_text = _BEAT_SEPARATOR.join([b.strip() for b in beats])
+                    logger.info(f"🔍 Post-Step-2: After alignment: {len(beats)} beats")
 
             # Keyword validation intentionally removed (keywords disabled).
 
@@ -2321,13 +2483,17 @@ OUTLINE:
                 logger.info(f"🔍 Pre-Step-5: After _split_beats_strict: {len(beats)} beats found")
                 
                 # Validate beat count before Step 5
+                present_mask_step5 = [True] * expected_beats
                 if len(beats) != expected_beats:
                     logger.error(f"❌ Pre-Step-5 validation failed: Expected {expected_beats} beats, got {len(beats)}")
-                    logger.error(f"⚠️ Skipping Step 5 (dialogue) to preserve structure")
+                    logger.warning(
+                        "⚠️ Pre-Step-5: Running Step 5 in best-effort mode on the beats we can confidently place. "
+                        "Missing beats will be preserved as placeholders (label-only) to keep structure stable."
+                    )
                     # Log what we actually got
                     for i, beat in enumerate(beats[:5], 1):
                         logger.error(f"🔍 Pre-Step-5: Beat {i} preview (first 200 chars): {beat[:200]}")
-                    enable_dialogue = False  # Disable Step 5 if structure is already broken
+                    beats, present_mask_step5 = _align_beats_to_expected(beats, expected_beats)
                 
                 if enable_dialogue:
                     import re
@@ -2359,6 +2525,11 @@ OUTPUT FORMAT:
                     
                     revised_beats = []
                     for i, beat in enumerate(beats, 1):
+                        # Best-effort mode: do not call the model for placeholder beats.
+                        if i - 1 < len(present_mask_step5) and not present_mask_step5[i - 1]:
+                            revised_beats.append(beat)
+                            logger.warning(f"⏭️ Step 5 Beat {i}: Missing beat placeholder (skipping dialogue edit)")
+                            continue
                         # Extract beat body - remove label if present to avoid confusion
                         beat_body = beat.strip()
                         beat_label = _beat_label(i)
@@ -3490,6 +3661,9 @@ Generate a cover image prompt (25–60 words) in an abstract erotic noir style."
                     )
                 except Exception:
                     pass
+        
+        # Final cleanup pass: remove any remaining bracket artifacts
+        generated_text = _remove_bracket_artifacts(generated_text)
         
         return {
             "status": "success",
