@@ -774,14 +774,21 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
         exaggeration = None  # Use default (0.5) for all genres
         cfg_weight = 0.3  # Lower CFG for slower, more deliberate pacing (default is 0.5)
         pause_scale = 1.4  # Slower narration (default is 1.15)
+        # IMPORTANT: Chatterbox has adaptive per-chunk params that can override base temp/cfg/exag.
+        # For erotic stories we want the passed params to *actually* take effect, so disable adaptive voice-param overrides.
+        adaptive_voice_param_blend = 0.0
         logger.info(f"🎭 Erotic story detected - applying specialized TTS parameters")
-        logger.info(f"   temperature={temperature}, exaggeration=0.5 (default), cfg_weight={cfg_weight}, pause_scale={pause_scale}")
+        logger.info(
+            f"   temperature={temperature}, exaggeration=0.5 (default), cfg_weight={cfg_weight}, "
+            f"pause_scale={pause_scale}, adaptive_voice_param_blend={adaptive_voice_param_blend}"
+        )
     else:
         # Default parameters for other story types
         temperature = None  # Use model default (0.8)
         exaggeration = None  # Use model default (0.5)
         cfg_weight = 0.5  # Explicit default CFG weight for non-erotic stories
         pause_scale = 1.15  # Default pause scale
+        adaptive_voice_param_blend = 1.0
     
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
@@ -801,6 +808,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     logger.info(f"  exaggeration: {exaggeration if exaggeration is not None else 'default (0.5)'}")
     logger.info(f"  cfg_weight: {cfg_weight if cfg_weight is not None else 'default (0.5)'}")
     logger.info(f"  pause_scale: {pause_scale}")
+    logger.info(f"  adaptive_voice_param_blend: {adaptive_voice_param_blend}")
     
     start_time = time.time()
     
@@ -834,7 +842,8 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                     pause_scale=pause_scale,
                     temperature=temperature,
                     exaggeration=exaggeration,
-                    cfg_weight=cfg_weight
+                    cfg_weight=cfg_weight,
+                    adaptive_voice_param_blend=adaptive_voice_param_blend,
                 )
                 generation_time = time.time() - start_time
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
