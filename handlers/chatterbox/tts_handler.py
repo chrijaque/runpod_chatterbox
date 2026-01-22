@@ -770,7 +770,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     # Set TTS parameters based on story type
     if is_erotic:
         # Erotic stories: slower narration, more deliberate pacing
-        temperature = 0.65  # Lower temperature for more consistent, less varied delivery
+        temperature = 0.60  # Lower temperature for more consistent, less varied delivery
         exaggeration = None  # Use default (0.5) for all genres
         cfg_weight = 0.3  # Lower CFG for slower, more deliberate pacing (default is 0.5)
         pause_scale = 1.4  # Slower narration (default is 1.15)
