@@ -46,7 +46,6 @@ nltk>=3.8.1
 
 # Text normalization (recommended for better TTS pronunciation)
 inflect
-contractions
 
 # Utilities
 python-dotenv>=1.0.0
