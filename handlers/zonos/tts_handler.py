@@ -610,15 +610,18 @@ def _ffmpeg_process_wav(
     af_parts: List[str] = []
 
     if trim_silence:
-        start_thr = os.getenv("ZONOS_TTS_SILENCE_THRESHOLD_DB", "-50")
-        stop_thr = os.getenv("ZONOS_TTS_SILENCE_THRESHOLD_DB", "-50")
-        start_dur = _env_float("ZONOS_TTS_SILENCE_START_DUR_SEC", 0.10, min_value=0.0, max_value=1.0)
-        stop_dur = _env_float("ZONOS_TTS_SILENCE_STOP_DUR_SEC", 0.20, min_value=0.0, max_value=1.5)
-        af_parts.append(
-            "silenceremove="
-            f"start_periods=1:start_duration={start_dur:.3f}:start_threshold={start_thr}dB"
-            f":stop_periods=1:stop_duration={stop_dur:.3f}:stop_threshold={stop_thr}dB"
-        )
+        # IMPORTANT:
+        # ffmpeg's silenceremove can remove *interior* “silent” regions depending on parameters and thresholds.
+        # For long-form narration we only want to trim leading and trailing silence.
+        # We do this by trimming the start, reversing, trimming the (new) start, and reversing back.
+        thr = os.getenv("ZONOS_TTS_SILENCE_THRESHOLD_DB", "-55").strip() or "-55"
+        start_dur = _env_float("ZONOS_TTS_SILENCE_START_DUR_SEC", 0.08, min_value=0.0, max_value=1.0)
+        end_dur = _env_float("ZONOS_TTS_SILENCE_END_DUR_SEC", 0.12, min_value=0.0, max_value=1.5)
+        # Trim leading
+        lead = f"silenceremove=start_periods=1:start_duration={start_dur:.3f}:start_threshold={thr}dB"
+        # Trim trailing (via reverse)
+        trail = f"silenceremove=start_periods=1:start_duration={end_dur:.3f}:start_threshold={thr}dB"
+        af_parts.append(f"{lead},areverse,{trail},areverse")
 
     if target_lufs is not None:
         tp = _env_float("ZONOS_TTS_TARGET_TRUE_PEAK_DBTP", -1.5, min_value=-10.0, max_value=-0.5)
@@ -1126,6 +1129,8 @@ def handler(event, responseFormat="base64"):
                     "text_overlap_words": int(effective_overlap_words),
                     "raw_samples": int(raw_len),
                     "processed_samples": int(proc_len),
+                    "raw_seconds": round(raw_len / float(sr), 3) if sr else None,
+                    "processed_seconds": round(proc_len / float(sr), 3) if sr else None,
                 }
                 if idx > 0 and join_metrics:
                     chunk_info.update(join_metrics)
