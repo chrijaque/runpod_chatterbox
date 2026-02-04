@@ -1044,27 +1044,28 @@ def handler(event, responseFormat="base64"):
                 else:
                     prev_codes_tail = None
 
-                wavs = zonos_model.autoencoder.decode(codes).cpu()
+                # IMPORTANT:
+                # When we pass `audio_prefix_codes`, Zonos returns `codes` that *include* the prefix codes
+                # at the start. Trimming in sample-space by decoding the prefix separately can misalign
+                # (decoder context / convolution receptive field), causing joins to happen “mid chunk”.
+                # Instead, drop the prefix codes in code-space *before* decoding.
+                codes_for_decode = codes
+                prefix_trim_samples = 0
+                prefix_code_len = 0
+                if audio_prefix_codes is not None and used_prefix_tokens > 0:
+                    prefix_code_len = int(used_prefix_tokens)
+                    if codes_for_decode.shape[-1] > prefix_code_len:
+                        codes_for_decode = codes_for_decode[..., prefix_code_len:]
+                    else:
+                        # Extremely unlikely, but avoid decoding empty/negative-length codes.
+                        codes_for_decode = codes_for_decode[..., 0:0]
+
+                wavs = zonos_model.autoencoder.decode(codes_for_decode).cpu()
                 raw_audio = wavs[0].to(torch.float32)  # [1, T] or [T] depending on decode
                 if raw_audio.ndim == 1:
                     raw_audio = raw_audio.unsqueeze(0)
                 raw_len = int(raw_audio.shape[-1])
-
-                # If we used an audio prefix, remove the duplicated prefix audio *precisely*.
-                # This avoids long/incorrect overlap estimates and prevents audible “stutters” / phasey crossfades.
-                prefix_trim_samples = 0
-                if audio_prefix_codes is not None and used_prefix_tokens > 0:
-                    try:
-                        prefix_wavs = zonos_model.autoencoder.decode(audio_prefix_codes).cpu()
-                        prefix_audio = prefix_wavs[0].to(torch.float32)
-                        if prefix_audio.ndim == 1:
-                            prefix_audio = prefix_audio.unsqueeze(0)
-                        prefix_trim_samples = int(prefix_audio.shape[-1])
-                        if prefix_trim_samples > 0 and raw_audio.shape[-1] > prefix_trim_samples:
-                            raw_audio = raw_audio[..., prefix_trim_samples:]
-                            raw_len = int(raw_audio.shape[-1])
-                    except Exception:
-                        prefix_trim_samples = 0
+                # prefix_trim_samples is now always 0 (we trim by code length instead).
 
                 # Save raw chunk wav for postprocess/debug.
                 raw_wav = TTS_GENERATED_DIR / f"{version_id}_raw_{idx:04d}.wav"
@@ -1140,6 +1141,7 @@ def handler(event, responseFormat="base64"):
                     "gen_seconds": round(gen_s, 3),
                     "codes_len": int(codes.shape[-1]),
                     "used_prefix_tokens": int(used_prefix_tokens),
+                    "prefix_code_len": int(prefix_code_len),
                     "prefix_trim_samples": int(prefix_trim_samples),
                     "overlap_samples": int(overlap_samples),
                     "text_overlap_words": int(effective_overlap_words),
