@@ -3,7 +3,9 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -317,6 +319,217 @@ def map_language(lang: str) -> str:
 # ---------------------------------------------------------------------------------
 # Chunking + stitching helpers
 # ---------------------------------------------------------------------------------
+_RE_WORD = re.compile(r"\b[\w’']+\b", re.UNICODE)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _env_int(name: str, default: int, *, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    raw = os.getenv(name)
+    try:
+        v = int(str(raw).strip()) if raw is not None else default
+    except Exception:
+        v = default
+    if min_value is not None:
+        v = max(min_value, v)
+    if max_value is not None:
+        v = min(max_value, v)
+    return v
+
+
+def _env_float(name: str, default: float, *, min_value: Optional[float] = None, max_value: Optional[float] = None) -> float:
+    raw = os.getenv(name)
+    try:
+        v = float(str(raw).strip()) if raw is not None else default
+    except Exception:
+        v = default
+    if min_value is not None:
+        v = max(min_value, v)
+    if max_value is not None:
+        v = min(max_value, v)
+    return v
+
+
+def _normalize_text(s: str) -> str:
+    return " ".join((s or "").replace("\r\n", "\n").replace("\r", "\n").split())
+
+
+def _split_paragraphs(text: str) -> List[str]:
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw:
+        return []
+    paras = [p.strip() for p in re.split(r"\n\s*\n+", raw) if p.strip()]
+    return paras
+
+
+def _split_sentences(paragraph: str) -> List[str]:
+    """
+    Best-effort sentence segmentation that keeps punctuation.
+    Falls back to returning the whole paragraph if no boundaries are found.
+    """
+    p = (paragraph or "").strip()
+    if not p:
+        return []
+
+    # Normalize whitespace, but keep punctuation and quotes.
+    p = re.sub(r"\s+", " ", p)
+
+    # Split on ., !, ? (optionally followed by closing quotes/parens) when followed by whitespace.
+    # Note: This is heuristic and language-agnostic; it’s good enough for narration chunking.
+    parts: List[str] = []
+    start = 0
+    for m in re.finditer(r"[.!?]+(?:[\"”’')\]]+)?\s+", p):
+        end = m.end()
+        sent = p[start:end].strip()
+        if sent:
+            parts.append(sent)
+        start = end
+    tail = p[start:].strip()
+    if tail:
+        parts.append(tail)
+
+    if not parts:
+        return [p]
+    return parts
+
+
+def _count_words(text: str) -> int:
+    return len(_RE_WORD.findall(text or ""))
+
+
+def _estimate_seconds(text: str, *, words_per_sec: float) -> float:
+    wc = _count_words(text)
+    if wc <= 0:
+        return 0.0
+    return wc / max(words_per_sec, 0.1)
+
+
+def _split_long_sentence(sentence: str, *, max_words: int) -> List[str]:
+    """
+    Split an overlong sentence into smaller clauses without exceeding max_words.
+    Prefers separators ;,: then whitespace.
+    """
+    s = (sentence or "").strip()
+    if not s:
+        return []
+    words = _RE_WORD.findall(s)
+    if len(words) <= max_words:
+        return [s]
+
+    # First try clause separators.
+    for sep in ("; ", ": ", ", "):
+        if sep in s:
+            clauses = [c.strip() for c in s.split(sep) if c.strip()]
+            if len(clauses) > 1:
+                out: List[str] = []
+                buf: List[str] = []
+                buf_words = 0
+                for clause in clauses:
+                    cw = _count_words(clause)
+                    if buf and (buf_words + cw) > max_words:
+                        out.append(_normalize_text(" ".join(buf)))
+                        buf = [clause]
+                        buf_words = cw
+                    else:
+                        buf.append(clause)
+                        buf_words += cw
+                if buf:
+                    out.append(_normalize_text(" ".join(buf)))
+                if all(_count_words(x) <= max_words for x in out):
+                    return out
+
+    # Fallback: split purely by words.
+    tokens = s.split()
+    out = []
+    i = 0
+    while i < len(tokens):
+        out.append(" ".join(tokens[i : i + max_words]).strip())
+        i += max_words
+    return out
+
+
+def chunk_text_v2_duration_aware(text: str) -> List[Tuple[str, int]]:
+    """
+    Duration-aware sentence packing for long-form narration.
+    Returns list of (chunk_text, pause_ms_after).
+
+    Key goals:
+    - Avoid mid-sentence truncation by keeping chunks well under the model’s ~30s cap.
+    - Prefer breaking on sentence boundaries, then clause boundaries, and only then whitespace.
+    - Use small explicit pauses only at paragraph boundaries (punctuation handles most pauses).
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    # Tunables (quality-first defaults)
+    target_sec = _env_float("ZONOS_TTS_TARGET_CHUNK_SEC", 16.0, min_value=6.0, max_value=26.0)
+    hard_cap_sec = _env_float("ZONOS_TTS_HARD_CAP_CHUNK_SEC", 23.5, min_value=8.0, max_value=28.5)
+    words_per_sec = _env_float("ZONOS_TTS_WORDS_PER_SEC", 2.4, min_value=1.4, max_value=4.0)
+    paragraph_pause_ms = _env_int("ZONOS_TTS_PARAGRAPH_PAUSE_MS", 160, min_value=0, max_value=600)
+
+    # Convert the cap into a word cap (as a backstop for splitting a single sentence).
+    hard_cap_words = max(12, int(math.floor(hard_cap_sec * words_per_sec)))
+
+    chunks: List[Tuple[str, int]] = []
+    paras = _split_paragraphs(raw)
+    for p_idx, para in enumerate(paras):
+        sentences = _split_sentences(para)
+        if not sentences:
+            continue
+
+        buf: List[str] = []
+        buf_sec = 0.0
+
+        def flush(*, is_last_para: bool) -> None:
+            nonlocal buf, buf_sec
+            if not buf:
+                return
+            chunk = _normalize_text(" ".join(buf))
+            pause = 0 if is_last_para else paragraph_pause_ms
+            chunks.append((chunk, pause))
+            buf = []
+            buf_sec = 0.0
+
+        for sent in sentences:
+            sent = sent.strip()
+            if not sent:
+                continue
+
+            # If a sentence is too long, split it into smaller pieces.
+            sent_parts = _split_long_sentence(sent, max_words=hard_cap_words)
+            for part in sent_parts:
+                part = part.strip()
+                if not part:
+                    continue
+
+                part_sec = _estimate_seconds(part, words_per_sec=words_per_sec)
+
+                # If adding this part would exceed the hard cap, flush first.
+                if buf and (buf_sec + part_sec) > hard_cap_sec:
+                    flush(is_last_para=False)
+
+                # Start a new chunk if we’re past target duration already.
+                if buf and buf_sec >= target_sec:
+                    flush(is_last_para=False)
+
+                buf.append(part)
+                buf_sec += part_sec
+
+        flush(is_last_para=(p_idx == len(paras) - 1))
+
+    # Ensure final pause is 0
+    if chunks:
+        last_text, _ = chunks[-1]
+        chunks[-1] = (last_text, 0)
+    return chunks
+
+
 def chunk_text(text: str, *, target_chars: int = 420, max_chars: int = 600) -> List[Tuple[str, int]]:
     """
     Punctuation-aware chunking.
@@ -378,6 +591,96 @@ def chunk_text(text: str, *, target_chars: int = 420, max_chars: int = 600) -> L
         last_text, _ = chunks[-1]
         chunks[-1] = (last_text, 0)
     return chunks
+
+
+def _ffmpeg_process_wav(
+    in_wav: Path,
+    out_wav: Path,
+    *,
+    trim_silence: bool,
+    target_lufs: Optional[float],
+    limiter_db: Optional[float],
+) -> None:
+    """
+    Apply lightweight post-processing to improve stitching quality:
+    - trim leading/trailing silence (reduces dead air and visible gaps)
+    - loudness normalize (reduces chunk-to-chunk level jumps)
+    - limiter (avoids clipped joins after normalization)
+    """
+    af_parts: List[str] = []
+
+    if trim_silence:
+        start_thr = os.getenv("ZONOS_TTS_SILENCE_THRESHOLD_DB", "-50")
+        stop_thr = os.getenv("ZONOS_TTS_SILENCE_THRESHOLD_DB", "-50")
+        start_dur = _env_float("ZONOS_TTS_SILENCE_START_DUR_SEC", 0.10, min_value=0.0, max_value=1.0)
+        stop_dur = _env_float("ZONOS_TTS_SILENCE_STOP_DUR_SEC", 0.20, min_value=0.0, max_value=1.5)
+        af_parts.append(
+            "silenceremove="
+            f"start_periods=1:start_duration={start_dur:.3f}:start_threshold={start_thr}dB"
+            f":stop_periods=1:stop_duration={stop_dur:.3f}:stop_threshold={stop_thr}dB"
+        )
+
+    if target_lufs is not None:
+        tp = _env_float("ZONOS_TTS_TARGET_TRUE_PEAK_DBTP", -1.5, min_value=-10.0, max_value=-0.5)
+        lra = _env_float("ZONOS_TTS_TARGET_LRA", 11.0, min_value=1.0, max_value=20.0)
+        af_parts.append(f"loudnorm=I={target_lufs:.1f}:TP={tp:.1f}:LRA={lra:.1f}")
+
+    if limiter_db is not None:
+        af_parts.append(f"alimiter=limit={limiter_db:.2f}dB")
+
+    af = ",".join(af_parts) if af_parts else "anull"
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(in_wav),
+        "-ac",
+        "1",
+        "-ar",
+        "44100",
+        "-af",
+        af,
+        str(out_wav),
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg postprocess failed: {proc.stderr[-500:]}")
+
+
+def _linear_fade(x, fade_in: int = 0, fade_out: int = 0):
+    import torch
+
+    y = x
+    n = y.shape[-1]
+    if fade_in > 0 and n > 0:
+        fi = min(fade_in, n)
+        ramp = torch.linspace(0.0, 1.0, steps=fi, device=y.device, dtype=y.dtype)
+        y[..., :fi] = y[..., :fi] * ramp
+    if fade_out > 0 and n > 0:
+        fo = min(fade_out, n)
+        ramp = torch.linspace(1.0, 0.0, steps=fo, device=y.device, dtype=y.dtype)
+        y[..., -fo:] = y[..., -fo:] * ramp
+    return y
+
+
+def _crossfade_tail_head(prev, nxt, crossfade_samples: int):
+    import torch
+
+    if crossfade_samples <= 0:
+        return torch.cat([prev, nxt], dim=-1)
+    cf = min(crossfade_samples, prev.shape[-1], nxt.shape[-1])
+    if cf <= 0:
+        return torch.cat([prev, nxt], dim=-1)
+
+    a = prev[..., :-cf]
+    b1 = prev[..., -cf:]
+    b2 = nxt[..., :cf]
+    c = nxt[..., cf:]
+
+    ramp = torch.linspace(0.0, 1.0, steps=cf, device=prev.device, dtype=prev.dtype)
+    mixed = b1 * (1.0 - ramp) + b2 * ramp
+    return torch.cat([a, mixed, c], dim=-1)
 
 
 def _stitch_mp3(wav_paths: List[Path], pauses_ms: List[int], out_mp3: Path) -> None:
@@ -465,6 +768,10 @@ def _build_story_audio_key(user_id: str, language: str, story_id: str, version_i
     return f"private/users/{user_id}/stories/audio/{language}/{story_id}/{version_id}.mp3"
 
 
+def _build_story_audio_debug_prefix(user_id: str, language: str, story_id: str, version_id: str) -> str:
+    return f"private/users/{user_id}/stories/audio/{language}/{story_id}/debug/{version_id}"
+
+
 # ---------------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------------
@@ -526,34 +833,365 @@ def handler(event, responseFormat="base64"):
 
         speaker = speaker.to(zonos_model.device, dtype=torch.bfloat16)
 
-        # Chunk the text
-        chunk_items = chunk_text(text)
-        if not chunk_items:
-            raise RuntimeError("Text chunking produced no chunks")
+        # Rollout: keep old pipeline available for fast rollback
+        use_v2 = _env_bool("ZONOS_LONG_TTS_V2", True)
 
-        # Generate each chunk to wav
-        from zonos.conditioning import make_cond_dict
-        import torchaudio
-
-        zonos_lang = map_language(language)
-        wav_paths: List[Path] = []
-        pauses: List[int] = []
-
-        for idx, (chunk, pause_ms) in enumerate(chunk_items):
-            cond = make_cond_dict(text=chunk, speaker=speaker, language=zonos_lang)
-            conditioning = zonos_model.prepare_conditioning(cond)
-            codes = zonos_model.generate(conditioning)
-            wavs = zonos_model.autoencoder.decode(codes).cpu()
-
-            out_wav = TTS_GENERATED_DIR / f"{output_basename or story_id}_{idx:04d}.wav"
-            torchaudio.save(str(out_wav), wavs[0], zonos_model.autoencoder.sampling_rate)
-            wav_paths.append(out_wav)
-            pauses.append(int(pause_ms))
-
-        # Stitch to mp3
+        # Common
         version_id = output_basename or f"{voice_id}_{int(time.time()*1000)}"
         out_mp3 = TTS_GENERATED_DIR / f"{version_id}.mp3"
-        _stitch_mp3(wav_paths, pauses, out_mp3)
+
+        if not use_v2:
+            # ---------------------------
+            # v1 (legacy) pipeline
+            # ---------------------------
+            chunk_items = chunk_text(text)
+            if not chunk_items:
+                raise RuntimeError("Text chunking produced no chunks")
+
+            from zonos.conditioning import make_cond_dict
+            import torchaudio
+
+            zonos_lang = map_language(language)
+            wav_paths: List[Path] = []
+            pauses: List[int] = []
+
+            for idx, (chunk, pause_ms) in enumerate(chunk_items):
+                cond = make_cond_dict(text=chunk, speaker=speaker, language=zonos_lang)
+                conditioning = zonos_model.prepare_conditioning(cond)
+                codes = zonos_model.generate(conditioning)
+                wavs = zonos_model.autoencoder.decode(codes).cpu()
+
+                out_wav = TTS_GENERATED_DIR / f"{output_basename or story_id}_{idx:04d}.wav"
+                torchaudio.save(str(out_wav), wavs[0], zonos_model.autoencoder.sampling_rate)
+                wav_paths.append(out_wav)
+                pauses.append(int(pause_ms))
+
+            _stitch_mp3(wav_paths, pauses, out_mp3)
+
+            # Cleanup generated files
+            for p in wav_paths:
+                try:
+                    p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        else:
+            # ---------------------------
+            # v2 (quality-first) pipeline
+            # ---------------------------
+            from zonos.conditioning import make_cond_dict
+            import torchaudio
+            import torch
+
+            zonos_lang = map_language(language)
+
+            # Chunk by estimated duration to avoid 30s truncation mid-sentence.
+            chunk_items = chunk_text_v2_duration_aware(text)
+            if not chunk_items:
+                raise RuntimeError("Text chunking produced no chunks")
+
+            # Generation controls (stable across chunks)
+            speaking_rate = _env_float("ZONOS_TTS_SPEAKING_RATE", 15.0, min_value=4.0, max_value=30.0)
+            pitch_std = _env_float("ZONOS_TTS_PITCH_STD", 20.0, min_value=0.0, max_value=120.0)
+            fmax = _env_float("ZONOS_TTS_FMAX", 22050.0, min_value=8000.0, max_value=24000.0)
+            cfg_scale = _env_float("ZONOS_TTS_CFG_SCALE", 2.0, min_value=1.05, max_value=5.0)
+            min_p = _env_float("ZONOS_TTS_MIN_P", 0.10, min_value=0.0, max_value=0.5)
+            # Keep emotion explicit for stability (defaults from Zonos make_cond_dict).
+            emotion = [
+                0.3077,
+                0.0256,
+                0.0256,
+                0.0256,
+                0.0256,
+                0.0256,
+                0.2564,
+                0.3077,
+            ]
+
+            tokens_per_sec = _env_float("ZONOS_TTS_TOKENS_PER_SEC", 86.0, min_value=40.0, max_value=140.0)
+            prefix_sec = _env_float("ZONOS_TTS_PREFIX_SEC", 1.2, min_value=0.0, max_value=3.0)
+            prefix_tokens = int(round(prefix_sec * tokens_per_sec))
+
+            # Postprocess controls
+            trim_silence = _env_bool("ZONOS_TTS_TRIM_SILENCE", True)
+            enable_loudnorm = _env_bool("ZONOS_TTS_LOUDNORM", True)
+            target_lufs_val: Optional[float] = None
+            if enable_loudnorm:
+                target_lufs = os.getenv("ZONOS_TTS_TARGET_LUFS")
+                if target_lufs is not None and target_lufs.strip():
+                    tl = target_lufs.strip().lower()
+                    if tl not in ("none", "off", "false", "disable", "disabled"):
+                        try:
+                            target_lufs_val = float(target_lufs)
+                        except Exception:
+                            target_lufs_val = -16.0
+                    else:
+                        target_lufs_val = None
+                else:
+                    target_lufs_val = -16.0
+            limiter_db = _env_float("ZONOS_TTS_LIMITER_DB", -1.2, min_value=-12.0, max_value=-0.1)
+
+            crossfade_ms = _env_int("ZONOS_TTS_CROSSFADE_MS", 80, min_value=0, max_value=250)
+            sr = int(zonos_model.autoencoder.sampling_rate)
+            crossfade_samples = int(round(sr * (crossfade_ms / 1000.0)))
+
+            micro_fade_ms = _env_int("ZONOS_TTS_MICRO_FADE_MS", 10, min_value=0, max_value=50)
+            micro_fade_samples = int(round(sr * (micro_fade_ms / 1000.0)))
+
+            debug = _env_bool("ZONOS_TTS_DEBUG", False)
+            debug_upload_chunks = _env_bool("ZONOS_TTS_DEBUG_UPLOAD_CHUNKS", False)
+            debug_prefix = _build_story_audio_debug_prefix(user_id, language, story_id, version_id)
+
+            deterministic = _env_bool("ZONOS_TTS_DETERMINISTIC", True)
+            if deterministic:
+                seed_base = int(hashlib.sha256(f"{user_id}:{story_id}:{voice_id}".encode("utf-8")).hexdigest()[:8], 16)
+                torch.manual_seed(seed_base)
+
+            # Optional text overlap (disabled by default). Use cautiously: it can introduce duplicates if misconfigured.
+            words_per_sec = _env_float("ZONOS_TTS_WORDS_PER_SEC", 2.4, min_value=1.4, max_value=4.0)
+            text_overlap_words = _env_int("ZONOS_TTS_TEXT_OVERLAP_WORDS", 0, min_value=0, max_value=40)
+            text_overlap_with_prefix = _env_bool("ZONOS_TTS_TEXT_OVERLAP_WITH_PREFIX", False)
+            prev_chunk_words: List[str] = []
+
+            # Stitch in memory as float32 mono.
+            stitched = None
+            prev_codes_tail = None
+            prev_pause_ms = 0
+
+            manifest: Dict[str, Any] = {
+                "version": "zonos_long_tts_v2",
+                "story_id": story_id,
+                "user_id": user_id,
+                "voice_id": voice_id,
+                "language": language,
+                "sampling_rate": sr,
+                "cfg_scale": cfg_scale,
+                "min_p": min_p,
+                "speaking_rate": speaking_rate,
+                "pitch_std": pitch_std,
+                "fmax": fmax,
+                "prefix_sec": prefix_sec,
+                "prefix_tokens": prefix_tokens,
+                "crossfade_ms": crossfade_ms,
+                "chunks": [],
+            }
+
+            for idx, (chunk, pause_ms_after) in enumerate(chunk_items):
+                chunk_norm = _normalize_text(chunk)
+
+                # Optional overlap: prepend last N words from previous chunk to reduce prosody resets.
+                # Default is OFF to avoid accidental duplication.
+                effective_overlap_words = 0
+                if idx > 0 and text_overlap_words > 0 and (text_overlap_with_prefix or prefix_tokens <= 0):
+                    overlap = prev_chunk_words[-text_overlap_words:] if prev_chunk_words else []
+                    if overlap:
+                        effective_overlap_words = len(overlap)
+                        chunk_norm = _normalize_text(" ".join(overlap) + " " + chunk_norm)
+
+                wc = _count_words(chunk_norm)
+                est_sec = _estimate_seconds(chunk_norm, words_per_sec=words_per_sec)
+
+                # Avoid truncation: size max_new_tokens based on estimate with headroom.
+                # Hard cap stays at 30s worth of tokens (model default).
+                est_tokens = int(math.ceil(est_sec * tokens_per_sec))
+                max_new_tokens = int(min(max(est_tokens + int(tokens_per_sec * 6), int(tokens_per_sec * 10)), int(tokens_per_sec * 30)))
+
+                if deterministic:
+                    # Keep deterministic but vary by chunk index to avoid pathological repetition.
+                    torch.manual_seed(seed_base + idx * 1337)
+
+                uncond = None
+                cond = make_cond_dict(
+                    text=chunk_norm,
+                    speaker=speaker,
+                    language=zonos_lang,
+                    emotion=emotion,
+                    speaking_rate=speaking_rate,
+                    pitch_std=pitch_std,
+                    fmax=fmax,
+                    unconditional_keys={"vqscore_8", "dnsmos_ovrl"},
+                    device=zonos_model.device,
+                )
+                conditioning = zonos_model.prepare_conditioning(cond, uncond_dict=uncond)
+
+                audio_prefix_codes = None
+                used_prefix_tokens = 0
+                if prev_codes_tail is not None and prefix_tokens > 0:
+                    audio_prefix_codes = prev_codes_tail
+                    used_prefix_tokens = int(audio_prefix_codes.shape[-1])
+
+                t0 = time.time()
+                codes = zonos_model.generate(
+                    conditioning,
+                    audio_prefix_codes=audio_prefix_codes,
+                    max_new_tokens=max_new_tokens,
+                    cfg_scale=cfg_scale,
+                    sampling_params={"min_p": float(min_p)},
+                    progress_bar=False,
+                )
+                gen_s = time.time() - t0
+
+                # Keep tail codes for next chunk continuity.
+                if prefix_tokens > 0:
+                    prev_codes_tail = codes[..., -min(prefix_tokens, codes.shape[-1]) :].detach()
+                else:
+                    prev_codes_tail = None
+
+                wavs = zonos_model.autoencoder.decode(codes).cpu()
+                raw_audio = wavs[0].to(torch.float32)  # [1, T] or [T] depending on decode
+                if raw_audio.ndim == 1:
+                    raw_audio = raw_audio.unsqueeze(0)
+                raw_len = int(raw_audio.shape[-1])
+
+                # Save raw chunk wav for postprocess/debug.
+                raw_wav = TTS_GENERATED_DIR / f"{version_id}_raw_{idx:04d}.wav"
+                proc_wav = TTS_GENERATED_DIR / f"{version_id}_proc_{idx:04d}.wav"
+                torchaudio.save(str(raw_wav), raw_audio, sr)
+
+                _ffmpeg_process_wav(
+                    raw_wav,
+                    proc_wav,
+                    trim_silence=trim_silence,
+                    target_lufs=target_lufs_val,
+                    limiter_db=limiter_db,
+                )
+
+                proc_audio, proc_sr = torchaudio.load(str(proc_wav))
+                if int(proc_sr) != sr:
+                    proc_audio = torchaudio.functional.resample(proc_audio, int(proc_sr), sr)
+                proc_audio = proc_audio[:1, :].to(torch.float32)  # mono
+                proc_len = int(proc_audio.shape[-1])
+
+                # Derive approximate overlap samples from token prefix length and raw decode length.
+                overlap_samples = 0
+                if used_prefix_tokens > 0 and codes.shape[-1] > 0 and raw_len > 0:
+                    samples_per_token = raw_len / float(codes.shape[-1])
+                    overlap_raw = int(round(samples_per_token * used_prefix_tokens))
+                    # Adjust by postprocess length ratio (silence trim can change ends).
+                    ratio = (proc_len / float(raw_len)) if raw_len > 0 else 1.0
+                    overlap_samples = int(max(0, round(overlap_raw * ratio)))
+
+                # Stitch
+                if stitched is None:
+                    stitched = proc_audio
+                else:
+                    # Metrics on join candidates (before we mutate proc_audio)
+                    join_metrics: Dict[str, Any] = {}
+                    try:
+                        win = int(round(sr * 0.10))  # 100ms windows
+                        if win > 0 and stitched.shape[-1] >= win and proc_audio.shape[-1] >= win:
+                            tail = stitched[..., -win:]
+                            head = proc_audio[..., :win]
+                            tail_rms = float(torch.sqrt(torch.mean(tail * tail)).item())
+                            head_rms = float(torch.sqrt(torch.mean(head * head)).item())
+                            join_metrics = {
+                                "join_tail_rms_100ms": round(tail_rms, 6),
+                                "join_head_rms_100ms": round(head_rms, 6),
+                                "join_rms_delta_100ms": round(abs(tail_rms - head_rms), 6),
+                            }
+                    except Exception:
+                        join_metrics = {}
+
+                    # Insert pause after previous chunk if requested (paragraph boundary).
+                    if prev_pause_ms and prev_pause_ms > 0:
+                        pause_samples = int(round(sr * (prev_pause_ms / 1000.0)))
+                        if pause_samples > 0:
+                            silence = torch.zeros((1, pause_samples), dtype=stitched.dtype)
+                            # small fade to avoid clicks around inserted silence
+                            stitched = _linear_fade(stitched, fade_out=micro_fade_samples)
+                            stitched = torch.cat([stitched, silence], dim=-1)
+                            proc_audio = _linear_fade(proc_audio, fade_in=micro_fade_samples)
+
+                        # When we intentionally inserted silence, avoid overlap mixing; just drop duplicated prefix.
+                        if overlap_samples > 0 and proc_audio.shape[-1] > overlap_samples:
+                            proc_audio = proc_audio[..., overlap_samples:]
+                        stitched = torch.cat([stitched, proc_audio], dim=-1)
+                    else:
+                        # Prefer prefix-based overlap if available; else use fixed crossfade.
+                        cf = overlap_samples if overlap_samples > 0 else crossfade_samples
+                        stitched = _crossfade_tail_head(stitched, proc_audio, cf)
+
+                prev_pause_ms = int(pause_ms_after or 0)
+
+                # Debug/metrics
+                chunk_info = {
+                    "index": idx,
+                    "word_count": wc,
+                    "estimated_sec": round(est_sec, 3),
+                    "pause_ms_after": int(pause_ms_after or 0),
+                    "max_new_tokens": int(max_new_tokens),
+                    "gen_seconds": round(gen_s, 3),
+                    "codes_len": int(codes.shape[-1]),
+                    "used_prefix_tokens": int(used_prefix_tokens),
+                    "overlap_samples": int(overlap_samples),
+                    "text_overlap_words": int(effective_overlap_words),
+                    "raw_samples": int(raw_len),
+                    "processed_samples": int(proc_len),
+                }
+                if idx > 0 and join_metrics:
+                    chunk_info.update(join_metrics)
+                manifest["chunks"].append(chunk_info)
+                if _VERBOSE_LOGS or debug:
+                    logger.info(f"🧩 chunk={idx} words={wc} est={est_sec:.1f}s codes={codes.shape[-1]} prefix={used_prefix_tokens} overlap={overlap_samples} gen={gen_s:.1f}s")
+
+                # Debug uploads
+                if debug and debug_upload_chunks:
+                    try:
+                        upload_to_r2(raw_wav.read_bytes(), f"{debug_prefix}/chunks/raw_{idx:04d}.wav", content_type="audio/wav")
+                        upload_to_r2(proc_wav.read_bytes(), f"{debug_prefix}/chunks/proc_{idx:04d}.wav", content_type="audio/wav")
+                    except Exception as up_e:
+                        logger.error(f"⚠️ Debug chunk upload failed: {up_e}")
+
+                # Cleanup chunk files (keep if debug)
+                if not debug:
+                    try:
+                        raw_wav.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    try:
+                        proc_wav.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                # Track words for potential overlap on next chunk (based on *original* chunk, not overlapped text).
+                prev_chunk_words = _RE_WORD.findall(_normalize_text(chunk))
+
+            if stitched is None:
+                raise RuntimeError("No audio produced")
+
+            # Final micro-fade out to avoid clicks at end.
+            stitched = _linear_fade(stitched, fade_out=micro_fade_samples)
+
+            final_wav = TTS_GENERATED_DIR / f"{version_id}.wav"
+            torchaudio.save(str(final_wav), stitched.cpu(), sr)
+
+            # Encode MP3 once at the end.
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(final_wav),
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                os.getenv("TTS_MP3_BITRATE", "192k"),
+                str(out_mp3),
+            ]
+            proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if proc.returncode != 0:
+                raise RuntimeError(f"ffmpeg mp3 encode failed: {proc.stderr[-500:]}")
+
+            if debug:
+                try:
+                    upload_to_r2(json.dumps(manifest, ensure_ascii=True, indent=2).encode("utf-8"), f"{debug_prefix}/manifest.json", content_type="application/json")
+                except Exception as m_e:
+                    logger.error(f"⚠️ Debug manifest upload failed: {m_e}")
+
+            # Cleanup final wav unless debugging
+            if not debug:
+                try:
+                    final_wav.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
         audio_bytes = out_mp3.read_bytes()
         r2_key = _build_story_audio_key(user_id, language, story_id, version_id)
@@ -591,12 +1229,6 @@ def handler(event, responseFormat="base64"):
         if callback_url:
             _post_signed_callback(callback_url, payload, retries=4)
 
-        # Cleanup generated files
-        for p in wav_paths:
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                pass
         try:
             out_mp3.unlink(missing_ok=True)
         except Exception:
