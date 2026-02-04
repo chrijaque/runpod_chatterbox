@@ -388,6 +388,116 @@ def _build_sample_key(user_id: str, language: str, voice_id: str, is_kids_voice:
 
 
 # ---------------------------------------------------------------------------------
+# Preview sample (TTS) helpers
+# ---------------------------------------------------------------------------------
+def map_language(lang: str) -> str:
+    """
+    Map app language codes to Zonos supported_language_codes.
+    Keep in sync with handlers/zonos/tts_handler.py.
+    """
+    l = (lang or "en").strip().lower()
+    if l == "en":
+        return "en-us"
+    if l == "fr":
+        return "fr-fr"
+    if l == "de":
+        return "de"
+    if l == "ja":
+        return "ja"
+    if l == "zh":
+        return "zh"
+    return l
+
+
+_DEFAULT_PREVIEW_TEXTS = {
+    # Keep this short to minimize latency/cost.
+    "en": "Hey! Here’s a quick preview of your cloned voice. Whenever you’re ready, make a story, add narration, and I’ll take it from there.",
+    "da": "Hej. Dette er en forhåndsvisning af din klonede stemme.",
+    "sv": "Hej. Det här är en förhandsvisning av din klonade röst.",
+    "no": "Hei. Dette er en forhåndsvisning av din klonede stemme.",
+    "nb": "Hei. Dette er en forhåndsvisning av din klonede stemme.",
+    "de": "Hey! Hier ist eine kurze Vorschau deiner geklonten Stimme. Wenn du bereit bist, erstelle eine Geschichte, füge eine Vertonung hinzu, und ich kümmere mich um den Rest.",
+    "fr": "Salut ! Voici un petit aperçu de ta voix clonée. Quand tu es prêt, crée une histoire, ajoute une narration, et je m’occupe du reste.",
+    "es": "Hola. Esta es una vista previa de tu voz clonada.",
+}
+
+
+def _get_preview_text(language: str, *, is_kids_voice: bool, voice_name: str) -> str:
+    """
+    Preview text to synthesize for the /voices page sample.
+    Override with ZONOS_VC_PREVIEW_TEXT (supports {name}).
+    """
+    override = (os.getenv("ZONOS_VC_PREVIEW_TEXT") or "").strip()
+    if override:
+        try:
+            return override.format(name=voice_name or "friend")
+        except Exception:
+            return override
+
+    l = (language or "en").strip().lower()
+    base = _DEFAULT_PREVIEW_TEXTS.get(l) or _DEFAULT_PREVIEW_TEXTS.get(l.split("-")[0]) or _DEFAULT_PREVIEW_TEXTS["en"]
+    if is_kids_voice:
+        # Keep it extra short/simple for kids voices.
+        if l.startswith("da"):
+            return "Hej. Det her er min stemme."
+        if l.startswith("sv"):
+            return "Hej. Det här är min röst."
+        if l in ("no", "nb"):
+            return "Hei. Dette er stemmen min."
+        if l.startswith("de"):
+            return "Hallo. Das ist meine Stimme."
+        if l.startswith("fr"):
+            return "Bonjour. C’est ma voix."
+        if l.startswith("es"):
+            return "Hola. Esta es mi voz."
+        return "Hello. This is my voice."
+    return base
+
+
+def _generate_preview_sample_mp3(
+    *,
+    speaker,
+    language: str,
+    is_kids_voice: bool,
+    voice_name: str,
+    voice_id: str,
+) -> tuple[bytes, str]:
+    """
+    Generate a short TTS preview mp3 using the new speaker embedding.
+    Returns (mp3_bytes, preview_text).
+    """
+    from zonos.conditioning import make_cond_dict
+    import torchaudio
+
+    preview_text = _get_preview_text(language, is_kids_voice=is_kids_voice, voice_name=voice_name)
+    zonos_lang = map_language(language)
+
+    cond = make_cond_dict(text=preview_text, speaker=speaker, language=zonos_lang)
+    conditioning = zonos_model.prepare_conditioning(cond)
+    codes = zonos_model.generate(conditioning)
+    wavs = zonos_model.autoencoder.decode(codes).cpu()
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    tmp_wav = TEMP_VOICE_DIR / f"{voice_id}_preview_{ts}.wav"
+    tmp_mp3 = TEMP_VOICE_DIR / f"{voice_id}_preview_{ts}.mp3"
+
+    torchaudio.save(str(tmp_wav), wavs[0], zonos_model.autoencoder.sampling_rate)
+    _transcode_to_mp3(tmp_wav, tmp_mp3)
+    mp3_bytes = tmp_mp3.read_bytes()
+
+    try:
+        tmp_wav.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        tmp_mp3.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return mp3_bytes, preview_text
+
+
+# ---------------------------------------------------------------------------------
 # Main handler
 # ---------------------------------------------------------------------------------
 def handler(event, responseFormat="base64"):
@@ -432,10 +542,30 @@ def handler(event, responseFormat="base64"):
         np.save(buf, speaker_np, allow_pickle=False)
         profile_bytes = buf.getvalue()
 
-        # Create preview sample mp3 from the provided recording (no TTS needed)
-        tmp_mp3 = TEMP_VOICE_DIR / f"{voice_id}_{datetime.utcnow():%Y%m%d_%H%M%S}.mp3"
-        _transcode_to_mp3(tmp_audio, tmp_mp3)
-        sample_bytes = tmp_mp3.read_bytes()
+        # Create preview sample mp3 via TTS using the cloned embedding (matches Chatterbox UX)
+        sample_bytes: bytes
+        preview_text: str = ""
+        try:
+            if os.getenv("ZONOS_VC_GENERATE_PREVIEW", "true").lower() == "true":
+                sample_bytes, preview_text = _generate_preview_sample_mp3(
+                    speaker=speaker,
+                    language=language,
+                    is_kids_voice=is_kids_voice,
+                    voice_name=name,
+                    voice_id=voice_id,
+                )
+            else:
+                raise RuntimeError("Preview generation disabled (ZONOS_VC_GENERATE_PREVIEW=false)")
+        except Exception as e:
+            # Fallback: transcode the original recording so the pipeline still succeeds.
+            logger.error(f"⚠️ Preview TTS generation failed; falling back to recorded sample: {type(e).__name__}: {e}")
+            tmp_mp3 = TEMP_VOICE_DIR / f"{voice_id}_{datetime.utcnow():%Y%m%d_%H%M%S}.mp3"
+            _transcode_to_mp3(tmp_audio, tmp_mp3)
+            sample_bytes = tmp_mp3.read_bytes()
+            try:
+                tmp_mp3.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         # Upload to R2 using standardized keys
         profile_key = _build_profile_key(user_id, language, voice_id, is_kids_voice)
@@ -465,6 +595,7 @@ def handler(event, responseFormat="base64"):
             "language": language,
             "is_kids_voice": bool(is_kids_voice),
             "model_type": "zonos",
+            "preview_text": preview_text,
             # App callback prefers r2_* fields
             "r2_profile_path": profile_key,
             "r2_sample_path": sample_key,
@@ -479,10 +610,7 @@ def handler(event, responseFormat="base64"):
             tmp_audio.unlink(missing_ok=True)
         except Exception:
             pass
-        try:
-            tmp_mp3.unlink(missing_ok=True)
-        except Exception:
-            pass
+        # tmp_mp3 is already deleted in preview generation or fallback path
 
         # Callback
         if callback_url:
