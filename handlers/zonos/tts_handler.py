@@ -486,13 +486,12 @@ def chunk_text_v2_duration_aware(text: str) -> List[Tuple[str, int]]:
         buf: List[str] = []
         buf_sec = 0.0
 
-        def flush(*, is_last_para: bool) -> None:
+        def flush(*, pause_ms_after: int) -> None:
             nonlocal buf, buf_sec
             if not buf:
                 return
             chunk = _normalize_text(" ".join(buf))
-            pause = 0 if is_last_para else paragraph_pause_ms
-            chunks.append((chunk, pause))
+            chunks.append((chunk, int(pause_ms_after)))
             buf = []
             buf_sec = 0.0
 
@@ -512,16 +511,20 @@ def chunk_text_v2_duration_aware(text: str) -> List[Tuple[str, int]]:
 
                 # If adding this part would exceed the hard cap, flush first.
                 if buf and (buf_sec + part_sec) > hard_cap_sec:
-                    flush(is_last_para=False)
+                    # Mid-paragraph chunk boundary: do NOT add paragraph pause.
+                    flush(pause_ms_after=0)
 
                 # Start a new chunk if we’re past target duration already.
                 if buf and buf_sec >= target_sec:
-                    flush(is_last_para=False)
+                    # Mid-paragraph chunk boundary: do NOT add paragraph pause.
+                    flush(pause_ms_after=0)
 
                 buf.append(part)
                 buf_sec += part_sec
 
-        flush(is_last_para=(p_idx == len(paras) - 1))
+        # End of paragraph: add a small pause (unless it’s the final paragraph).
+        is_last_para = p_idx == (len(paras) - 1)
+        flush(pause_ms_after=0 if is_last_para else paragraph_pause_ms)
 
     # Ensure final pause is 0
     if chunks:
@@ -932,6 +935,7 @@ def handler(event, responseFormat="base64"):
                 else:
                     target_lufs_val = -16.0
             limiter_db = _env_float("ZONOS_TTS_LIMITER_DB", -1.2, min_value=-12.0, max_value=-0.1)
+            chunk_limiter = _env_bool("ZONOS_TTS_CHUNK_LIMITER", False)
 
             crossfade_ms = _env_int("ZONOS_TTS_CROSSFADE_MS", 80, min_value=0, max_value=250)
             sr = int(zonos_model.autoencoder.sampling_rate)
@@ -1018,7 +1022,8 @@ def handler(event, responseFormat="base64"):
 
                 audio_prefix_codes = None
                 used_prefix_tokens = 0
-                if prev_codes_tail is not None and prefix_tokens > 0:
+                # Only continue across chunks when we did NOT intentionally insert a paragraph pause.
+                if prev_pause_ms == 0 and prev_codes_tail is not None and prefix_tokens > 0:
                     audio_prefix_codes = prev_codes_tail
                     used_prefix_tokens = int(audio_prefix_codes.shape[-1])
 
@@ -1045,6 +1050,22 @@ def handler(event, responseFormat="base64"):
                     raw_audio = raw_audio.unsqueeze(0)
                 raw_len = int(raw_audio.shape[-1])
 
+                # If we used an audio prefix, remove the duplicated prefix audio *precisely*.
+                # This avoids long/incorrect overlap estimates and prevents audible “stutters” / phasey crossfades.
+                prefix_trim_samples = 0
+                if audio_prefix_codes is not None and used_prefix_tokens > 0:
+                    try:
+                        prefix_wavs = zonos_model.autoencoder.decode(audio_prefix_codes).cpu()
+                        prefix_audio = prefix_wavs[0].to(torch.float32)
+                        if prefix_audio.ndim == 1:
+                            prefix_audio = prefix_audio.unsqueeze(0)
+                        prefix_trim_samples = int(prefix_audio.shape[-1])
+                        if prefix_trim_samples > 0 and raw_audio.shape[-1] > prefix_trim_samples:
+                            raw_audio = raw_audio[..., prefix_trim_samples:]
+                            raw_len = int(raw_audio.shape[-1])
+                    except Exception:
+                        prefix_trim_samples = 0
+
                 # Save raw chunk wav for postprocess/debug.
                 raw_wav = TTS_GENERATED_DIR / f"{version_id}_raw_{idx:04d}.wav"
                 proc_wav = TTS_GENERATED_DIR / f"{version_id}_proc_{idx:04d}.wav"
@@ -1054,8 +1075,9 @@ def handler(event, responseFormat="base64"):
                     raw_wav,
                     proc_wav,
                     trim_silence=trim_silence,
-                    target_lufs=target_lufs_val,
-                    limiter_db=limiter_db,
+                    # Do NOT loudnorm per chunk (it causes chunk-to-chunk loudness/tonal shifts).
+                    target_lufs=None,
+                    limiter_db=(limiter_db if chunk_limiter else None),
                 )
 
                 proc_audio, proc_sr = torchaudio.load(str(proc_wav))
@@ -1064,14 +1086,8 @@ def handler(event, responseFormat="base64"):
                 proc_audio = proc_audio[:1, :].to(torch.float32)  # mono
                 proc_len = int(proc_audio.shape[-1])
 
-                # Derive approximate overlap samples from token prefix length and raw decode length.
+                # With precise prefix trimming, we don’t need long overlap crossfades.
                 overlap_samples = 0
-                if used_prefix_tokens > 0 and codes.shape[-1] > 0 and raw_len > 0:
-                    samples_per_token = raw_len / float(codes.shape[-1])
-                    overlap_raw = int(round(samples_per_token * used_prefix_tokens))
-                    # Adjust by postprocess length ratio (silence trim can change ends).
-                    ratio = (proc_len / float(raw_len)) if raw_len > 0 else 1.0
-                    overlap_samples = int(max(0, round(overlap_raw * ratio)))
 
                 # Stitch
                 if stitched is None:
@@ -1109,9 +1125,8 @@ def handler(event, responseFormat="base64"):
                             proc_audio = proc_audio[..., overlap_samples:]
                         stitched = torch.cat([stitched, proc_audio], dim=-1)
                     else:
-                        # Prefer prefix-based overlap if available; else use fixed crossfade.
-                        cf = overlap_samples if overlap_samples > 0 else crossfade_samples
-                        stitched = _crossfade_tail_head(stitched, proc_audio, cf)
+                        # Always use a short fixed crossfade for smooth joins.
+                        stitched = _crossfade_tail_head(stitched, proc_audio, crossfade_samples)
 
                 prev_pause_ms = int(pause_ms_after or 0)
 
@@ -1125,6 +1140,7 @@ def handler(event, responseFormat="base64"):
                     "gen_seconds": round(gen_s, 3),
                     "codes_len": int(codes.shape[-1]),
                     "used_prefix_tokens": int(used_prefix_tokens),
+                    "prefix_trim_samples": int(prefix_trim_samples),
                     "overlap_samples": int(overlap_samples),
                     "text_overlap_words": int(effective_overlap_words),
                     "raw_samples": int(raw_len),
@@ -1170,11 +1186,25 @@ def handler(event, responseFormat="base64"):
             torchaudio.save(str(final_wav), stitched.cpu(), sr)
 
             # Encode MP3 once at the end.
+            final_af_parts: List[str] = []
+            if enable_loudnorm and target_lufs_val is not None:
+                tp = _env_float("ZONOS_TTS_TARGET_TRUE_PEAK_DBTP", -1.5, min_value=-10.0, max_value=-0.5)
+                lra = _env_float("ZONOS_TTS_TARGET_LRA", 11.0, min_value=1.0, max_value=20.0)
+                final_af_parts.append(f"loudnorm=I={target_lufs_val:.1f}:TP={tp:.1f}:LRA={lra:.1f}")
+            # Always keep a final limiter when loudnorm is enabled, to avoid overs after normalization.
+            if enable_loudnorm and limiter_db is not None:
+                final_af_parts.append(f"alimiter=limit={limiter_db:.2f}dB")
+            final_af = ",".join(final_af_parts) if final_af_parts else None
+
             cmd = [
                 "ffmpeg",
                 "-y",
                 "-i",
                 str(final_wav),
+            ]
+            if final_af:
+                cmd += ["-af", final_af]
+            cmd += [
                 "-c:a",
                 "libmp3lame",
                 "-b:a",
