@@ -482,6 +482,12 @@ try:
     if FORKED_HANDLER_AVAILABLE:
         # Initialize TTS model first (needed for s3gen)
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
+        # Enable quality analysis/retry for silent chunks (default is enabled in library,
+        # but we set it explicitly here to be safe across deployments).
+        try:
+            tts_model.enable_quality_analysis = True
+        except Exception:
+            pass
         logger.info("✅ ChatterboxTTS ready")
         
         # Initialize VC model using the correct method

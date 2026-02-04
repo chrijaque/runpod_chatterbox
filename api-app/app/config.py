@@ -13,6 +13,9 @@ class Settings:
     RUNPOD_API_KEY: str = os.getenv("RUNPOD_API_KEY", "")
     VC_CB_ENDPOINT_ID: str = os.getenv("VC_CB_ENDPOINT_ID", "")
     TTS_CB_ENDPOINT_ID: str = os.getenv("TTS_CB_ENDPOINT_ID", "")
+    # Optional provider endpoints
+    VC_ZONOS_ENDPOINT_ID: str = os.getenv("VC_ZONOS_ENDPOINT_ID", "")
+    TTS_ZONOS_ENDPOINT_ID: str = os.getenv("TTS_ZONOS_ENDPOINT_ID", "")
     LLM_CB_ENDPOINT_ID: str = os.getenv("LLM_CB_ENDPOINT_ID", "")
     RUNPOD_MAX_CONCURRENCY_VC: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_VC", "2"))
     RUNPOD_MAX_CONCURRENCY_TTS: int = int(os.getenv("RUNPOD_MAX_CONCURRENCY_TTS", "2"))
