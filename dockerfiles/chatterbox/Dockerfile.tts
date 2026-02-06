@@ -153,4 +153,4 @@ RUN echo "🔍 Final verification after all installations..." && \
 EXPOSE 8000
 
 # Set the entrypoint to the TTS handler directly
-CMD ["python3", "-u", "/workspace/tts_handler.py"]
+CMD ["bash", "-lc", "set -euxo pipefail; python -X faulthandler -u /workspace/tts_handler.py"]
