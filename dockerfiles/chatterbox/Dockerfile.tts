@@ -8,6 +8,9 @@ ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Optional HF token for private models (pass at build time)
+ARG HF_TOKEN=""
+
 # Setup environment for Hugging Face model cache baked into the image
 ENV HF_HOME=/models/hf \
     HF_HUB_CACHE=/models/hf/hub \
@@ -33,9 +36,6 @@ RUN apt-get update && apt-get install -y \
 
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
-
-# Optional HF token for private models (pass at build time)
-ARG HF_TOKEN=""
 
 # Copy requirements first for better caching
 COPY requirements/chatterbox.txt /requirements.txt
