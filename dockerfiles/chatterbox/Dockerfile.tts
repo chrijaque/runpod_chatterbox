@@ -33,6 +33,9 @@ RUN apt-get update && apt-get install -y \
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
 
+# Optional HF token for private models (pass at build time)
+ARG HF_TOKEN=""
+
 # Copy requirements first for better caching
 COPY requirements/chatterbox.txt /requirements.txt
 
@@ -100,6 +103,12 @@ RUN echo "🔧 Installing other requirements..." && \
 # Pre-download model assets into the image cache to avoid runtime downloads
 RUN echo "🔧 Preparing HF cache for predownload..." && \
     mkdir -p /models/hf/hub && \
+    if [ -n "$HF_TOKEN" ]; then \
+      echo "🔑 Using HF token for non-interactive login" && \
+      huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
+    else \
+      echo "ℹ️ No HF token provided; assuming public repo" ; \
+    fi && \
     python - <<'PY'
 from huggingface_hub import snapshot_download
 print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
