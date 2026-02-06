@@ -18,9 +18,8 @@ uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 pydantic>=2.5.0
 
-# Firebase for cloud storage
-firebase-admin>=6.2.0
-google-cloud-storage>=2.10.0
+# Storage
+# R2 is used via S3-compatible APIs (boto3 is provided by the chatterbox_embed package / handler runtime).
 
 # CORS and additional utilities
 python-jose[cryptography]>=3.3.0

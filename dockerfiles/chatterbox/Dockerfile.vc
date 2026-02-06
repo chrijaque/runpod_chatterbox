@@ -9,9 +9,6 @@ ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Firebase credentials will be provided via RunPod secrets
-# ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase.json
-
 # Install system dependencies including FFmpeg
 RUN apt-get update && \
     apt-get install -y \
@@ -32,9 +29,6 @@ RUN apt-get update && apt-get install -y \
 
 # Set git global config to avoid warnings
 RUN git config --global --add safe.directory '*'
-
-# Optional HF token for private models (pass at build time)
-ARG HF_TOKEN=""
 
 # Setup environment for Hugging Face model cache baked into the image
 ENV HF_HOME=/models/hf \
@@ -95,15 +89,9 @@ RUN echo "🔧 Installing other requirements..." && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
-# Pre-download HF models into the image cache to avoid runtime downloads
+# Pre-download model assets into the image cache to avoid runtime downloads
 RUN echo "🔧 Preparing HF cache for predownload..." && \
     mkdir -p /models/hf/hub && \
-    if [ -n "$HF_TOKEN" ]; then \
-      echo "🔑 Using HF token for non-interactive login" && \
-      huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
-    else \
-      echo "ℹ️ No HF token provided; assuming public repo" ; \
-    fi && \
     python - <<'PY'
 from huggingface_hub import snapshot_download
 print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")

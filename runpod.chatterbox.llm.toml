@@ -7,7 +7,7 @@ docker_image_tag = "prod"
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
 MINSTRALY_API_SHARED_SECRET = "{{ MINSTRALY_API_SHARED_SECRET }}"
-FIREBASE_SERVICE_ACCOUNT = "{{ FIREBASE_SERVICE_ACCOUNT }}"  # Firebase service account JSON
+FIREBASE_SERVICE_ACCOUNT = "{{ FIREBASE_SERVICE_ACCOUNT }}"  # Firestore service account JSON (legacy storage removed; docs still updated)
 MODEL_PATH = "/runpod-volume/models/Qwen2.5-32B-Instruct-AWQ"  # Network volume path
 MODEL_NAME = "Qwen2.5-32B-Instruct-AWQ"  # Fallback HuggingFace model if MODEL_PATH not found
 CACHE_BUST = "prod-{{ timestamp }}"
@@ -15,7 +15,8 @@ CACHE_BUST = "prod-{{ timestamp }}"
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.llm"
 context = "."
-build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}", "HF_TOKEN={{ HF_TOKEN }}"]
+# R2-only / no-auth build: don't require HF_TOKEN template var
+build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}"]
 
 [deploy]
 gpu_type = "RTX 3090"  # Can use smaller GPU than TTS since no audio processing

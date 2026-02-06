@@ -11,14 +11,13 @@ import json
 from datetime import datetime
 import tempfile
 
-# Firebase Admin SDK
+# Firebase Admin SDK (Firestore is still used for status/docs updates)
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
     FIREBASE_AVAILABLE = True
 except ImportError:
     FIREBASE_AVAILABLE = False
-    # Logger not yet initialized, will log later if needed
 
 # Configure logging
 _VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
@@ -36,7 +35,7 @@ _tokenizer = None
 _device = None
 _use_vllm = None  # Will be determined on first load
 
-# Firebase initialization
+# Firebase initialization (Firestore is used; storage is R2)
 _firebase_initialized = False
 _firestore_db = None
 
@@ -48,7 +47,7 @@ except ImportError:
     VLLM_AVAILABLE = False
 
 def _initialize_firebase():
-    """Initialize Firebase Admin SDK with service account credentials."""
+    """Initialize Firebase Admin SDK with service account credentials (Firestore)."""
     global _firebase_initialized, _firestore_db
     
     if _firebase_initialized:
@@ -59,30 +58,25 @@ def _initialize_firebase():
         return None
     
     try:
-        # Check if Firebase is already initialized
         if not firebase_admin._apps:
             firebase_service_account = os.getenv("FIREBASE_SERVICE_ACCOUNT")
-            
             if not firebase_service_account:
                 logger.warning("⚠️ FIREBASE_SERVICE_ACCOUNT not set, skipping Firestore initialization")
                 return None
             
             logger.info("🔧 Initializing Firebase Admin SDK...")
             
-            # Parse JSON credentials
             try:
                 cred_data = json.loads(firebase_service_account)
             except json.JSONDecodeError:
                 logger.error("❌ FIREBASE_SERVICE_ACCOUNT is not valid JSON")
                 return None
             
-            # Create temporary file with credentials
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp_file:
                 json.dump(cred_data, tmp_file)
                 tmp_path = tmp_file.name
             
             try:
-                # Initialize Firebase
                 cred = credentials.Certificate(tmp_path)
                 firebase_admin.initialize_app(cred)
                 logger.info("✅ Firebase Admin SDK initialized successfully")
@@ -90,13 +84,11 @@ def _initialize_firebase():
                 logger.error(f"❌ Firebase initialization failed: {e}")
                 return None
             finally:
-                # Clean up temporary file
                 try:
                     os.unlink(tmp_path)
                 except Exception:
                     pass
         
-        # Initialize Firestore
         _firestore_db = firestore.client()
         _firebase_initialized = True
         logger.info("✅ Firestore client initialized")

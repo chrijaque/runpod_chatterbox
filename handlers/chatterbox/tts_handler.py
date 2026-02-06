@@ -505,70 +505,28 @@ except Exception as e:
     tts_model = None
 
 # -------------------------------------------------------------------
-# 🐞  Firebase / GCS credential debug helper
+# 🐞  R2 credential debug helper (Firebase/HF are legacy)
 # -------------------------------------------------------------------
-def _debug_gcs_creds():
-    """Comprehensive Firebase credential check and validation."""
-    logger.info("🔍 ===== TTS FIREBASE CREDENTIAL VALIDATION =====")
+def _debug_r2_creds():
+    """Log R2 credential presence (never raises)."""
+    logger.info("🔍 ===== TTS R2 CREDENTIAL VALIDATION =====")
     try:
-        firebase_secret_path = os.getenv('RUNPOD_SECRET_Firebase')
-        logger.info(f"🔑 Firebase secret present: {bool(firebase_secret_path)}")
-        logger.info(f"🔑 Firebase secret length: {len(firebase_secret_path) if firebase_secret_path else 0}")
-        
-        if firebase_secret_path:
-            # Check if it's JSON content
-            if firebase_secret_path.startswith('{'):
-                logger.info("🔑 Firebase secret appears to be JSON content")
-                try:
-                    import json
-                    cred_data = json.loads(firebase_secret_path)
-                    logger.info(f"🔑 JSON validation: SUCCESS")
-                    logger.info(f"🔑 Project ID: {cred_data.get('project_id', 'NOT FOUND')}")
-                    logger.info(f"🔑 Client Email: {cred_data.get('client_email', 'NOT FOUND')}")
-                    logger.info(f"🔑 Private Key ID: {cred_data.get('private_key_id', 'NOT FOUND')}")
-                    logger.info(f"🔑 Type: {cred_data.get('type', 'NOT FOUND')}")
-                    
-                    # Check for required fields
-                    required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
-                    missing_fields = [field for field in required_fields if field not in cred_data]
-                    if missing_fields:
-                        logger.error(f"❌ Missing required credential fields: {missing_fields}")
-                    else:
-                        logger.info("✅ All required credential fields present")
-                        
-                except json.JSONDecodeError as e:
-                    logger.error(f"❌ Firebase secret JSON is invalid: {e}")
-                except Exception as e:
-                    logger.error(f"❌ Error parsing Firebase secret: {e}")
-            else:
-                logger.info("🔑 Firebase secret appears to be a file path")
-                if os.path.exists(firebase_secret_path):
-                    logger.info(f"✅ Firebase secret file exists: {firebase_secret_path}")
-                    try:
-                        with open(firebase_secret_path, 'r') as f:
-                            content = f.read()
-                            logger.info(f"🔑 File content length: {len(content)}")
-                            logger.info(f"🔑 File content preview: {content[:100]}...")
-                    except Exception as e:
-                        logger.error(f"❌ Error reading Firebase secret file: {e}")
-                else:
-                    logger.error(f"❌ Firebase secret file does not exist: {firebase_secret_path}")
-        else:
-            logger.error("❌ RUNPOD_SECRET_Firebase environment variable not set")
-            
-        # Check bucket identifier
-        bucket_name_raw = os.getenv('GCS_BUCKET_US') or os.getenv('FIREBASE_STORAGE_BUCKET') or ''
-        bucket_name = bucket_name_raw if bucket_name_raw else 'not-set'
-        logger.info(f"🔑 Bucket identifier: {bucket_name}")
-        if bucket_name != 'not-set':
-            # Normalize to show project ID
-            normalized = bucket_name.replace('.firebasestorage.app', '').replace('.appspot.com', '')
-            logger.info(f"🔑 Bucket project ID: {normalized}")
-        
+        r2_account_id = os.getenv("R2_ACCOUNT_ID")
+        r2_access_key_id = os.getenv("R2_ACCESS_KEY_ID")
+        r2_secret_access_key = os.getenv("R2_SECRET_ACCESS_KEY")
+        r2_endpoint = os.getenv("R2_ENDPOINT")
+        r2_bucket_name = os.getenv("R2_BUCKET_NAME") or "minstraly-storage"
+        r2_public_url = os.getenv("NEXT_PUBLIC_R2_PUBLIC_URL") or os.getenv("R2_PUBLIC_URL")
+
+        logger.info(f"🪣 R2 bucket: {r2_bucket_name}")
+        logger.info(f"🔑 R2_ACCOUNT_ID present: {bool(r2_account_id)}")
+        logger.info(f"🔑 R2_ACCESS_KEY_ID present: {bool(r2_access_key_id)}")
+        logger.info(f"🔑 R2_SECRET_ACCESS_KEY present: {bool(r2_secret_access_key)}")
+        logger.info(f"🌐 R2_ENDPOINT present: {bool(r2_endpoint)}")
+        logger.info(f"🌍 R2 public URL present: {bool(r2_public_url)}")
     except Exception as e:
-        logger.error(f"❌ Firebase credential validation failed: {e}")
-    
-    logger.info("🔍 ===== END TTS FIREBASE CREDENTIAL VALIDATION =====")
+        logger.error(f"❌ R2 credential validation failed: {e}")
+    logger.info("🔍 ===== END TTS R2 CREDENTIAL VALIDATION =====")
 
 def validate_storage_path(path: str) -> str:
     """
@@ -997,8 +955,8 @@ def handler(event, responseFormat="base64"):
     
     logger.info("🔍 ===== END TTS METADATA BREAKDOWN =====")
     
-    # ===== FIREBASE CREDENTIAL VALIDATION =====
-    _debug_gcs_creds()
+    # ===== R2 CREDENTIAL VALIDATION =====
+    _debug_r2_creds()
     
     if not text or not voice_id:
         return _return_with_cleanup({"status": "error", "error": "Both text and voice_id are required"})
