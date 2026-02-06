@@ -6,14 +6,15 @@ docker_image_tag = "prod"
 
 [env]
 RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
+CACHE_BUST = "prod-{{ timestamp }}"
 MINSTRALY_API_SHARED_SECRET = "{{ MINSTRALY_API_SHARED_SECRET }}"
+APP_BASE_URL = "{{ APP_BASE_URL }}"
 R2_ACCOUNT_ID = "{{ R2_ACCOUNT_ID }}"
 R2_ACCESS_KEY_ID = "{{ R2_ACCESS_KEY_ID }}"
 R2_SECRET_ACCESS_KEY = "{{ R2_SECRET_ACCESS_KEY }}"
 R2_ENDPOINT = "{{ R2_ENDPOINT }}"
 R2_BUCKET_NAME = "{{ R2_BUCKET_NAME }}"
 NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
-CACHE_BUST = "prod-{{ timestamp }}"
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
@@ -28,6 +29,7 @@ ports = "8000/http"
 envs = [
     "RUNPOD_API_KEY",
     "MINSTRALY_API_SHARED_SECRET",
+    "APP_BASE_URL",
     "R2_ACCOUNT_ID",
     "R2_ACCESS_KEY_ID",
     "R2_SECRET_ACCESS_KEY",
