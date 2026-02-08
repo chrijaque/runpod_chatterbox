@@ -16,4 +16,7 @@ RUN apt-get update && \
     libswscale-dev && \
     rm -rf /var/lib/apt/lists/*
 
-RUN echo "Step 2: System dependencies installed"
+# Copy requirements first for better caching
+COPY requirements/chatterbox.txt /requirements.txt
+
+RUN echo "Step 3: Requirements file copied"
