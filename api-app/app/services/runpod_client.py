@@ -32,18 +32,12 @@ class RunPodClient:
         from ..config import settings
         self.vc_cb_endpoint_id = settings.VC_CB_ENDPOINT_ID
         self.tts_cb_endpoint_id = settings.TTS_CB_ENDPOINT_ID
-        self.vc_zonos_endpoint_id = getattr(settings, "VC_ZONOS_ENDPOINT_ID", "") or ""
-        self.tts_zonos_endpoint_id = getattr(settings, "TTS_ZONOS_ENDPOINT_ID", "") or ""
         self.llm_cb_endpoint_id = settings.LLM_CB_ENDPOINT_ID
         
         logger.info(f"📞 Base URL: {self.base_url}")
         logger.info(f"📞 Headers configured: {bool(self.headers)}")
         logger.info(f"📞 ChatterboxTTS VC Endpoint: {self.vc_cb_endpoint_id}")
         logger.info(f"📞 ChatterboxTTS TTS Endpoint: {self.tts_cb_endpoint_id}")
-        if self.vc_zonos_endpoint_id:
-            logger.info(f"📞 Zonos VC Endpoint: {self.vc_zonos_endpoint_id}")
-        if self.tts_zonos_endpoint_id:
-            logger.info(f"📞 Zonos TTS Endpoint: {self.tts_zonos_endpoint_id}")
         logger.info(f"📞 ChatterboxTTS LLM Endpoint: {self.llm_cb_endpoint_id}")
         logger.info("🔍 ===== END RUNPOD CLIENT INITIALIZATION =====")
     
@@ -91,15 +85,8 @@ class RunPodClient:
                     raise Exception("Invalid audio data - audio file too small or empty")
             
             # Route to correct endpoint based on model type
-            mt = (model_type or "chatterbox").lower()
-            if mt in ["zonos", "zyphra"]:
-                if not self.vc_zonos_endpoint_id:
-                    raise Exception("VC_ZONOS_ENDPOINT_ID not configured")
-                endpoint_id = self.vc_zonos_endpoint_id
-                logger.info(f"🎯 Routing to Zonos VC endpoint: {endpoint_id}")
-            else:
-                endpoint_id = self.vc_cb_endpoint_id
-                logger.info(f"🎯 Routing to ChatterboxTTS VC endpoint: {endpoint_id}")
+            endpoint_id = self.vc_cb_endpoint_id
+            logger.info(f"🎯 Routing to ChatterboxTTS VC endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
 
@@ -237,15 +224,8 @@ class RunPodClient:
         """
         try:
             # Route to correct endpoint based on model type
-            mt = (model_type or "chatterbox").lower()
-            if mt in ["zonos", "zyphra"]:
-                if not self.tts_zonos_endpoint_id:
-                    raise Exception("TTS_ZONOS_ENDPOINT_ID not configured")
-                endpoint_id = self.tts_zonos_endpoint_id
-                logger.info(f"🎯 Routing to Zonos TTS endpoint: {endpoint_id}")
-            else:
-                endpoint_id = self.tts_cb_endpoint_id
-                logger.info(f"🎯 Routing to ChatterboxTTS TTS endpoint: {endpoint_id}")
+            endpoint_id = self.tts_cb_endpoint_id
+            logger.info(f"🎯 Routing to ChatterboxTTS TTS endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
 
