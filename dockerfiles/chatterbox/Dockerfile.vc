@@ -28,7 +28,5 @@ RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatt
     pip install -e /workspace/chatterbox_embed && \
     python -c "import chatterbox; print('Step 4b: chatterbox_embed installed from:', chatterbox.__file__)"
 
-# Step 5: Install other requirements and RunPod SDK
-RUN pip install runpod>=1.5.0
-
-RUN echo "Step 5: RunPod SDK installed"
+# Step 5-1: Test simple RUN command
+RUN echo "Step 5-1: Testing simple RUN command"
