@@ -46,4 +46,11 @@ RUN pip show chatterbox-tts || echo "Package check skipped"
 # Step 5: Install RunPod SDK
 RUN pip install runpod>=1.5.0
 
-RUN echo "Step 5: RunPod SDK installed"
+# Copy TTS handler script
+COPY handlers/chatterbox/tts_handler.py /handler.py
+
+# Set working directory
+WORKDIR /
+
+# Set the entrypoint to the TTS handler
+CMD ["python3", "-u", "handler.py"]
