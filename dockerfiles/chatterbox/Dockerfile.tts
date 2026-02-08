@@ -107,6 +107,7 @@ RUN echo "🔧 Installing other requirements..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
 # Pre-download model assets into the image cache to avoid runtime downloads
+# Note: This step is optional - if it fails, models will be downloaded at runtime via from_pretrained()
 RUN echo "🔧 Preparing HF cache for predownload..." && \
     mkdir -p "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$TORCH_HOME" && \
     if [ -n "$HF_TOKEN" ]; then \
@@ -115,14 +116,20 @@ RUN echo "🔧 Preparing HF cache for predownload..." && \
     else \
       echo "ℹ️ No HF token provided; assuming public repo" ; \
     fi && \
-    python - <<'PY'
+    python - <<'PY' || echo "⚠️ Pre-download failed; models will be downloaded at runtime"
+import sys
 from huggingface_hub import snapshot_download
-print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
-snapshot_download(
-    repo_id="ResembleAI/chatterbox",
-    revision="main",
-)
-print("✅ Pre-download complete.")
+try:
+    print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
+    snapshot_download(
+        repo_id="ResembleAI/chatterbox",
+        revision="main",
+    )
+    print("✅ Pre-download complete.")
+except Exception as e:
+    print(f"⚠️ Pre-download failed: {e}")
+    print("ℹ️ Models will be downloaded at runtime via from_pretrained()")
+    sys.exit(0)  # Don't fail the build
 PY
 
 # Pre-download NLTK data to avoid runtime issues
