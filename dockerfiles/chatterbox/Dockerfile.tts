@@ -58,8 +58,7 @@ ARG RUNPOD_CACHE_BUST=1
 ARG CHATTERBOX_REF=master
 
 # Invalidate cache when the selected ref's HEAD changes
-# Using RUN instead of ADD to avoid validation issues with variable substitution in URLs
-RUN curl -s -f -o /tmp/chatterbox_head.json "https://api.github.com/repos/chrijaque/chatterbox_embed/commits/${CHATTERBOX_REF}" || echo "{}" > /tmp/chatterbox_head.json
+ADD https://api.github.com/repos/chrijaque/chatterbox_embed/commits/${CHATTERBOX_REF} /tmp/chatterbox_head.json
 
 # Cache-bust layer: change RUNPOD_CACHE_BUST each build to force refetch
 RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
@@ -116,8 +115,9 @@ RUN echo "🔧 Preparing HF cache for predownload..." && \
       huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
     else \
       echo "ℹ️ No HF token provided; assuming public repo" ; \
-    fi && \
-    python - <<'PY' || echo "⚠️ Pre-download failed; models will be downloaded at runtime"
+    fi
+
+RUN python - <<'PY' || echo "⚠️ Pre-download failed; models will be downloaded at runtime" || true
 import sys
 from huggingface_hub import snapshot_download
 try:
@@ -130,7 +130,7 @@ try:
 except Exception as e:
     print(f"⚠️ Pre-download failed: {e}")
     print("ℹ️ Models will be downloaded at runtime via from_pretrained()")
-    sys.exit(0)  # Don't fail the build
+    sys.exit(0)  # Dont fail the build
 PY
 
 # Pre-download NLTK data to avoid runtime issues
