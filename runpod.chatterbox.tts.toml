@@ -18,7 +18,7 @@ NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.tts"
 context = "."
-build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}"]
+build_args = ["RUNPOD_CACHE_BUST={{ RUNPOD_SECRET_CACHE_BUST }}"]
 # Note: HF_TOKEN is optional - if needed, add it manually in RunPod UI as: HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}
 # Or pass it directly if the secret is configured
 
