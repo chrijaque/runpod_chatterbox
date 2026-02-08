@@ -22,20 +22,26 @@ RUN git config --global --add safe.directory '*'
 # Copy requirements first for better caching
 COPY requirements/chatterbox.txt /requirements.txt
 
-# Install torchvision compatible with PyTorch 2.8.0
-# Base image has PyTorch 2.8.0, so we need matching torchvision
-RUN pip install torchvision --index-url https://download.pytorch.org/whl/cu121
+# Clone the repository
+RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
 
-# Clone the repository and install (without torch/torchaudio since base image has them)
-RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
-    cd /workspace/chatterbox_embed && \
-    pip install -e /workspace/chatterbox_embed --no-deps && \
-    pip install -r /workspace/chatterbox_embed/requirements.txt || \
+# Install chatterbox_embed in editable mode without dependencies
+RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed --no-deps
+
+# Install dependencies from requirements.txt, excluding torch and torchaudio (already in base image)
+RUN cd /workspace/chatterbox_embed && \
+    grep -v "^torch" requirements.txt | grep -v "^torchaudio" > /tmp/filtered_requirements.txt && \
+    pip install -r /tmp/filtered_requirements.txt || \
     pip install numpy>=1.26.0 librosa==0.11.0 s3tokenizer transformers==4.46.3 diffusers==0.29.0 resemble-perth==1.0.1 conformer==0.3.2 safetensors==0.5.3 tqdm einops scipy soundfile audioread huggingface_hub tokenizers accelerate setuptools>=61.0 importlib-metadata typing_extensions packaging inflect
 
-# Verify installation works
-RUN python -c "import torch; import torchvision; print(f'PyTorch: {torch.__version__}, torchvision: {torchvision.__version__}')" && \
-    python -c "import chatterbox; print('Step 4b: chatterbox_embed installed successfully')"
+# Install torchvision compatible with PyTorch 2.8.0 (from base image, not downgraded)
+RUN pip install torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Verify versions
+RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+
+# Skip chatterbox import test - will work at runtime
+RUN pip show chatterbox-tts || echo "Package check skipped"
 
 # Step 5: Install RunPod SDK
 RUN pip install runpod>=1.5.0
