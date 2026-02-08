@@ -22,17 +22,7 @@ RUN git config --global --add safe.directory '*'
 # Copy requirements first for better caching
 COPY requirements/chatterbox.txt /requirements.txt
 
-# Clone the chatterbox_embed repository and install in editable mode
-ARG CHATTERBOX_REF=master
-RUN pip uninstall -y torch torchvision torchaudio chatterbox-tts || true && \
-    git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
-    cd /workspace/chatterbox_embed && \
-    git fetch --tags --force origin ${CHATTERBOX_REF} || true && \
-    if git ls-remote --exit-code origin ${CHATTERBOX_REF} >/dev/null 2>&1; then \
-      REF=origin/${CHATTERBOX_REF}; \
-    else \
-      REF=${CHATTERBOX_REF}; \
-    fi && \
-    git checkout --detach ${REF} && \
-    pip install -e /workspace/chatterbox_embed && \
-    python -c "import chatterbox; print('Step 4: chatterbox_embed installed from:', chatterbox.__file__)"
+# Step 4a: Just clone the repository
+RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
+
+RUN echo "Step 4a: Repository cloned"
