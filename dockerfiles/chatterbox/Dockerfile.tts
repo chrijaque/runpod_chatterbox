@@ -58,7 +58,8 @@ ARG RUNPOD_CACHE_BUST=1
 ARG CHATTERBOX_REF=master
 
 # Invalidate cache when the selected ref's HEAD changes
-ADD https://api.github.com/repos/chrijaque/chatterbox_embed/commits/${CHATTERBOX_REF} /tmp/chatterbox_head.json
+# Using RUN instead of ADD to avoid validation issues with variable substitution in URLs
+RUN curl -s -f -o /tmp/chatterbox_head.json "https://api.github.com/repos/chrijaque/chatterbox_embed/commits/${CHATTERBOX_REF}" || echo "{}" > /tmp/chatterbox_head.json
 
 # Cache-bust layer: change RUNPOD_CACHE_BUST each build to force refetch
 RUN echo "🧹 Cache bust: ${CACHE_BUST}-${RUNPOD_CACHE_BUST} at ${BUILD_TIME}" && true
