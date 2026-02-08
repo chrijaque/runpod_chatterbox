@@ -18,10 +18,9 @@ NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.tts"
 context = "."
-build_args = [
-    "RUNPOD_CACHE_BUST={{ CACHE_BUST }}",
-    "HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}"
-]
+build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}"]
+# Note: HF_TOKEN is optional - if needed, add it manually in RunPod UI as: HF_TOKEN={{ RUNPOD_SECRET_HF_TOKEN }}
+# Or pass it directly if the secret is configured
 
 [deploy]
 gpu_type = "RTX 4090"
