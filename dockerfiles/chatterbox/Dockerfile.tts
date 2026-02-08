@@ -25,11 +25,18 @@ COPY requirements/chatterbox.txt /requirements.txt
 # Clone the repository
 RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
 
-# Install in editable mode
-RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed
+# Check what's in the repository
+RUN ls -la /workspace/chatterbox_embed/
 
-# Verify installation
-RUN python -c "import chatterbox; print('Step 4b: chatterbox_embed installed')"
+# Install in editable mode with verbose output
+RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed -v
+
+# Check if package is installed
+RUN pip show chatterbox-tts || echo "Package not found"
+
+# Try importing
+RUN python -c "import sys; print('Python path:', sys.path)" && \
+    python -c "import chatterbox; print('Step 4b: chatterbox_embed installed')" || echo "Import failed"
 
 # Step 5-1: Test simple RUN command
 RUN echo "Step 5-1: Testing simple RUN command"
