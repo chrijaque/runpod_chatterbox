@@ -1,25 +1,21 @@
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-WORKDIR /workspace
-
 # Set environment variables for logging
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONFAULTHANDLER=1
 ENV PYTHON_UNBUFFERED="true"
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Optional HF token for private models (pass at build time)
+# Optional HF token for private models
 ARG HF_TOKEN=""
 
-# Setup environment for Hugging Face model cache (use RunPod writable volume)
-ENV HF_HOME=/tmp/hf \
-    HF_HUB_CACHE=/tmp/hf/hub \
-    TRANSFORMERS_CACHE=/tmp/hf/transformers \
-    TORCH_HOME=/tmp/torch
-RUN mkdir -p /tmp/hf/hub /tmp/hf/transformers /tmp/torch
+# Setup environment for Hugging Face model cache baked into the image
+ENV HF_HOME=/models/hf \
+    HF_HUB_CACHE=/models/hf/hub \
+    TRANSFORMERS_CACHE=/models/hf
 
-# Ensure cache dirs exist at build time
-RUN mkdir -p /workspace/.cache/huggingface/hub /workspace/.cache/huggingface/transformers /workspace/.cache/torch
+# Firebase credentials will be provided via RunPod secrets
+# ENV GOOGLE_APPLICATION_CREDENTIALS=/secrets/firebase.json
 
 # Install system dependencies including FFmpeg
 RUN apt-get update && \
@@ -106,31 +102,23 @@ RUN echo "🔧 Installing other requirements..." && \
     echo "🔍 Verifying chatterbox-tts is still from forked repo..." && \
     pip show chatterbox-tts | grep -E "(Location|Version)"
 
-# Pre-download model assets into the image cache to avoid runtime downloads
-# Note: This step is optional - if it fails, models will be downloaded at runtime via from_pretrained()
+# Pre-download Hugging Face models into the image cache to avoid runtime downloads
 RUN echo "🔧 Preparing HF cache for predownload..." && \
-    mkdir -p "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE" "$TORCH_HOME" && \
+    mkdir -p /models/hf/hub && \
     if [ -n "$HF_TOKEN" ]; then \
       echo "🔑 Using HF token for non-interactive login" && \
       huggingface-cli login --token "$HF_TOKEN" >/dev/null 2>&1 || true ; \
     else \
       echo "ℹ️ No HF token provided; assuming public repo" ; \
-    fi
-
-RUN python - <<'PY' || echo "⚠️ Pre-download failed; models will be downloaded at runtime" || true
-import sys
+    fi && \
+    python - <<'PY'
 from huggingface_hub import snapshot_download
-try:
-    print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
-    snapshot_download(
-        repo_id="ResembleAI/chatterbox",
-        revision="main",
-    )
-    print("✅ Pre-download complete.")
-except Exception as e:
-    print(f"⚠️ Pre-download failed: {e}")
-    print("ℹ️ Models will be downloaded at runtime via from_pretrained()")
-    sys.exit(0)  # Dont fail the build
+print("🔽 Pre-downloading ResembleAI/chatterbox (including all model assets)...")
+snapshot_download(
+    repo_id="ResembleAI/chatterbox",
+    revision="main",
+)
+print("✅ Pre-download complete.")
 PY
 
 # Pre-download NLTK data to avoid runtime issues
@@ -141,11 +129,11 @@ RUN echo "🔧 Pre-downloading NLTK data..." && \
     echo "✅ NLTK punkt tokenizer fully configured"
 
 # Copy TTS handler files
-COPY handlers/chatterbox/tts_handler.py /workspace/tts_handler.py
+COPY handlers/chatterbox/tts_handler.py /
 
 
 # Create required directories
-RUN mkdir -p /workspace/voice_profiles /workspace/tts_generated /workspace/temp_voice
+RUN mkdir -p /voice_profiles /tts_generated /temp_voice
 
 # Models are pre-downloaded into the image; runtime will use the baked cache
 
@@ -161,4 +149,4 @@ RUN echo "🔍 Final verification after all installations..." && \
 EXPOSE 8000
 
 # Set the entrypoint to the TTS handler directly
-CMD ["bash", "-lc", "set -euxo pipefail; python -X faulthandler -u /workspace/tts_handler.py"]
+CMD ["python3", "-u", "tts_handler.py"] 
