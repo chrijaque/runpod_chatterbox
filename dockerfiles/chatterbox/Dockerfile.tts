@@ -22,10 +22,13 @@ RUN git config --global --add safe.directory '*'
 # Copy requirements first for better caching
 COPY requirements/chatterbox.txt /requirements.txt
 
-# Step 4a: Clone the repository
-RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
+# Clone the repository and install
+RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    cd /workspace/chatterbox_embed && \
+    pip install -e /workspace/chatterbox_embed && \
+    python -c "import chatterbox; print('Step 4b: chatterbox_embed installed from:', chatterbox.__file__)"
 
-# Step 4b-1: Just try pip install
-RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed
+# Step 5: Install other requirements and RunPod SDK
+RUN pip install runpod>=1.5.0
 
-RUN echo "Step 4b-1: pip install completed"
+RUN echo "Step 5: RunPod SDK installed"
