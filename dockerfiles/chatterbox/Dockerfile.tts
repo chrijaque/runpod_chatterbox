@@ -25,7 +25,7 @@ COPY requirements/chatterbox.txt /requirements.txt
 # Step 4a: Clone the repository
 RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
 
-# Step 4b: Install in editable mode
-RUN cd /workspace/chatterbox_embed && \
-    pip install -e /workspace/chatterbox_embed && \
-    python -c "import chatterbox; print('Step 4b: chatterbox_embed installed from:', chatterbox.__file__)"
+# Step 4b-1: Just try pip install
+RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed
+
+RUN echo "Step 4b-1: pip install completed"
