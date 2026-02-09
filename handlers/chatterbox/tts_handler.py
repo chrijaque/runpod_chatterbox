@@ -42,6 +42,8 @@ def _ensure_cache_env_dirs():
             except Exception:
                 pass
 
+        # Set HuggingFace cache directories to use MODELS_ROOT (should be network volume)
+        # This ensures models download to persistent storage, not local disk
         os.environ.setdefault("HF_HOME", str(hf_root))
         os.environ.setdefault("HF_HUB_CACHE", str(hf_root / "hub"))
         os.environ.setdefault("TRANSFORMERS_CACHE", str(hf_root))
@@ -477,26 +479,47 @@ logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
 # Initialize models
 ensure_disk_headroom()
+
+# Check disk space before model initialization
+models_root = Path(os.getenv("MODELS_ROOT", "/models"))
+free_space_gb = _disk_free_bytes(str(models_root)) / (1024 ** 3)
+logger.info(f"💾 Disk space at {models_root}: {free_space_gb:.2f} GB free")
+
+if free_space_gb < 5:
+    logger.warning(f"⚠️ Low disk space ({free_space_gb:.2f} GB). Models require ~3-4 GB.")
+    logger.warning("💡 Tip: Mount a network volume and set MODELS_ROOT to the volume path (e.g., /runpod-volume/models)")
+    if models_root == Path("/models"):
+        logger.warning("💡 Current MODELS_ROOT is /models (local disk). Consider using a network volume.")
+
 logger.info("🔧 Initializing models...")
-try:
-    if FORKED_HANDLER_AVAILABLE:
-        # Initialize TTS model first (needed for s3gen)
+tts_model = None
+vc_model = None
+
+if FORKED_HANDLER_AVAILABLE:
+    # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
+    # Models are pre-downloaded during Docker build to /models/hf
+    # Initialize TTS model first (needed for s3gen)
+    try:
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxTTS ready")
-        
-        # Initialize VC model using the correct method
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ Failed to initialize TTS model: {error_msg}")
+        tts_model = None
+    
+    # Initialize VC model separately (allow TTS to work even if VC fails)
+    try:
         vc_model = ChatterboxVC.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxVC ready")
-        
-    else:
-        logger.error("❌ Forked repository models not available")
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ Failed to initialize VC model: {error_msg}")
+        logger.warning("⚠️ VC model unavailable, but TTS will continue to work")
         vc_model = None
-        tts_model = None
-        
-except Exception as e:
-    logger.error(f"❌ Failed to initialize models: {e}")
-    vc_model = None
+else:
+    logger.error("❌ Forked repository models not available")
     tts_model = None
+    vc_model = None
 
 # -------------------------------------------------------------------
 # 🐞  R2 credential debug helper (Firebase/HF are legacy)

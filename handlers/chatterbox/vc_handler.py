@@ -349,6 +349,9 @@ try:
     if FORKED_HANDLER_AVAILABLE:
         _device = _select_device()
         logger.info(f"Selected device: {_device}")
+        
+        # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
+        # Models are pre-downloaded during Docker build to /models/hf
         try:
             tts_model = ChatterboxTTS.from_pretrained(device=_device)
             logger.info("ChatterboxTTS ready")
@@ -362,6 +365,8 @@ try:
                 logger.info("Models initialized on CPU")
             except Exception as cpu_e:
                 logger.error(f"CPU fallback init failed: {cpu_e}")
+                vc_model = None
+                tts_model = None
                 vc_model = None
                 tts_model = None
     else:

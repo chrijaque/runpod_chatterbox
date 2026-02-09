@@ -40,6 +40,34 @@ RUN pip install torchvision --index-url https://download.pytorch.org/whl/cu121
 # Verify versions
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
 
+# Pre-download models from HuggingFace to the default cache location
+# This allows from_pretrained() to find cached models without downloading
+# Set up HuggingFace cache directories
+ENV HF_HOME=/models/hf
+ENV HF_HUB_CACHE=/models/hf/hub
+ENV TRANSFORMERS_CACHE=/models/hf
+RUN mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE"
+
+# Pre-download models to HuggingFace cache (same location VC uses)
+RUN python - <<'PY'
+import sys
+from huggingface_hub import snapshot_download
+import os
+try:
+    cache_dir = os.getenv("HF_HOME", "/models/hf")
+    print(f"🔽 Pre-downloading ResembleAI/chatterbox models to {cache_dir}...")
+    snapshot_download(
+        repo_id="ResembleAI/chatterbox",
+        revision="main",
+        cache_dir=cache_dir,
+    )
+    print("✅ Models pre-downloaded successfully to HuggingFace cache")
+except Exception as e:
+    print(f"❌ Pre-download failed: {e}")
+    print("💡 Models must be downloaded during Docker build")
+    sys.exit(1)  # Fail the build if download fails
+PY
+
 # Skip chatterbox import test - will work at runtime
 RUN pip show chatterbox-tts || echo "Package check skipped"
 

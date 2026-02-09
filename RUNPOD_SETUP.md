@@ -48,6 +48,7 @@ Before deploying, set up your environment variables as RunPod secrets:
    - **GPU Type**: `RTX 4090`
    - **Container Disk**: `50 GB`
    - **Volume Size**: `100 GB`
+   - **Volume Mount Path**: `/runpod-volume` (IMPORTANT: Network volume for model storage)
    
    **Environment Variables:**
    Add these environment variables (reference your secrets):
@@ -59,6 +60,7 @@ Before deploying, set up your environment variables as RunPod secrets:
    - `R2_ENDPOINT` = `{{ RUNPOD_SECRET_R2_ENDPOINT }}`
    - `R2_BUCKET_NAME` = `{{ RUNPOD_SECRET_R2_BUCKET_NAME }}`
    - `NEXT_PUBLIC_R2_PUBLIC_URL` = `{{ RUNPOD_SECRET_NEXT_PUBLIC_R2_PUBLIC_URL }}`
+   - `MODELS_ROOT` = `/runpod-volume/models` (IMPORTANT: Points to network volume for model cache)
    
    **Ports:**
    - Port `8000` (HTTP)
@@ -147,6 +149,15 @@ export LLM_CB_ENDPOINT_ID="your-llm-endpoint-id"  # if using LLM
 - Verify port 8000 is exposed
 - Check endpoint logs in RunPod console
 - Ensure environment variables are correctly set
+
+### "No space left on device" or Disk Space Errors
+- **Root Cause**: Models are downloading to local disk instead of network volume
+- **Solution**:
+  1. Ensure network volume is mounted: Set **Volume Mount Path** to `/runpod-volume` in endpoint settings
+  2. Set `MODELS_ROOT` environment variable to `/runpod-volume/models`
+  3. Ensure volume size is at least 100 GB (models require ~3-4 GB each)
+  4. Verify volume is mounted by checking logs for disk space warnings
+- **Note**: Network volumes persist across cold starts, reducing download time and avoiding disk space issues
 
 ### Environment Variables Not Working
 - Verify secrets are created in RunPod console
