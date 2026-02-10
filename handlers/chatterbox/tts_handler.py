@@ -440,6 +440,17 @@ except ImportError as e:
         logger.error("Storage utilities not available - download_from_r2 not implemented")
         return None
 
+# Import text sanitizer for early validation (lightweight, no model dependencies)
+try:
+    from chatterbox.chunking import AdvancedTextSanitizer
+    TEXT_SANITIZER_AVAILABLE = True
+    text_sanitizer = AdvancedTextSanitizer()
+    logger.info("✅ Successfully imported AdvancedTextSanitizer for text validation")
+except ImportError as e:
+    TEXT_SANITIZER_AVAILABLE = False
+    text_sanitizer = None
+    logger.warning(f"⚠️ Could not import AdvancedTextSanitizer: {e}")
+
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
@@ -909,6 +920,60 @@ def handler(event, responseFormat="base64"):
     api_metadata = event["input"].get("metadata", {})
     profile_path = event["input"].get("profile_path") or (api_metadata.get("profile_path") if isinstance(api_metadata, dict) else None)
     callback_url = api_metadata.get("callback_url") or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
+    
+    # Early validation: Check for disallowed characters BEFORE model initialization
+    # This prevents wasting resources on invalid text
+    if TEXT_SANITIZER_AVAILABLE and text_sanitizer and text:
+        is_valid, error_message, disallowed_chars = text_sanitizer.validate_text_for_language(text, language)
+        if not is_valid:
+            logger.warning(f"❌ Text validation failed for language '{language}': {error_message}")
+            logger.warning(f"❌ Disallowed characters: {disallowed_chars}")
+            
+            # Send error callback if callback_url is available
+            try:
+                if callback_url:
+                    # Extract story_id and user_id for error callback
+                    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
+                    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+                    voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
+                    
+                    # Construct error callback URL
+                    if "/api/tts/callback" in callback_url:
+                        error_callback_url = callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
+                    elif "/api/tts/" in callback_url:
+                        error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
+                    else:
+                        base_url = callback_url.rstrip("/")
+                        error_callback_url = f"{base_url}/error-callback"
+                    
+                    # Send error callback
+                    notify_error_callback(
+                        error_callback_url=error_callback_url,
+                        story_id=story_id or "unknown",
+                        error_message=error_message,
+                        error_details=f"Text contains characters not supported for language '{language}'. Disallowed characters: {', '.join(repr(c) for c in disallowed_chars[:10])}",
+                        user_id=user_id,
+                        voice_id=voice_id,
+                        job_id=event.get("id"),
+                        metadata={
+                            "language": language,
+                            "story_type": story_type,
+                            "text_length": len(text) if text else 0,
+                            "disallowed_chars": disallowed_chars[:10],  # Limit to first 10
+                            "error_type": "text_validation_error"
+                        }
+                    )
+            except Exception as callback_error:
+                logger.error(f"❌ Failed to send error callback: {callback_error}")
+            
+            return _return_with_cleanup({
+                "status": "error",
+                "error": error_message,
+                "error_type": "text_validation_error",
+                "disallowed_characters": disallowed_chars[:20]  # Return first 20 for debugging
+            })
+        else:
+            logger.info(f"✅ Text validation passed for language '{language}'")
     
     # Debug: Log callback_url immediately after extraction
     logger.info(f"🔍 EXTRACTED callback_url: {callback_url}")

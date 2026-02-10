@@ -15,6 +15,7 @@ R2_ENDPOINT = "{{ R2_ENDPOINT }}"
 R2_BUCKET_NAME = "{{ R2_BUCKET_NAME }}"
 NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
 MODELS_ROOT = "/runpod-volume/models"  # Use network volume for model cache (persistent across cold starts)
+CHATTERBOX_ENABLE_QUALITY_ANALYSIS = "false"  # QA disabled by default (set to "true" to enable)
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.tts"
@@ -39,5 +40,6 @@ envs = [
     "R2_BUCKET_NAME",
     "NEXT_PUBLIC_R2_PUBLIC_URL",
     "MODELS_ROOT",  # Points to network volume for model cache
+    "CHATTERBOX_ENABLE_QUALITY_ANALYSIS",  # QA control (default: disabled)
 ]
 
