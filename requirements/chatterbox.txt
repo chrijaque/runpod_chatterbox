@@ -21,6 +21,9 @@ pydantic>=2.5.0
 # Storage
 # R2 is used via S3-compatible APIs (boto3 is provided by the chatterbox_embed package / handler runtime).
 
+# Firestore (required by chatterbox_embed r2_storage.init_firestore_client for VC handler)
+google-cloud-firestore>=2.13.0
+
 # CORS and additional utilities
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
