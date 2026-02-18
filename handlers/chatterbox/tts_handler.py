@@ -25,6 +25,60 @@ logger.setLevel(_LOG_LEVEL)
 
 """Minimal, production-focused TTS handler for RunPod runtime."""
 
+EXPERIMENT_ENV_KEYS = (
+    "VERBOSE_LOGS",
+    "CHATTERBOX_EXPERIMENT_MODE",
+    "CHATTERBOX_EXPERIMENT_NAME",
+    "CHATTERBOX_EXPERIMENT_ISSUE_ONLY_MODE",
+    "CHATTERBOX_EXPERIMENT_ENABLE_TOKEN_GUARDS",
+    "CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE",
+    "CHATTERBOX_EXPERIMENT_ENABLE_QA_REGEN",
+    "CHATTERBOX_EXPERIMENT_ENABLE_RETRY_PARAM_DRIFT",
+    "CHATTERBOX_EXPERIMENT_ENABLE_ADAPTIVE_VOICE_PARAMS",
+    "CHATTERBOX_EXPERIMENT_FORCE_ADAPTIVE_BLEND",
+    "CHATTERBOX_EXPERIMENT_VERBOSE_CHUNK_LOGS",
+    "CHATTERBOX_QA_REGEN_MODE",
+    "CHATTERBOX_ENABLE_QUALITY_ANALYSIS",
+    "CHATTERBOX_FAIL_ON_BAD_CHUNK",
+    "CHATTERBOX_CHUNK_REGEN_ATTEMPTS",
+)
+
+
+def _experiment_env_snapshot() -> dict:
+    """Collect experiment-related env vars from THIS worker process."""
+    return {k: os.getenv(k, "<unset>") for k in EXPERIMENT_ENV_KEYS}
+
+
+def _log_worker_experiment_context(context: str, *, api_metadata: Optional[dict] = None, input_payload: Optional[dict] = None) -> None:
+    """
+    High-signal diagnostics for experiment mode.
+    Uses warning level so logs are visible even when VERBOSE_LOGS=false.
+    """
+    try:
+        env_snapshot = _experiment_env_snapshot()
+        logger.warning("🧪 [%s] Worker experiment env snapshot: %s", context, env_snapshot)
+        logger.warning("🧪 [%s] Worker logger level=%s (VERBOSE_LOGS=%s)", context, logging.getLevelName(logger.level), os.getenv("VERBOSE_LOGS", "<unset>"))
+        if isinstance(input_payload, dict):
+            logger.warning(
+                "🧪 [%s] Input experiment hints: mode=%s name=%s issue_only=%s qa_mode=%s",
+                context,
+                input_payload.get("CHATTERBOX_EXPERIMENT_MODE"),
+                input_payload.get("CHATTERBOX_EXPERIMENT_NAME"),
+                input_payload.get("CHATTERBOX_EXPERIMENT_ISSUE_ONLY_MODE"),
+                input_payload.get("CHATTERBOX_QA_REGEN_MODE"),
+            )
+        if isinstance(api_metadata, dict):
+            logger.warning(
+                "🧪 [%s] Metadata experiment hints: mode=%s name=%s issue_only=%s qa_mode=%s",
+                context,
+                api_metadata.get("CHATTERBOX_EXPERIMENT_MODE"),
+                api_metadata.get("CHATTERBOX_EXPERIMENT_NAME"),
+                api_metadata.get("CHATTERBOX_EXPERIMENT_ISSUE_ONLY_MODE"),
+                api_metadata.get("CHATTERBOX_QA_REGEN_MODE"),
+            )
+    except Exception as e:
+        logger.warning("🧪 [%s] Failed to log worker experiment context: %s", context, e)
+
 # ---------------------------------------------------------------------------------
 # Disk/cache management: centralize caches and provide cleanup + headroom checks
 # ---------------------------------------------------------------------------------
@@ -728,6 +782,11 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
         user_id = api_metadata.get("user_id") if isinstance(api_metadata, dict) else ""
     if not story_id:
         story_id = api_metadata.get("story_id") if isinstance(api_metadata, dict) else ""
+
+    _log_worker_experiment_context(
+        "call_tts_model_generate_tts_story",
+        api_metadata=api_metadata if isinstance(api_metadata, dict) else None,
+    )
     
     # Extract genre from metadata to determine TTS parameters
     # Check multiple possible keys and locations
@@ -781,6 +840,19 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
         cfg_weight = 0.5  # Explicit default CFG weight for non-erotic stories
         pause_scale = 1.15  # Default pause scale
         adaptive_voice_param_blend = 1.0
+
+    logger.warning(
+        "🧪 Effective TTS params before model call | voice_id=%s story_id=%s genre=%s erotic=%s temp=%s exag=%s cfg=%s pause_scale=%s adaptive_blend=%s",
+        voice_id,
+        story_id,
+        genre,
+        is_erotic,
+        temperature if temperature is not None else "default",
+        exaggeration if exaggeration is not None else "default",
+        cfg_weight,
+        pause_scale,
+        adaptive_voice_param_blend,
+    )
     
     logger.info(f"🎯 ===== CALLING TTS GENERATION =====")
     logger.info(f"🔍 Parameters:")
@@ -838,6 +910,14 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
                     adaptive_voice_param_blend=adaptive_voice_param_blend,
                 )
                 generation_time = time.time() - start_time
+                if isinstance(result, dict):
+                    logger.warning(
+                        "🧪 TTS model result summary | status=%s generation_time=%.2fs has_metadata=%s output_path=%s",
+                        result.get("status"),
+                        generation_time,
+                        "metadata" in result,
+                        (result.get("output_path") or result.get("storage_path") or result.get("r2_path") or ""),
+                    )
                 logger.info(f"✅ TTS generation completed in {generation_time:.2f}s")
                 return result
             except Exception as method_error:
@@ -918,6 +998,11 @@ def handler(event, responseFormat="base64"):
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
+    _log_worker_experiment_context(
+        "handler",
+        api_metadata=api_metadata if isinstance(api_metadata, dict) else None,
+        input_payload=event["input"] if isinstance(event.get("input"), dict) else None,
+    )
     profile_path = event["input"].get("profile_path") or (api_metadata.get("profile_path") if isinstance(api_metadata, dict) else None)
     callback_url = api_metadata.get("callback_url") or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
     

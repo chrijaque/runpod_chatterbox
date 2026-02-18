@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from typing import List
 import logging
+import os
 from ..services.runpod_client import RunPodClient
 from ..services.firebase import FirebaseService
 from ..models.schemas import (
@@ -17,6 +18,31 @@ from ..middleware.security import verify_hmac
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+EXPERIMENT_ENV_KEYS = (
+    "CHATTERBOX_EXPERIMENT_MODE",
+    "CHATTERBOX_EXPERIMENT_NAME",
+    "CHATTERBOX_EXPERIMENT_ISSUE_ONLY_MODE",
+    "CHATTERBOX_EXPERIMENT_ENABLE_TOKEN_GUARDS",
+    "CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE",
+    "CHATTERBOX_EXPERIMENT_ENABLE_QA_REGEN",
+    "CHATTERBOX_EXPERIMENT_ENABLE_RETRY_PARAM_DRIFT",
+    "CHATTERBOX_EXPERIMENT_ENABLE_ADAPTIVE_VOICE_PARAMS",
+    "CHATTERBOX_EXPERIMENT_FORCE_ADAPTIVE_BLEND",
+    "CHATTERBOX_EXPERIMENT_VERBOSE_CHUNK_LOGS",
+    "CHATTERBOX_QA_REGEN_MODE",
+    "CHATTERBOX_ENABLE_QUALITY_ANALYSIS",
+    "CHATTERBOX_FAIL_ON_BAD_CHUNK",
+    "CHATTERBOX_CHUNK_REGEN_ATTEMPTS",
+)
+
+
+def _read_experiment_env_snapshot() -> dict:
+    """
+    Capture experiment-related env vars from THIS API process.
+    Important: worker pods may have different env than this API container.
+    """
+    return {k: os.getenv(k, "<unset>") for k in EXPERIMENT_ENV_KEYS}
 
 # Initialize services
 runpod_client = RunPodClient(
@@ -141,6 +167,18 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
     Generate TTS using a voice profile.
     """
     try:
+        request_id = (
+            http_req.headers.get("x-request-id")
+            or http_req.headers.get("x-correlation-id")
+            or f"{request.user_id}:{request.story_id}"
+        )
+        experiment_env = _read_experiment_env_snapshot()
+        logger.info("🧪 TTS request id: %s", request_id)
+        logger.info("🧪 API experiment env snapshot: %s", experiment_env)
+        logger.warning(
+            "🧪 Experiment note: snapshot is from API process env only; RunPod worker env may differ."
+        )
+
         logger.info(f"📖 TTS generation request received for voice: {request.voice_id}")
         logger.info(f"📊 Request details: language={request.language}, story_type={request.story_type}, kids_voice={request.is_kids_voice}")
         try:
@@ -170,6 +208,16 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
                 default_cb = "https://runpod-chatterbox.fly.dev/api/tts/callback"
                 logger.warning("⚠️ MINSTRALY_CALLBACK_BASE_URL not set, using hardcoded fallback URL")
 
+            effective_callback_url = request.callback_url or default_cb
+            logger.info(
+                "🧪 TTS dispatch context | request_id=%s endpoint_id=%s callback_url=%s profile_path=%s b64_len=%s",
+                request_id,
+                runpod_client.tts_endpoint_id,
+                effective_callback_url,
+                request.profile_path or "",
+                len(request.profile_base64 or ""),
+            )
+
             result = runpod_client.generate_tts_with_context(
                 voice_id=request.voice_id,
                 text=request.text,
@@ -181,7 +229,7 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
                 user_id=request.user_id,
                 story_id=request.story_id,
                 profile_path=request.profile_path,
-                callback_url=(request.callback_url or default_cb),
+                callback_url=effective_callback_url,
                 story_name=getattr(request, 'story_name', None),
                 output_basename=getattr(request, 'output_basename', None),
                 voice_name=getattr(request, 'voice_name', None),
@@ -197,6 +245,12 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
         if isinstance(result, dict):
             logger.info(f"🔍 Response status: {result.get('status', 'No status')}")
             logger.info(f"🔍 Response message: {result.get('message', 'No message')}")
+            logger.info(
+                "🧪 TTS response context | request_id=%s runpod_status=%s runpod_job_id=%s",
+                request_id,
+                result.get("status", "unknown"),
+                result.get("id", ""),
+            )
         
         # Check for error status first
         if result.get("status") == "error":
