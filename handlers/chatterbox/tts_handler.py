@@ -235,6 +235,9 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     os.getenv("CHATTERBOX_EXPERIMENT_MAX_INTERNAL_SILENCE_SEC", "1.0")
                 )
                 has_internal_silence = longest_internal_silence_sec >= max_internal_silence_sec
+                fail_on_internal_silence = _env_true(
+                    "CHATTERBOX_EXPERIMENT_FAIL_ON_INTERNAL_SILENCE", False
+                )
 
                 logger.warning(
                     "🧪 Vocoder diagnostics | token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s "
@@ -254,12 +257,20 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     max_internal_silence_sec,
                 )
 
+                if has_internal_silence:
+                    logger.warning(
+                        "🧪 Vocoder internal silence detected | longest_internal_silence=%.2fs threshold=%.2fs action=%s",
+                        longest_internal_silence_sec,
+                        max_internal_silence_sec,
+                        "fail" if fail_on_internal_silence else "log_only",
+                    )
+
                 if _env_true("CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE", False):
                     if is_silent:
                         raise RuntimeError(
                             f"Vocoder produced silent output (samples={samples}, peak={peak:.3e}, rms={rms:.3e})"
                         )
-                    if has_internal_silence:
+                    if has_internal_silence and fail_on_internal_silence:
                         raise RuntimeError(
                             "Vocoder produced long internal silence "
                             f"(longest_internal_silence={longest_internal_silence_sec:.2f}s >= {max_internal_silence_sec:.2f}s)"
