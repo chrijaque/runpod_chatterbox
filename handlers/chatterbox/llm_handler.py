@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 import tempfile
 
-# Firebase Admin SDK (Firestore is still used for status)
+# Firebase Admin (Firestore is still used for status)
 try:
     import firebase_admin
     from firebase_admin import credentials, firestore
