@@ -11,6 +11,7 @@ import requests
 import hmac
 import hashlib
 import inspect
+import random
 from urllib.parse import urlparse, urlunparse
 import json
 from pathlib import Path
@@ -88,6 +89,16 @@ def _env_true(key: str, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_int(key: str, default: int) -> int:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    try:
+        return int(str(raw).strip())
+    except Exception:
+        return default
+
+
 def _patch_t3_inference_diagnostics(model) -> None:
     """
     Runtime safety net: ensure experiment logs and progress suppression even if
@@ -134,6 +145,75 @@ def _patch_t3_inference_diagnostics(model) -> None:
         logger.warning("🧪 Failed to install T3 inference diagnostics wrapper: %s", e)
 
 
+def _patch_chunk_context_tracking(model) -> None:
+    """
+    Track current chunk text/id around _generate_with_prepared_conditionals so
+    downstream wrappers (e.g., vocoder diagnostics) can attribute failures to
+    specific chunk text spans.
+    """
+    try:
+        if not model or not hasattr(model, "_generate_with_prepared_conditionals"):
+            return
+        original = model._generate_with_prepared_conditionals
+        if getattr(original, "_minstraly_chunk_ctx_wrapped", False):
+            return
+
+        def _wrapped_generate_with_ctx(*args, **kwargs):
+            text = kwargs.get("text")
+            if text is None and len(args) >= 1:
+                text = args[0]
+            diagnostics_chunk_id = kwargs.get("diagnostics_chunk_id")
+
+            chunk_ctx = {
+                "chunk_id": diagnostics_chunk_id,
+                "text_len": len(text) if isinstance(text, str) else -1,
+                "text_preview": (text[:220] if isinstance(text, str) else ""),
+                "text_full": (text if isinstance(text, str) else ""),
+            }
+            setattr(model, "_minstraly_chunk_ctx", chunk_ctx)
+
+            # Optional deterministic mode for reproducible debugging.
+            fixed_seed = os.getenv("CHATTERBOX_EXPERIMENT_FIXED_SEED")
+            if fixed_seed not in (None, ""):
+                base_seed = _env_int("CHATTERBOX_EXPERIMENT_FIXED_SEED", 1337)
+                chunk_offset = diagnostics_chunk_id if isinstance(diagnostics_chunk_id, int) else 0
+                seed = base_seed + int(chunk_offset)
+                try:
+                    import torch
+                    torch.manual_seed(seed)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed_all(seed)
+                except Exception:
+                    pass
+                try:
+                    random.seed(seed)
+                except Exception:
+                    pass
+                try:
+                    import numpy as _np
+                    _np.random.seed(seed)
+                except Exception:
+                    pass
+                logger.warning(
+                    "🧪 Fixed-seed applied | base=%s chunk_offset=%s seed=%s chunk_id=%s",
+                    base_seed,
+                    chunk_offset,
+                    seed,
+                    diagnostics_chunk_id,
+                )
+
+            try:
+                return original(*args, **kwargs)
+            finally:
+                setattr(model, "_minstraly_chunk_ctx", None)
+
+        _wrapped_generate_with_ctx._minstraly_chunk_ctx_wrapped = True
+        model._generate_with_prepared_conditionals = _wrapped_generate_with_ctx
+        logger.warning("🧪 Installed chunk-context tracking wrapper")
+    except Exception as e:
+        logger.warning("🧪 Failed to install chunk-context tracking wrapper: %s", e)
+
+
 def _patch_s3_inference_diagnostics(model) -> None:
     """
     Runtime wrapper for vocoder output diagnostics.
@@ -157,12 +237,24 @@ def _patch_s3_inference_diagnostics(model) -> None:
 
             wav = result[0] if isinstance(result, tuple) and len(result) > 0 else result
             token_count = -1
+            chunk_id = None
+            text_len = -1
+            text_preview = ""
+            text_full = ""
             try:
                 speech_tokens = kwargs.get("speech_tokens")
                 if speech_tokens is not None and hasattr(speech_tokens, "numel"):
                     token_count = int(speech_tokens.numel())
             except Exception:
                 token_count = -1
+            try:
+                ctx = getattr(model, "_minstraly_chunk_ctx", None) or {}
+                chunk_id = ctx.get("chunk_id")
+                text_len = int(ctx.get("text_len", -1))
+                text_preview = str(ctx.get("text_preview", ""))
+                text_full = str(ctx.get("text_full", ""))
+            except Exception:
+                pass
 
             try:
                 import torch
@@ -228,6 +320,43 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     longest_internal_frames = _longest_run(internal_mask)
                     longest_internal_silence_sec = float(longest_internal_frames * frame_hop_seconds)
 
+                    # Extract first internal silence segment for attribution.
+                    def _first_run_bounds(seq):
+                        in_run = False
+                        start = 0
+                        for idx, v in enumerate(seq):
+                            if v and not in_run:
+                                start = idx
+                                in_run = True
+                            elif not v and in_run:
+                                return start, idx
+                        if in_run:
+                            return start, len(seq)
+                        return None
+
+                    first_internal = _first_run_bounds(internal_mask)
+                    first_internal_start_sec = -1.0
+                    first_internal_end_sec = -1.0
+                    approx_char_idx = -1
+                    approx_text_window = ""
+                    if first_internal:
+                        first_internal_start_sec = float(first_internal[0] * frame_hop_seconds)
+                        first_internal_end_sec = float(first_internal[1] * frame_hop_seconds)
+                        if text_len > 0 and samples > 0:
+                            duration_sec = samples / float(sr)
+                            if duration_sec > 0:
+                                approx_char_idx = int((first_internal_start_sec / duration_sec) * text_len)
+                                approx_char_idx = max(0, min(text_len - 1, approx_char_idx))
+                                if text_full:
+                                    lo = max(0, approx_char_idx - 120)
+                                    hi = min(len(text_full), approx_char_idx + 120)
+                                    approx_text_window = text_full[lo:hi]
+                    else:
+                        first_internal_start_sec = -1.0
+                        first_internal_end_sec = -1.0
+                        approx_char_idx = -1
+                        approx_text_window = ""
+
                 silence_peak_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_PEAK_THRESHOLD", "1e-6"))
                 silence_rms_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_RMS_THRESHOLD", "1e-7"))
                 is_silent = (samples == 0) or (peak < silence_peak_threshold and rms < silence_rms_threshold)
@@ -240,9 +369,10 @@ def _patch_s3_inference_diagnostics(model) -> None:
                 )
 
                 logger.warning(
-                    "🧪 Vocoder diagnostics | token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s "
+                    "🧪 Vocoder diagnostics | chunk_id=%s token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s "
                     "silence_ratio=%.3f longest_silence=%.2fs longest_internal_silence=%.2fs "
                     "thresholds=(peak<%.1e,rms<%.1e,frame_rms<%.1e,internal>=%.2fs)",
+                    chunk_id,
                     token_count,
                     samples,
                     peak,
@@ -256,6 +386,17 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     frame_silence_threshold,
                     max_internal_silence_sec,
                 )
+                if text_preview:
+                    logger.warning("🧪 Chunk text preview | chunk_id=%s text_len=%s preview=%s", chunk_id, text_len, text_preview)
+                if first_internal_start_sec >= 0:
+                    logger.warning(
+                        "🧪 Internal silence attribution | chunk_id=%s first_internal_start=%.2fs first_internal_end=%.2fs approx_char_idx=%s approx_text_window=%s",
+                        chunk_id,
+                        first_internal_start_sec,
+                        first_internal_end_sec,
+                        approx_char_idx,
+                        approx_text_window,
+                    )
 
                 if has_internal_silence:
                     logger.warning(
@@ -781,6 +922,7 @@ if FORKED_HANDLER_AVAILABLE:
             logger.warning("🧪 Loaded chatterbox.tts from: %s", getattr(_tts_mod, "__file__", "<unknown>"))
         except Exception:
             pass
+        _patch_chunk_context_tracking(tts_model)
         _patch_t3_inference_diagnostics(tts_model)
         _patch_s3_inference_diagnostics(tts_model)
     except Exception as e:
@@ -992,6 +1134,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     Uses the TTS model's generate method for text-to-speech generation.
     """
     global tts_model
+    _patch_chunk_context_tracking(tts_model)
     _patch_t3_inference_diagnostics(tts_model)
     _patch_s3_inference_diagnostics(tts_model)
     
