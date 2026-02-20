@@ -133,6 +133,82 @@ def _patch_t3_inference_diagnostics(model) -> None:
     except Exception as e:
         logger.warning("🧪 Failed to install T3 inference diagnostics wrapper: %s", e)
 
+
+def _patch_s3_inference_diagnostics(model) -> None:
+    """
+    Runtime wrapper for vocoder output diagnostics.
+    Logs peak/RMS and can hard-fail on effectively silent output to prove/deny
+    the vocoder-silence theory with hard evidence.
+    """
+    try:
+        if not model or not hasattr(model, "s3gen") or not hasattr(model.s3gen, "inference"):
+            return
+        if getattr(model.s3gen.inference, "_minstraly_s3_exp_wrapped", False):
+            return
+
+        original_inference = model.s3gen.inference
+
+        def _wrapped_s3_inference(*args, **kwargs):
+            result = original_inference(*args, **kwargs)
+
+            experiment_on = _env_true("CHATTERBOX_EXPERIMENT_MODE", False)
+            if not experiment_on:
+                return result
+
+            wav = result[0] if isinstance(result, tuple) and len(result) > 0 else result
+            token_count = -1
+            try:
+                speech_tokens = kwargs.get("speech_tokens")
+                if speech_tokens is not None and hasattr(speech_tokens, "numel"):
+                    token_count = int(speech_tokens.numel())
+            except Exception:
+                token_count = -1
+
+            try:
+                import torch
+
+                if wav is None or not hasattr(wav, "numel") or int(wav.numel()) == 0:
+                    samples = 0
+                    peak = 0.0
+                    rms = 0.0
+                else:
+                    wav_detached = wav.detach()
+                    samples = int(wav_detached.numel())
+                    peak = float(torch.max(torch.abs(wav_detached)).item()) if samples else 0.0
+                    rms = float(torch.sqrt(torch.mean(wav_detached.float() ** 2)).item()) if samples else 0.0
+
+                silence_peak_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_PEAK_THRESHOLD", "1e-6"))
+                silence_rms_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_RMS_THRESHOLD", "1e-7"))
+                is_silent = (samples == 0) or (peak < silence_peak_threshold and rms < silence_rms_threshold)
+
+                logger.warning(
+                    "🧪 Vocoder diagnostics | token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s thresholds=(peak<%.1e,rms<%.1e)",
+                    token_count,
+                    samples,
+                    peak,
+                    rms,
+                    is_silent,
+                    silence_peak_threshold,
+                    silence_rms_threshold,
+                )
+
+                if _env_true("CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE", False) and is_silent:
+                    raise RuntimeError(
+                        f"Vocoder produced silent output (samples={samples}, peak={peak:.3e}, rms={rms:.3e})"
+                    )
+            except Exception as diag_e:
+                if isinstance(diag_e, RuntimeError):
+                    raise
+                logger.warning("🧪 Vocoder diagnostics failed: %s", diag_e)
+
+            return result
+
+        _wrapped_s3_inference._minstraly_s3_exp_wrapped = True
+        model.s3gen.inference = _wrapped_s3_inference
+        logger.warning("🧪 Installed S3/vocoder diagnostics wrapper")
+    except Exception as e:
+        logger.warning("🧪 Failed to install S3/vocoder diagnostics wrapper: %s", e)
+
 # ---------------------------------------------------------------------------------
 # Disk/cache management: centralize caches and provide cleanup + headroom checks
 # ---------------------------------------------------------------------------------
@@ -627,6 +703,7 @@ if FORKED_HANDLER_AVAILABLE:
         except Exception:
             pass
         _patch_t3_inference_diagnostics(tts_model)
+        _patch_s3_inference_diagnostics(tts_model)
     except Exception as e:
         error_msg = str(e)
         logger.error(f"❌ Failed to initialize TTS model: {error_msg}")
@@ -837,6 +914,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     """
     global tts_model
     _patch_t3_inference_diagnostics(tts_model)
+    _patch_s3_inference_diagnostics(tts_model)
     
     # Extract user_id and story_id from metadata if not provided explicitly
     if not user_id:
