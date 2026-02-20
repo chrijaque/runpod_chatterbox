@@ -10,6 +10,7 @@ import shutil
 import requests
 import hmac
 import hashlib
+import inspect
 from urllib.parse import urlparse, urlunparse
 import json
 from pathlib import Path
@@ -78,6 +79,59 @@ def _log_worker_experiment_context(context: str, *, api_metadata: Optional[dict]
             )
     except Exception as e:
         logger.warning("🧪 [%s] Failed to log worker experiment context: %s", context, e)
+
+
+def _env_true(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _patch_t3_inference_diagnostics(model) -> None:
+    """
+    Runtime safety net: ensure experiment logs and progress suppression even if
+    the packaged chatterbox.tts version is older than expected.
+    """
+    try:
+        if not model or not hasattr(model, "t3") or not hasattr(model.t3, "inference"):
+            return
+        if getattr(model.t3.inference, "_minstraly_exp_wrapped", False):
+            return
+
+        original_inference = model.t3.inference
+
+        def _wrapped_inference(*args, **kwargs):
+            experiment_on = _env_true("CHATTERBOX_EXPERIMENT_MODE", False)
+            if experiment_on:
+                show_progress = _env_true("CHATTERBOX_EXPERIMENT_SHOW_SAMPLING_PROGRESS", False)
+                kwargs["show_progress"] = show_progress
+                logger.warning(
+                    "🧪 T3 inference call | forced_show_progress=%s max_new_tokens=%s",
+                    show_progress,
+                    kwargs.get("max_new_tokens"),
+                )
+
+            result = original_inference(*args, **kwargs)
+
+            if experiment_on:
+                try:
+                    shape = getattr(result, "shape", None)
+                    seq_len = int(shape[-1]) if shape is not None and len(shape) >= 1 else -1
+                    logger.warning(
+                        "🧪 T3 raw token output | shape=%s seq_len=%s",
+                        tuple(shape) if shape is not None else None,
+                        seq_len,
+                    )
+                except Exception as diag_e:
+                    logger.warning("🧪 T3 raw token diagnostics failed: %s", diag_e)
+            return result
+
+        _wrapped_inference._minstraly_exp_wrapped = True
+        model.t3.inference = _wrapped_inference
+        logger.warning("🧪 Installed T3 inference diagnostics wrapper")
+    except Exception as e:
+        logger.warning("🧪 Failed to install T3 inference diagnostics wrapper: %s", e)
 
 # ---------------------------------------------------------------------------------
 # Disk/cache management: centralize caches and provide cleanup + headroom checks
@@ -567,6 +621,12 @@ if FORKED_HANDLER_AVAILABLE:
     try:
         tts_model = ChatterboxTTS.from_pretrained(device='cuda')
         logger.info("✅ ChatterboxTTS ready")
+        try:
+            import chatterbox.tts as _tts_mod
+            logger.warning("🧪 Loaded chatterbox.tts from: %s", getattr(_tts_mod, "__file__", "<unknown>"))
+        except Exception:
+            pass
+        _patch_t3_inference_diagnostics(tts_model)
     except Exception as e:
         error_msg = str(e)
         logger.error(f"❌ Failed to initialize TTS model: {error_msg}")
@@ -776,6 +836,7 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
     Uses the TTS model's generate method for text-to-speech generation.
     """
     global tts_model
+    _patch_t3_inference_diagnostics(tts_model)
     
     # Extract user_id and story_id from metadata if not provided explicitly
     if not user_id:
@@ -787,6 +848,11 @@ def call_tts_model_generate_tts_story(text, voice_id, profile_base64, language, 
         "call_tts_model_generate_tts_story",
         api_metadata=api_metadata if isinstance(api_metadata, dict) else None,
     )
+    if hasattr(tts_model, "experiment_config"):
+        try:
+            logger.warning("🧪 Runtime tts_model.experiment_config (pre-call): %s", getattr(tts_model, "experiment_config", {}))
+        except Exception:
+            pass
     
     # Extract genre from metadata to determine TTS parameters
     # Check multiple possible keys and locations
