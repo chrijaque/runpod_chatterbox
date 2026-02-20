@@ -171,31 +171,99 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     samples = 0
                     peak = 0.0
                     rms = 0.0
+                    silence_ratio = 1.0
+                    longest_silence_sec = 0.0
+                    longest_internal_silence_sec = 0.0
                 else:
                     wav_detached = wav.detach()
                     samples = int(wav_detached.numel())
                     peak = float(torch.max(torch.abs(wav_detached)).item()) if samples else 0.0
                     rms = float(torch.sqrt(torch.mean(wav_detached.float() ** 2)).item()) if samples else 0.0
 
+                    # Intra-chunk silence analysis catches "mid-chunk silent spans"
+                    # that global peak/RMS cannot detect.
+                    wav_flat = wav_detached.float().reshape(-1)
+                    sr = int(getattr(model, "sr", 24000))
+                    win = max(1, int(sr * 0.025))  # 25ms
+                    hop = max(1, int(sr * 0.010))  # 10ms
+                    if int(wav_flat.numel()) >= win:
+                        frames = wav_flat.unfold(0, win, hop)
+                        frame_rms = torch.sqrt(torch.mean(frames * frames, dim=1) + 1e-12)
+                    else:
+                        frame_rms = torch.sqrt(torch.mean(wav_flat * wav_flat) + 1e-12).reshape(1)
+
+                    frame_silence_threshold = float(
+                        os.getenv("CHATTERBOX_EXPERIMENT_FRAME_SILENCE_RMS_THRESHOLD", "5e-4")
+                    )
+                    silence_mask = frame_rms < frame_silence_threshold
+                    silence_ratio = float(silence_mask.float().mean().item()) if int(silence_mask.numel()) else 0.0
+
+                    mask_list = silence_mask.tolist() if hasattr(silence_mask, "tolist") else []
+
+                    def _longest_run(seq):
+                        best = 0
+                        cur = 0
+                        for v in seq:
+                            if v:
+                                cur += 1
+                                if cur > best:
+                                    best = cur
+                            else:
+                                cur = 0
+                        return best
+
+                    longest_run_frames = _longest_run(mask_list)
+                    frame_hop_seconds = hop / float(sr)
+                    longest_silence_sec = float(longest_run_frames * frame_hop_seconds)
+
+                    edge_guard_seconds = float(
+                        os.getenv("CHATTERBOX_EXPERIMENT_INTERNAL_SILENCE_EDGE_GUARD_SEC", "0.25")
+                    )
+                    guard_frames = int(edge_guard_seconds / frame_hop_seconds)
+                    internal_mask = list(mask_list)
+                    if guard_frames > 0 and len(internal_mask) > (2 * guard_frames):
+                        for i in range(guard_frames):
+                            internal_mask[i] = False
+                            internal_mask[-(i + 1)] = False
+                    longest_internal_frames = _longest_run(internal_mask)
+                    longest_internal_silence_sec = float(longest_internal_frames * frame_hop_seconds)
+
                 silence_peak_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_PEAK_THRESHOLD", "1e-6"))
                 silence_rms_threshold = float(os.getenv("CHATTERBOX_EXPERIMENT_SILENCE_RMS_THRESHOLD", "1e-7"))
                 is_silent = (samples == 0) or (peak < silence_peak_threshold and rms < silence_rms_threshold)
+                max_internal_silence_sec = float(
+                    os.getenv("CHATTERBOX_EXPERIMENT_MAX_INTERNAL_SILENCE_SEC", "1.0")
+                )
+                has_internal_silence = longest_internal_silence_sec >= max_internal_silence_sec
 
                 logger.warning(
-                    "🧪 Vocoder diagnostics | token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s thresholds=(peak<%.1e,rms<%.1e)",
+                    "🧪 Vocoder diagnostics | token_count=%s samples=%s peak=%.3e rms=%.3e silent=%s "
+                    "silence_ratio=%.3f longest_silence=%.2fs longest_internal_silence=%.2fs "
+                    "thresholds=(peak<%.1e,rms<%.1e,frame_rms<%.1e,internal>=%.2fs)",
                     token_count,
                     samples,
                     peak,
                     rms,
                     is_silent,
+                    silence_ratio,
+                    longest_silence_sec,
+                    longest_internal_silence_sec,
                     silence_peak_threshold,
                     silence_rms_threshold,
+                    frame_silence_threshold,
+                    max_internal_silence_sec,
                 )
 
-                if _env_true("CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE", False) and is_silent:
-                    raise RuntimeError(
-                        f"Vocoder produced silent output (samples={samples}, peak={peak:.3e}, rms={rms:.3e})"
-                    )
+                if _env_true("CHATTERBOX_EXPERIMENT_ENABLE_SILENCE_GATE", False):
+                    if is_silent:
+                        raise RuntimeError(
+                            f"Vocoder produced silent output (samples={samples}, peak={peak:.3e}, rms={rms:.3e})"
+                        )
+                    if has_internal_silence:
+                        raise RuntimeError(
+                            "Vocoder produced long internal silence "
+                            f"(longest_internal_silence={longest_internal_silence_sec:.2f}s >= {max_internal_silence_sec:.2f}s)"
+                        )
             except Exception as diag_e:
                 if isinstance(diag_e, RuntimeError):
                     raise
