@@ -1360,13 +1360,6 @@ def handler(event, responseFormat="base64"):
     
     # R2 storage is used directly - no initialization needed
     
-    # Check if TTS model is available
-    if tts_model is None:
-        logger.error("❌ TTS model not available")
-        return _return_with_cleanup({"status": "error", "error": "TTS model not available"})
-    
-    logger.info("✅ Using pre-initialized TTS model")
-    
     # Handle TTS generation request according to API contract
     text = event["input"].get("text")
     profile_base64 = event["input"].get("profile_base64")
@@ -1387,6 +1380,62 @@ def handler(event, responseFormat="base64"):
         or api_metadata.get("callback_url")
         or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
     )
+    error_callback_url = (
+        event["input"].get("error_callback_url")
+        or api_metadata.get("error_callback_url")
+        or (event["metadata"].get("error_callback_url") if isinstance(event.get("metadata"), dict) else None)
+    )
+    
+    # Extract key identifiers early so we can notify the app even on early failures.
+    voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
+    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
+    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
+    story_name = api_metadata.get("story_name") or event["input"].get("story_name")
+    voice_name = api_metadata.get("voice_name") or event["input"].get("voice_name")
+
+    def _resolve_error_callback_url() -> Optional[str]:
+        if error_callback_url:
+            return error_callback_url
+        if callback_url:
+            if "/api/tts/callback" in callback_url:
+                return callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
+            if "/api/tts/" in callback_url:
+                return callback_url.rsplit("/", 1)[0] + "/error-callback"
+            return f"{callback_url.rstrip('/')}/error-callback"
+        return None
+
+    def _send_job_error_to_app(error_message: str, error_type: str, extra_metadata: Optional[dict] = None) -> None:
+        target = _resolve_error_callback_url()
+        if not target:
+            logger.warning("⚠️ No error callback URL available; cannot notify app of failure")
+            return
+        try:
+            notify_error_callback(
+                error_callback_url=target,
+                story_id=story_id or "unknown",
+                error_message=error_message,
+                error_details=error_message,
+                user_id=user_id,
+                voice_id=voice_id,
+                job_id=event.get("id"),
+                metadata={
+                    "language": language,
+                    "story_type": story_type,
+                    "text_length": len(text) if text else 0,
+                    "error_type": error_type,
+                    **(extra_metadata or {}),
+                },
+            )
+        except Exception as callback_error:
+            logger.error(f"❌ Failed to send error callback: {callback_error}")
+
+    # Check if TTS model is available
+    if tts_model is None:
+        logger.error("❌ TTS model not available")
+        _send_job_error_to_app("TTS model not available", "model_unavailable")
+        return _return_with_cleanup({"status": "error", "error": "TTS model not available"})
+    
+    logger.info("✅ Using pre-initialized TTS model")
     
     # Early validation: Check for disallowed characters BEFORE model initialization
     # This prevents wasting resources on invalid text
@@ -1396,42 +1445,11 @@ def handler(event, responseFormat="base64"):
             logger.warning(f"❌ Text validation failed for language '{language}': {error_message}")
             logger.warning(f"❌ Disallowed characters: {disallowed_chars}")
             
-            # Send error callback if callback_url is available
-            try:
-                if callback_url:
-                    # Extract story_id and user_id for error callback
-                    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
-                    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
-                    voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
-                    
-                    # Construct error callback URL
-                    if "/api/tts/callback" in callback_url:
-                        error_callback_url = callback_url.replace("/api/tts/callback", "/api/tts/error-callback")
-                    elif "/api/tts/" in callback_url:
-                        error_callback_url = callback_url.rsplit("/", 1)[0] + "/error-callback"
-                    else:
-                        base_url = callback_url.rstrip("/")
-                        error_callback_url = f"{base_url}/error-callback"
-                    
-                    # Send error callback
-                    notify_error_callback(
-                        error_callback_url=error_callback_url,
-                        story_id=story_id or "unknown",
-                        error_message=error_message,
-                        error_details=f"Text contains characters not supported for language '{language}'. Disallowed characters: {', '.join(repr(c) for c in disallowed_chars[:10])}",
-                        user_id=user_id,
-                        voice_id=voice_id,
-                        job_id=event.get("id"),
-                        metadata={
-                            "language": language,
-                            "story_type": story_type,
-                            "text_length": len(text) if text else 0,
-                            "disallowed_chars": disallowed_chars[:10],  # Limit to first 10
-                            "error_type": "text_validation_error"
-                        }
-                    )
-            except Exception as callback_error:
-                logger.error(f"❌ Failed to send error callback: {callback_error}")
+            _send_job_error_to_app(
+                error_message,
+                "text_validation_error",
+                {"disallowed_chars": disallowed_chars[:10]},
+            )
             
             return _return_with_cleanup({
                 "status": "error",
@@ -1447,15 +1465,6 @@ def handler(event, responseFormat="base64"):
     logger.info(f"🔍 EXTRACTED callback_url type: {type(callback_url)}")
     logger.info(f"🔍 EXTRACTED callback_url from api_metadata: {api_metadata.get('callback_url')}")
     logger.info(f"🔍 EXTRACTED callback_url from event metadata: {event.get('metadata', {}).get('callback_url') if isinstance(event.get('metadata'), dict) else 'N/A'}")
-    
-    # Extract voice_id with fallback to metadata (like VC handler)
-    voice_id = event["input"].get("voice_id") or api_metadata.get("voice_id")
-    
-    # Extract additional metadata variables needed throughout the function
-    user_id = api_metadata.get("user_id") or event["input"].get("user_id")
-    story_id = api_metadata.get("story_id") or event["input"].get("story_id")
-    story_name = api_metadata.get("story_name") or event["input"].get("story_name")
-    voice_name = api_metadata.get("voice_name") or event["input"].get("voice_name")
     
     # Extract genre from multiple locations (similar to callback_url extraction)
     genre = (
@@ -1508,6 +1517,7 @@ def handler(event, responseFormat="base64"):
     _debug_r2_creds()
     
     if not text or not voice_id:
+        _send_job_error_to_app("Both text and voice_id are required", "invalid_payload")
         return _return_with_cleanup({"status": "error", "error": "Both text and voice_id are required"})
 
     logger.info(f"🎵 TTS request. Voice ID: {voice_id}")
