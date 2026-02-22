@@ -1374,13 +1374,19 @@ def handler(event, responseFormat="base64"):
     story_type = event["input"].get("story_type", "user")
     is_kids_voice = event["input"].get("is_kids_voice", False)
     api_metadata = event["input"].get("metadata", {})
+    if not isinstance(api_metadata, dict):
+        api_metadata = {}
     _log_worker_experiment_context(
         "handler",
         api_metadata=api_metadata if isinstance(api_metadata, dict) else None,
         input_payload=event["input"] if isinstance(event.get("input"), dict) else None,
     )
     profile_path = event["input"].get("profile_path") or (api_metadata.get("profile_path") if isinstance(api_metadata, dict) else None)
-    callback_url = api_metadata.get("callback_url") or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
+    callback_url = (
+        event["input"].get("callback_url")
+        or api_metadata.get("callback_url")
+        or (event["metadata"].get("callback_url") if isinstance(event.get("metadata"), dict) else None)
+    )
     
     # Early validation: Check for disallowed characters BEFORE model initialization
     # This prevents wasting resources on invalid text

@@ -19,7 +19,9 @@ MODELS_ROOT = "/runpod-volume/models"  # Use network volume for model cache (per
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
 context = "."
-build_args = ["RUNPOD_CACHE_BUST={{ CACHE_BUST }}"]
+build_args = [
+    "RUNPOD_CACHE_BUST={{ timestamp }}",
+]
 
 [deploy]
 gpu_type = "RTX 4090"
