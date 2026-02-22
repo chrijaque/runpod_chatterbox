@@ -23,7 +23,7 @@ context = "."
 # Force-refresh chatterbox_embed clone/install layer when needed.
 build_args = [
     "RUNPOD_CACHE_BUST={{ timestamp }}",
-    "CHATTERBOX_EMBED_REF=8a9708ea41f89173bfd8dcc00e96838bc7a19bec",
+    "CHATTERBOX_EMBED_REF=b40bdc7bc503af35442ff6635a660bf1c89b77a6",
 ]
 
 [deploy]
