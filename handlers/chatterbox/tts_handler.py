@@ -890,6 +890,27 @@ logger.info(f"  VOICE_SAMPLES_DIR: {VOICE_SAMPLES_DIR}")
 logger.info(f"  TTS_GENERATED_DIR: {TTS_GENERATED_DIR}")
 logger.info(f"  TEMP_VOICE_DIR: {TEMP_VOICE_DIR}")
 
+# Startup build/version diagnostics for deployed source verification
+try:
+    build_info_path = Path("/tmp/runpod_build_info.txt")
+    if build_info_path.exists():
+        logger.warning("🧪 Build info from image:\n%s", build_info_path.read_text())
+    else:
+        logger.warning("🧪 Build info file missing: /tmp/runpod_build_info.txt")
+except Exception as _build_info_e:
+    logger.warning("🧪 Failed reading build info file: %s", _build_info_e)
+
+try:
+    import subprocess
+    resolved_ref = subprocess.check_output(
+        ["git", "-C", "/workspace/chatterbox_embed", "rev-parse", "HEAD"],
+        text=True,
+        stderr=subprocess.STDOUT,
+    ).strip()
+    logger.warning("🧪 Runtime chatterbox_embed HEAD: %s", resolved_ref)
+except Exception as _git_head_e:
+    logger.warning("🧪 Could not read runtime chatterbox_embed HEAD: %s", _git_head_e)
+
 # R2 storage is used directly via boto3 - no client initialization needed
 
 # Initialize models
