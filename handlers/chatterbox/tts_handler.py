@@ -919,7 +919,17 @@ if FORKED_HANDLER_AVAILABLE:
         logger.info("✅ ChatterboxTTS ready")
         try:
             import chatterbox.tts as _tts_mod
-            logger.warning("🧪 Loaded chatterbox.tts from: %s", getattr(_tts_mod, "__file__", "<unknown>"))
+            mod_file = getattr(_tts_mod, "__file__", "<unknown>")
+            logger.warning("🧪 Loaded chatterbox.tts from: %s", mod_file)
+            runtime_marker = (
+                getattr(_tts_mod, "CHATTERBOX_RUNTIME_VERSION", None)
+                or getattr(_tts_mod, "__version__", None)
+                or getattr(getattr(_tts_mod, "ChatterboxTTS", object), "RUNTIME_VERSION", None)
+            )
+            if runtime_marker:
+                logger.warning("🧪 chatterbox.tts runtime marker: %s", runtime_marker)
+            else:
+                logger.warning("🧪 chatterbox.tts runtime marker: <missing>")
         except Exception:
             pass
         _patch_chunk_context_tracking(tts_model)
