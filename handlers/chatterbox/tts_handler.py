@@ -19,15 +19,25 @@ from datetime import datetime
 from typing import Optional
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
-_VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
+def _flag_true(value: str) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+_PROD_MODE = _flag_true(os.getenv("CHATTERBOX_PROD_MODE", "false"))
+_VERBOSE_LOGS = (_flag_true(os.getenv("VERBOSE_LOGS", "false")) and (not _PROD_MODE))
 _LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
 logging.basicConfig(level=_LOG_LEVEL)
 logger = logging.getLogger(__name__)
 logger.setLevel(_LOG_LEVEL)
 
+if _PROD_MODE:
+    # Force-disable expensive experiment/QA paths for fastest production runtime.
+    os.environ["CHATTERBOX_EXPERIMENT_MODE"] = "false"
+    os.environ["CHATTERBOX_ENABLE_QUALITY_ANALYSIS"] = "false"
+
 """Minimal, production-focused TTS handler for RunPod runtime."""
 
 EXPERIMENT_ENV_KEYS = (
+    "CHATTERBOX_PROD_MODE",
     "VERBOSE_LOGS",
     "CHATTERBOX_EXPERIMENT_MODE",
     "CHATTERBOX_EXPERIMENT_NAME",
@@ -56,6 +66,8 @@ def _log_worker_experiment_context(context: str, *, api_metadata: Optional[dict]
     High-signal diagnostics for experiment mode.
     Uses warning level so logs are visible even when VERBOSE_LOGS=false.
     """
+    if _PROD_MODE:
+        return
     try:
         env_snapshot = _experiment_env_snapshot()
         logger.warning("🧪 [%s] Worker experiment env snapshot: %s", context, env_snapshot)
@@ -105,6 +117,8 @@ def _patch_t3_inference_diagnostics(model) -> None:
     the packaged chatterbox.tts version is older than expected.
     """
     try:
+        if _PROD_MODE:
+            return
         if not model or not hasattr(model, "t3") or not hasattr(model.t3, "inference"):
             return
         if getattr(model.t3.inference, "_minstraly_exp_wrapped", False):
@@ -152,6 +166,8 @@ def _patch_chunk_context_tracking(model) -> None:
     specific chunk text spans.
     """
     try:
+        if _PROD_MODE:
+            return
         if not model or not hasattr(model, "_generate_with_prepared_conditionals"):
             return
         original = model._generate_with_prepared_conditionals
@@ -221,6 +237,8 @@ def _patch_s3_inference_diagnostics(model) -> None:
     the vocoder-silence theory with hard evidence.
     """
     try:
+        if _PROD_MODE:
+            return
         if not model or not hasattr(model, "s3gen") or not hasattr(model.s3gen, "inference"):
             return
         if getattr(model.s3gen.inference, "_minstraly_s3_exp_wrapped", False):

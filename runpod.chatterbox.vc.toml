@@ -15,6 +15,7 @@ R2_ENDPOINT = "{{ R2_ENDPOINT }}"
 R2_BUCKET_NAME = "{{ R2_BUCKET_NAME }}"
 NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
 MODELS_ROOT = "/runpod-volume/models"  # Use network volume for model cache (persistent across cold starts)
+CHATTERBOX_PROD_MODE = "true"  # Fast path: disable experiment/debug overhead
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
@@ -39,5 +40,6 @@ envs = [
     "R2_BUCKET_NAME",
     "NEXT_PUBLIC_R2_PUBLIC_URL",
     "MODELS_ROOT",  # Points to network volume for model cache
+    "CHATTERBOX_PROD_MODE",
 ]
 

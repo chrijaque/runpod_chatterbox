@@ -19,11 +19,20 @@ from typing import Optional, Dict, Any
 import torch
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
-_VERBOSE_LOGS = os.getenv("VERBOSE_LOGS", "false").lower() == "true"
+def _flag_true(value: str) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+_PROD_MODE = _flag_true(os.getenv("CHATTERBOX_PROD_MODE", "false"))
+_VERBOSE_LOGS = (_flag_true(os.getenv("VERBOSE_LOGS", "false")) and (not _PROD_MODE))
 _LOG_LEVEL = logging.INFO if _VERBOSE_LOGS else logging.WARNING
 logging.basicConfig(level=_LOG_LEVEL)
 logger = logging.getLogger(__name__)
 logger.setLevel(_LOG_LEVEL)
+
+if _PROD_MODE:
+    # Force-disable expensive experiment/QA paths for fastest production runtime.
+    os.environ["CHATTERBOX_EXPERIMENT_MODE"] = "false"
+    os.environ["CHATTERBOX_ENABLE_QUALITY_ANALYSIS"] = "false"
 
 """Minimal, production-focused VC handler for RunPod runtime."""
 
@@ -373,7 +382,8 @@ ensure_disk_headroom()
 logger.info("Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
-        _install_tts_experiment_compat_shim()
+        if not _PROD_MODE:
+            _install_tts_experiment_compat_shim()
         _device = _select_device()
         logger.info(f"Selected device: {_device}")
         
