@@ -284,9 +284,8 @@ except ImportError as e:
 # Import the models from the forked repository
 try:
     from chatterbox.vc import ChatterboxVC
-    from chatterbox.tts import ChatterboxTTS
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("Successfully imported ChatterboxVC and ChatterboxTTS from forked repository")
+    logger.info("Successfully imported ChatterboxVC from forked repository")
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
     logger.warning(f"Could not import models from forked repository: {e}")
@@ -342,31 +341,57 @@ def _select_device() -> str:
 
     return "cpu"
 
+def _install_tts_experiment_compat_shim() -> None:
+    """
+    Ensure TTS experiment instrumentation mismatches do not break VC execution.
+    Some chatterbox.tts builds reference self.experiment_config before it exists.
+    """
+    try:
+        import chatterbox.tts as _tts_mod
+        cls = getattr(_tts_mod, "ChatterboxTTS", None)
+        if cls is None:
+            return
+        original_init = getattr(cls, "__init__", None)
+        if original_init is None:
+            return
+        if getattr(original_init, "_vc_exp_cfg_shim_installed", False):
+            return
+
+        def _shim_init(self, *args, **kwargs):
+            if not hasattr(self, "experiment_config"):
+                self.experiment_config = {}
+            return original_init(self, *args, **kwargs)
+
+        _shim_init._vc_exp_cfg_shim_installed = True
+        cls.__init__ = _shim_init
+        logger.info("Installed VC TTS compatibility shim for experiment_config")
+    except Exception as shim_e:
+        logger.warning(f"Could not install VC TTS compatibility shim: {shim_e}")
+
 # Initialize models
 ensure_disk_headroom()
 logger.info("Initializing models...")
 try:
     if FORKED_HANDLER_AVAILABLE:
+        _install_tts_experiment_compat_shim()
         _device = _select_device()
         logger.info(f"Selected device: {_device}")
         
         # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
         # Models are pre-downloaded during Docker build to /models/hf
         try:
-            tts_model = ChatterboxTTS.from_pretrained(device=_device)
-            logger.info("ChatterboxTTS ready")
             vc_model = ChatterboxVC.from_pretrained(device=_device)
             logger.info("ChatterboxVC ready")
+            # TTS instrumentation issues must not block VC startup.
+            tts_model = None
         except Exception as dev_e:
             logger.error(f"Init failed on {_device}: {dev_e}. Retrying on CPU…")
             try:
-                tts_model = ChatterboxTTS.from_pretrained(device='cpu')
                 vc_model = ChatterboxVC.from_pretrained(device='cpu')
-                logger.info("Models initialized on CPU")
+                logger.info("VC model initialized on CPU")
+                tts_model = None
             except Exception as cpu_e:
                 logger.error(f"CPU fallback init failed: {cpu_e}")
-                vc_model = None
-                tts_model = None
                 vc_model = None
                 tts_model = None
     else:
@@ -566,17 +591,17 @@ def call_vc_model_create_voice_clone(audio_file_path: Path, voice_id: str, voice
     
     Uses the VC model's create_voice_clone method to create voice profiles.
     """
-    global vc_model, tts_model
+    global vc_model
     
     start_time = time.time()
     
     try:
-        # Check if models are available
-        if vc_model is None or tts_model is None:
-            logger.error("Models not available")
+        # VC pipeline should depend only on VC model availability.
+        if vc_model is None:
+            logger.error("VC model not available")
             return {
                 "status": "error",
-                "error": "Models not available",
+                "error": "VC model not available",
                 "generation_time": time.time() - start_time
             }
         

@@ -24,10 +24,16 @@ COPY requirements/chatterbox.txt /requirements.txt
 
 # Cache-bust arg so we can force refresh clone layer during tests.
 ARG RUNPOD_CACHE_BUST=dev
-RUN echo "RUNPOD_CACHE_BUST=${RUNPOD_CACHE_BUST}"
+ARG CHATTERBOX_EMBED_REF=master
+RUN printf "RUNPOD_CACHE_BUST=%s\nCHATTERBOX_EMBED_REF=%s\n" "$RUNPOD_CACHE_BUST" "$CHATTERBOX_EMBED_REF" > /tmp/runpod_build_info.txt
 
 # Clone the repository
-RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed
+RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    cd /workspace/chatterbox_embed && \
+    git checkout "$CHATTERBOX_EMBED_REF" && \
+    RESOLVED_REF="$(git rev-parse HEAD)" && \
+    printf "RESOLVED_CHATTERBOX_EMBED_REF=%s\n" "$RESOLVED_REF" >> /tmp/runpod_build_info.txt && \
+    echo "✅ chatterbox_embed resolved ref: $RESOLVED_REF"
 
 # Install chatterbox_embed in editable mode without dependencies
 RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed --no-deps
