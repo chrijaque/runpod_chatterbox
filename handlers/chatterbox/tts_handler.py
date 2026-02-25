@@ -298,7 +298,7 @@ def _patch_s3_inference_diagnostics(model) -> None:
                     peak = float(torch.max(torch.abs(wav_detached)).item()) if samples else 0.0
                     rms = float(torch.sqrt(torch.mean(wav_detached.float() ** 2)).item()) if samples else 0.0
 
-                    # Intra-chunk silence analysis catches "mid-chunk silent spans"
+                    # chunk silence analysis catches "mid-chunk silent spans"
                     # that global peak/RMS cannot detect.
                     wav_flat = wav_detached.float().reshape(-1)
                     sr = int(getattr(model, "sr", 24000))
