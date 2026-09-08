@@ -19,8 +19,8 @@ from datetime import datetime
 from typing import Optional
 
 # boto3 1.36+ checksum headers break Cloudflare R2 with SignatureDoesNotMatch.
-os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
-os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+os.environ["AWS_REQUEST_CHECKSUM_CALCULATION"] = "when_required"
+os.environ["AWS_RESPONSE_CHECKSUM_VALIDATION"] = "when_required"
 
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 def _flag_true(value: str) -> bool:
@@ -1418,6 +1418,12 @@ def handler(event, responseFormat="base64"):
     profile_url = event["input"].get("profile_url") or (api_metadata.get("profile_url") if isinstance(api_metadata, dict) else None)
     if profile_url:
         api_metadata["profile_url"] = profile_url
+    upload_url = event["input"].get("upload_url") or (api_metadata.get("upload_url") if isinstance(api_metadata, dict) else None)
+    if upload_url:
+        api_metadata["upload_url"] = upload_url
+    storage_path = event["input"].get("storage_path") or (api_metadata.get("storage_path") if isinstance(api_metadata, dict) else None)
+    if storage_path:
+        api_metadata["storage_path"] = storage_path
     callback_url = (
         event["input"].get("callback_url")
         or api_metadata.get("callback_url")
@@ -1794,17 +1800,38 @@ def handler(event, responseFormat="base64"):
             
             if should_send_callback:
                 import requests
+                audio_location = (
+                    result.get("firebase_url")
+                    or result.get("audio_url")
+                    or result.get("r2_url")
+                    or result.get("storage_url")
+                    or result.get("r2_path")
+                    or result.get("storage_path")
+                    or result.get("firebase_path")
+                    or result.get("audio_path")
+                )
+                storage_location = (
+                    result.get("r2_path")
+                    or result.get("storage_path")
+                    or result.get("firebase_path")
+                )
+                if not audio_location:
+                    raise RuntimeError("TTS succeeded without an audio location; refusing success callback")
                 payload = {
                     "story_id": story_id,
                     "user_id": user_id,
                     "voice_id": voice_id,
                     "voice_name": voice_name,
-                    "audio_url": result.get("firebase_url") or result.get("audio_url") or result.get("audio_path"),
-                    "storage_path": result.get("firebase_path"),
-                    "r2_path": result.get("r2_path") or result.get("firebase_path"),  # Explicit R2 path for callback validation
+                    "audio_url": audio_location,
+                    "storage_path": storage_location or audio_location,
+                    "r2_path": storage_location or audio_location,
                     "language": language,
                     "metadata": {
-                        **({} if not isinstance(api_metadata, dict) else api_metadata),
+                        **(
+                            {k: v for k, v in api_metadata.items() if k not in ("upload_url", "uploadUrl")}
+                            if isinstance(api_metadata, dict)
+                            else {}
+                        ),
                         "generation_time": result.get("generation_time"),
                     },
                 }
@@ -1866,7 +1893,7 @@ def handler(event, responseFormat="base64"):
                                     user_id=user_id,
                                     voice_id=voice_id,
                                     error_details=str(final_cb_e),
-                                    job_id=input.get('job_id'),
+                                    job_id=event.get("id") or (event.get("input") or {}).get("job_id"),
                                     metadata=payload.get("metadata") or {},
                                 )
                                 _callback_log("✅ Error callback sent for callback failure")
