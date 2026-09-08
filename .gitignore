@@ -62,6 +62,9 @@ htmlcov/
 /build
 /dist
 
+# Local Chatterbox studio data
+local_data/
+
 # Misc
 .DS_Store*
 *.pem

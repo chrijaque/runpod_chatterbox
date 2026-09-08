@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
 
-import { API_ENDPOINT, VOICE_API } from '@/config/api';
+import { API_ENDPOINT, FASTAPI_BASE_URL, VOICE_API } from '@/config/api';
 
 interface FileMetadata {
     voice_id: string;
@@ -28,6 +28,13 @@ interface Voice {
     created_date: number;
 }
 
+interface CloneResult {
+    status: string;
+    audio_base64?: string;
+    sample_audio_path?: string;
+    metadata?: FileMetadata;
+}
+
 export default function Home() {
     useEffect(() => {
         console.log('Environment variables check:', {
@@ -44,18 +51,13 @@ export default function Home() {
     const [modelType] = useState<'chatterbox'>('chatterbox');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [result, setResult] = useState<string | null>(null);
+    const [result, setResult] = useState<CloneResult | null>(null);
     const [currentJobId, setCurrentJobId] = useState<string | null>(null);
     const [metadata, setMetadata] = useState<FileMetadata | null>(null);
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
     const [isLoadingLibrary, setIsLoadingLibrary] = useState(false);
     const [playingVoice, setPlayingVoice] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
-
-    // Load voice library on component mount
-    useEffect(() => {
-        loadVoiceLibrary();
-    }, []);
 
     const saveVoiceToAPI = async (result: any, voiceName: string) => {
         try {
@@ -118,7 +120,11 @@ export default function Home() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    }, []);
+    }, [language, isKidsVoice]);
+
+    useEffect(() => {
+        loadVoiceLibrary();
+    }, [loadVoiceLibrary]);
 
     const playVoiceSample = async (voiceId: string) => {
         setPlayingVoice(voiceId);
@@ -297,76 +303,36 @@ export default function Home() {
             });
 
             if (!response.ok) {
-                throw new Error(data.message || 'Failed to generate voice');
+                throw new Error(data.message || data.detail || 'Failed to generate voice');
             }
 
             // Check if we got a direct result (new format) or a job ID (old format)
             if (data.status === 'success' && !data.id) {
-                // New format: FastAPI returned the final result directly
-                console.log('✅ Received final result directly from FastAPI');
-                
-                const result = data;
-                console.log('🔍 DEBUGGING: Raw result from FastAPI:', result);
-                console.log('🔍 DEBUGGING: Result type:', typeof result);
-                console.log('🔍 DEBUGGING: Result keys:', result ? Object.keys(result) : 'N/A');
-                
-                console.log('🏁 Final result received:', {
-                    hasResult: !!result,
-                    resultType: typeof result,
-                    hasMetadata: !!(result && result.metadata),
-                    status: result?.status
-                });
-                
-                setResult(result); // Store the result directly
-                
-                // Save metadata if available
-                if (result && result.metadata) {
-                    setMetadata(result.metadata);
-                    console.log('📋 Metadata saved:', result.metadata);
+                const cloneResult = data as CloneResult;
+                setResult(cloneResult);
+                if (cloneResult.metadata) {
+                    setMetadata(cloneResult.metadata);
                 }
-                
+                await loadVoiceLibrary();
             } else if (data.id) {
                 // Old format: Job ID returned, need to poll for completion
                 setCurrentJobId(data.id);
                 console.log('⏳ Job queued, polling for results...', { jobId: data.id });
                 
                 // Job was accepted, start polling for status
-                const result = await pollJobStatus(data.id);
+                const polled = await pollJobStatus(data.id);
+                const cloneResult = polled as CloneResult;
                 
-                console.log('🔍 DEBUGGING: Raw result from FastAPI:', result);
-                console.log('🔍 DEBUGGING: Result type:', typeof result);
-                console.log('🔍 DEBUGGING: Result keys:', result ? Object.keys(result) : 'N/A');
-                console.log('🔍 DEBUGGING: Has audio_base64:', !!(result && result.audio_base64));
-                console.log('🔍 DEBUGGING: Has embedding_base64:', !!(result && result.embedding_base64));
+                setResult(cloneResult);
                 
-                console.log('🏁 Final result received:', {
-                    hasResult: !!result,
-                    resultType: typeof result,
-                    hasAudioBase64: !!(result && result.audio_base64),
-                    hasEmbeddingBase64: !!(result && result.embedding_base64),
-                    hasMetadata: !!(result && result.metadata),
-                    status: result?.status
-                });
-                
-                setResult(result); // Store the result directly
-                
-                // Save metadata if available
-                if (result && result.metadata) {
-                    setMetadata(result.metadata);
-                    console.log('📋 Metadata saved:', result.metadata);
+                if (cloneResult && cloneResult.metadata) {
+                    setMetadata(cloneResult.metadata);
                 }
                 
-                // Save voice to FastAPI/Firebase after successful generation
-                if (result && result.sample_audio_path) {
-                    console.log('💾 Voice audio path available:', result.sample_audio_path);
-                    await saveVoiceToAPI(result, name);
+                if (cloneResult && cloneResult.sample_audio_path) {
+                    await saveVoiceToAPI(cloneResult, name);
                 } else {
-                    console.error('❌ No audio path in result - cannot save voice', {
-                        hasResult: !!result,
-                        resultType: typeof result,
-                        hasAudioPath: !!(result && result.sample_audio_path),
-                        resultKeys: result ? Object.keys(result) : []
-                    });
+                    await loadVoiceLibrary();
                 }
             } else {
                 throw new Error('Invalid response format - neither job ID nor final result received');
@@ -448,6 +414,9 @@ export default function Home() {
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
                         Enter a name, record or upload audio, then create your personalized voice clone. Browse your voice library below.
+                    </p>
+                    <p className="mt-2 text-xs text-indigo-700">
+                        Local Chatterbox API: {FASTAPI_BASE_URL}
                     </p>
                     <div className="mt-4">
                         <Link href="/tts" className="text-blue-600 hover:text-blue-800 text-sm">
@@ -580,12 +549,16 @@ export default function Home() {
                             </div>
                         )}
 
-                        {result && (
+                        {result && (result.audio_base64 || result.sample_audio_path) && (
                             <div className="space-y-4">
                                 <div>
                                     <h3 className="form-label mb-2">Voice Clone Sample</h3>
                                     <audio
-                                        src={`data:audio/wav;base64,${result}`}
+                                        src={
+                                            result.audio_base64
+                                                ? `data:audio/wav;base64,${result.audio_base64}`
+                                                : result.sample_audio_path
+                                        }
                                         controls
                                         className="w-full"
                                     />

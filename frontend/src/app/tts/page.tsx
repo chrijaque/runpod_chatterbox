@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { RUNPOD_API_KEY, TTS_API_ENDPOINT, VOICE_API, TTS_API, TTS_GENERATIONS_API } from '@/config/api';
+import { TTS_API_ENDPOINT, VOICE_API, TTS_API, FASTAPI_BASE_URL } from '@/config/api';
 
 import Link from 'next/link';
 
@@ -59,14 +59,6 @@ export default function TTSPage() {
     const [playingGeneration, setPlayingGeneration] = useState<string | null>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // Load voice library and TTS generations on component mount
-    useEffect(() => {
-        loadVoiceLibrary();
-        loadTTSGenerations();
-    }, []);
-
-
-
     const loadVoiceLibrary = useCallback(async () => {
         setIsLoadingLibrary(true);
         try {
@@ -89,9 +81,8 @@ export default function TTSPage() {
                 }));
                 
                 setVoiceLibrary(voices);
-                // Auto-select first voice if available
-                if (voices.length > 0 && !selectedVoice) {
-                    setSelectedVoice(voices[0].voice_id);
+                if (voices.length > 0) {
+                    setSelectedVoice((current) => current || voices[0].voice_id);
                 }
             } else {
                 throw new Error(data.message || 'Failed to load voice library');
@@ -102,7 +93,7 @@ export default function TTSPage() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    }, []);
+    }, [language, isKidsVoice]);
 
     const loadTTSGenerations = useCallback(async () => {
         setIsLoadingGenerations(true);
@@ -145,6 +136,11 @@ export default function TTSPage() {
             setIsLoadingGenerations(false);
         }
     }, [language, storyType]);
+
+    useEffect(() => {
+        loadVoiceLibrary();
+        loadTTSGenerations();
+    }, [loadVoiceLibrary, loadTTSGenerations]);
 
     const playTTSGeneration = async (fileId: string) => {
         setPlayingGeneration(fileId);
@@ -307,9 +303,6 @@ export default function TTSPage() {
             const cancelEndpoint = TTS_API_ENDPOINT.replace('/run', `/cancel/${currentJobId}`);
             const response = await fetch(cancelEndpoint, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${RUNPOD_API_KEY}`
-                }
             });
 
             const data = await response.json();
@@ -346,6 +339,9 @@ export default function TTSPage() {
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
                         Generate speech using your saved voice clones. Enter text and select a voice from your library.
+                    </p>
+                    <p className="mt-2 text-xs text-indigo-700">
+                        Local Chatterbox API: {FASTAPI_BASE_URL}
                     </p>
                     <Link href="/" className="text-blue-600 hover:text-blue-800 text-sm">
                         ← Back to Voice Cloning
@@ -506,25 +502,14 @@ export default function TTSPage() {
                                     <h3 className="form-label mb-2">Generated Speech</h3>
                                     
                                     {result.audio_path ? (
-                                        // File saved to Firebase - show success message with path
-                                        <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                            <div className="flex items-center">
-                                                <div className="flex-shrink-0">
-                                                    <svg className="h-5 w-5 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-                                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                                    </svg>
-                                                </div>
-                                                <div className="ml-3">
-                                                    <h3 className="text-sm font-medium text-green-800">
-                                                        TTS Generation Complete!
-                                                    </h3>
-                                                    <div className="mt-2 text-sm text-green-700">
-                                                        <p>The audio file has been saved to R2.</p>
-                                                        <p className="mt-1">Path: {result.audio_path}</p>
-                                                        <p className="mt-1">You can find it in the TTS Generations Library below.</p>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+                                            <h3 className="text-sm font-medium text-green-800">
+                                                TTS Generation Complete
+                                            </h3>
+                                            <audio src={result.audio_path} controls className="w-full" />
+                                            <p className="text-sm text-green-700">
+                                                Saved locally. You can also play it from the library below.
+                                            </p>
                                         </div>
                                     ) : (
                                         // No audio path - show error
