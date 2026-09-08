@@ -59,6 +59,8 @@ RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
 ENV HF_HOME=/models/hf
 ENV HF_HUB_CACHE=/models/hf/hub
 ENV TRANSFORMERS_CACHE=/models/hf
+ENV AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+ENV AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 RUN mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE"
 
 # Pre-download models to HuggingFace cache (same location VC uses)
@@ -84,8 +86,8 @@ PY
 # Skip chatterbox import test - will work at runtime
 RUN pip show chatterbox-tts || echo "Package check skipped"
 
-# Step 5: Install RunPod SDK
-RUN pip install runpod>=1.5.0
+# Step 5: Install RunPod SDK and boto3 for R2
+RUN pip install runpod>=1.5.0 boto3>=1.34.0
 
 # Copy VC handler script
 COPY handlers/chatterbox/vc_handler.py /handler.py

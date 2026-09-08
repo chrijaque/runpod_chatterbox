@@ -18,6 +18,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+# boto3 1.36+ checksum headers break Cloudflare R2 with SignatureDoesNotMatch.
+os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+
 # Configure logging (default WARNING; opt-in verbose via VERBOSE_LOGS=true)
 def _flag_true(value: str) -> bool:
     return str(value or "").strip().lower() in ("1", "true", "yes", "on")
@@ -854,7 +858,7 @@ clear_python_cache()
 
 # Import storage utilities (always available)
 try:
-    from chatterbox.storage import resolve_bucket_name, is_r2_bucket, upload_to_r2, download_from_r2, _encode_metadata_value
+    from chatterbox.storage import resolve_bucket_name, is_r2_bucket, upload_to_r2, download_from_r2, get_r2_client, _encode_metadata_value
     logger.info("✅ Successfully imported storage utilities from chatterbox")
 except ImportError as e:
     logger.warning(f"⚠️ Could not import storage utilities: {e}")
@@ -868,6 +872,9 @@ except ImportError as e:
         return None
     def download_from_r2(source_key: str) -> Optional[bytes]:
         logger.error("Storage utilities not available - download_from_r2 not implemented")
+        return None
+    def get_r2_client():
+        logger.error("Storage utilities not available - get_r2_client not implemented")
         return None
 
 # Import text sanitizer for early validation (lightweight, no model dependencies)
@@ -1092,27 +1099,13 @@ def rename_in_firebase(src_path: str, dest_path: str, *, metadata: Optional[dict
         
         logger.info(f"✅ Rename: Using R2 copy/delete for bucket: {resolved_bucket}")
         
-        import boto3
-        
-        # Get R2 credentials
-        r2_account_id = os.getenv('R2_ACCOUNT_ID')
-        r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
-        r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
-        r2_endpoint = os.getenv('R2_ENDPOINT')
-        r2_bucket_name = resolved_bucket
-        r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
-        
-        if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+        s3_client = get_r2_client()
+        if s3_client is None:
             logger.error("❌ R2 credentials not configured")
             return None
         
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=r2_endpoint,
-            aws_access_key_id=r2_access_key_id,
-            aws_secret_access_key=r2_secret_access_key,
-            region_name='auto'
-        )
+        r2_bucket_name = resolved_bucket
+        r2_public_url = os.getenv('NEXT_PUBLIC_R2_PUBLIC_URL') or os.getenv('R2_PUBLIC_URL')
         
         # Check if source exists
         try:
@@ -1422,6 +1415,9 @@ def handler(event, responseFormat="base64"):
         input_payload=event["input"] if isinstance(event.get("input"), dict) else None,
     )
     profile_path = event["input"].get("profile_path") or (api_metadata.get("profile_path") if isinstance(api_metadata, dict) else None)
+    profile_url = event["input"].get("profile_url") or (api_metadata.get("profile_url") if isinstance(api_metadata, dict) else None)
+    if profile_url:
+        api_metadata["profile_url"] = profile_url
     callback_url = (
         event["input"].get("callback_url")
         or api_metadata.get("callback_url")

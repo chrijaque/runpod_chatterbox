@@ -13,7 +13,10 @@ R2_ACCESS_KEY_ID = "{{ R2_ACCESS_KEY_ID }}"
 R2_SECRET_ACCESS_KEY = "{{ R2_SECRET_ACCESS_KEY }}"
 R2_ENDPOINT = "{{ R2_ENDPOINT }}"
 R2_BUCKET_NAME = "{{ R2_BUCKET_NAME }}"
+R2_ACCOUNT_ID = "{{ R2_ACCOUNT_ID }}"
 NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
+AWS_REQUEST_CHECKSUM_CALCULATION = "when_required"
+AWS_RESPONSE_CHECKSUM_VALIDATION = "when_required"
 MODELS_ROOT = "/runpod-volume/models"  # Use network volume for model cache (persistent across cold starts)
 CHATTERBOX_ENABLE_QUALITY_ANALYSIS = "false"  # QA disabled by default (set to "true" to enable)
 CHATTERBOX_PROD_MODE = "true"  # Fast path: disable experiment/debug overhead
@@ -40,7 +43,10 @@ envs = [
     "R2_SECRET_ACCESS_KEY",
     "R2_ENDPOINT",
     "R2_BUCKET_NAME",
+    "R2_ACCOUNT_ID",
     "NEXT_PUBLIC_R2_PUBLIC_URL",
+    "AWS_REQUEST_CHECKSUM_CALCULATION",
+    "AWS_RESPONSE_CHECKSUM_VALIDATION",
     "MODELS_ROOT",  # Points to network volume for model cache
     "CHATTERBOX_ENABLE_QUALITY_ANALYSIS",  # QA control (default: disabled)
     "CHATTERBOX_PROD_MODE",

@@ -19,7 +19,8 @@ python-multipart>=0.0.6
 pydantic>=2.5.0
 
 # Storage
-# R2 is used via S3-compatible APIs (boto3 is provided by the chatterbox_embed package / handler runtime).
+# R2 is used via S3-compatible APIs. boto3 1.36+ needs checksum config for Cloudflare R2.
+boto3>=1.34.0
 
 # Firestore (required by chatterbox_embed r2_storage.init_firestore_client for VC handler)
 google-cloud-firestore>=2.13.0

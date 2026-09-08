@@ -984,24 +984,31 @@ class FirebaseService:
             # Download from R2 using boto3
             import boto3
             import os
+            from botocore.config import Config
             
-            r2_account_id = os.getenv('R2_ACCOUNT_ID')
             r2_access_key_id = os.getenv('R2_ACCESS_KEY_ID')
             r2_secret_access_key = os.getenv('R2_SECRET_ACCESS_KEY')
             r2_endpoint = os.getenv('R2_ENDPOINT')
             r2_bucket_name = os.getenv('R2_BUCKET_NAME', 'minstraly-storage')
             
-            if not all([r2_account_id, r2_access_key_id, r2_secret_access_key, r2_endpoint]):
+            if not all([r2_access_key_id, r2_secret_access_key, r2_endpoint]):
                 logger.error("❌ R2 credentials not configured")
                 return None
             
-            # Create S3 client for R2
+            os.environ.setdefault("AWS_REQUEST_CHECKSUM_CALCULATION", "when_required")
+            os.environ.setdefault("AWS_RESPONSE_CHECKSUM_VALIDATION", "when_required")
+
             s3_client = boto3.client(
                 's3',
                 endpoint_url=r2_endpoint,
                 aws_access_key_id=r2_access_key_id,
                 aws_secret_access_key=r2_secret_access_key,
-                region_name='auto'
+                region_name='auto',
+                config=Config(
+                    signature_version='s3v4',
+                    request_checksum_calculation='when_required',
+                    response_checksum_validation='when_required',
+                ),
             )
             
             # Download from R2
