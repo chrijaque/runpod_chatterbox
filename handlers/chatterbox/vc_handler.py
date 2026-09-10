@@ -292,12 +292,32 @@ except ImportError as e:
 
 # Import the models from the forked repository
 try:
-    from chatterbox.vc import ChatterboxVC
+    from chatterbox.factory import (
+        assert_payload_model_type,
+        get_model_family,
+        load_vc_model,
+        model_type_for_family,
+    )
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("Successfully imported ChatterboxVC from forked repository")
+    MODEL_FAMILY = get_model_family()
+    logger.info("Successfully imported Chatterbox VC factory (family=%s)", MODEL_FAMILY)
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
+    MODEL_FAMILY = "original"
     logger.warning(f"Could not import models from forked repository: {e}")
+
+    def assert_payload_model_type(model_type, family=None):
+        return (model_type or "chatterbox")
+
+    def get_model_family(raw=None):
+        return "original"
+
+    def load_vc_model(device, family=None):
+        from chatterbox.vc import ChatterboxVC
+        return ChatterboxVC.from_pretrained(device=device)
+
+    def model_type_for_family(family=None):
+        return "chatterbox"
 
 # Initialize models once at startup
 vc_model = None
@@ -390,15 +410,15 @@ try:
         # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
         # Models are pre-downloaded during Docker build to /models/hf
         try:
-            vc_model = ChatterboxVC.from_pretrained(device=_device)
-            logger.info("ChatterboxVC ready")
+            vc_model = load_vc_model(device=_device)
+            logger.info("ChatterboxVC ready (family=%s, type=%s)", MODEL_FAMILY, model_type_for_family(MODEL_FAMILY))
             # TTS instrumentation issues must not block VC startup.
             tts_model = None
         except Exception as dev_e:
             logger.error(f"Init failed on {_device}: {dev_e}. Retrying on CPU…")
             try:
-                vc_model = ChatterboxVC.from_pretrained(device='cpu')
-                logger.info("VC model initialized on CPU")
+                vc_model = load_vc_model(device='cpu')
+                logger.info("VC model initialized on CPU (family=%s)", MODEL_FAMILY)
                 tts_model = None
             except Exception as cpu_e:
                 logger.error(f"CPU fallback init failed: {cpu_e}")
@@ -686,8 +706,18 @@ def handle_voice_clone_request(input_data: Dict[str, Any], response_format: str)
     
     language = input_data.get('language', 'en')
     is_kids_voice = input_data.get('is_kids_voice', False)
-    
-    logger.info(f"Voice clone request: name={name}, language={language}, kids_voice={is_kids_voice}")
+    try:
+        resolved_model_type = assert_payload_model_type(input_data.get('model_type'))
+        logger.info("Voice clone request: name=%s, language=%s, kids_voice=%s, model_type=%s, family=%s",
+                    name, language, input_data.get('is_kids_voice', False), resolved_model_type, MODEL_FAMILY)
+    except ValueError as mismatch:
+        logger.error("%s", mismatch)
+        send_error_callback(
+            metadata['callback_url'], metadata['user_id'],
+            input_data.get('voice_id', 'unknown'), name or 'unknown',
+            language, str(mismatch)
+        )
+        return {"status": "error", "error": str(mismatch)}
     
     try:
         # Determine voice_id

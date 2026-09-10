@@ -890,13 +890,32 @@ except ImportError as e:
 
 # Import the models from the forked repository
 try:
-    from chatterbox.vc import ChatterboxVC
-    from chatterbox.tts import ChatterboxTTS
+    from chatterbox.factory import (
+        assert_payload_model_type,
+        get_model_family,
+        load_tts_model,
+        model_type_for_family,
+    )
     FORKED_HANDLER_AVAILABLE = True
-    logger.info("✅ Successfully imported ChatterboxVC and ChatterboxTTS from forked repository")
+    MODEL_FAMILY = get_model_family()
+    logger.info("✅ Successfully imported Chatterbox factory (family=%s)", MODEL_FAMILY)
 except ImportError as e:
     FORKED_HANDLER_AVAILABLE = False
+    MODEL_FAMILY = "original"
     logger.warning(f"⚠️ Could not import models from forked repository: {e}")
+
+    def assert_payload_model_type(model_type, family=None):
+        return (model_type or "chatterbox")
+
+    def get_model_family(raw=None):
+        return "original"
+
+    def load_tts_model(device, family=None):
+        from chatterbox.tts import ChatterboxTTS
+        return ChatterboxTTS.from_pretrained(device=device)
+
+    def model_type_for_family(family=None):
+        return "chatterbox"
 
 # Initialize models once at startup
 vc_model = None
@@ -967,10 +986,9 @@ vc_model = None
 if FORKED_HANDLER_AVAILABLE:
     # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
     # Models are pre-downloaded during Docker build to /models/hf
-    # Initialize TTS model first (needed for s3gen)
     try:
-        tts_model = ChatterboxTTS.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxTTS ready")
+        tts_model = load_tts_model(device='cuda')
+        logger.info("✅ Chatterbox TTS ready (family=%s, type=%s)", MODEL_FAMILY, model_type_for_family(MODEL_FAMILY))
         try:
             import chatterbox.tts as _tts_mod
             mod_file = getattr(_tts_mod, "__file__", "<unknown>")
@@ -993,16 +1011,8 @@ if FORKED_HANDLER_AVAILABLE:
         error_msg = str(e)
         logger.error(f"❌ Failed to initialize TTS model: {error_msg}")
         tts_model = None
-    
-    # Initialize VC model separately (allow TTS to work even if VC fails)
-    try:
-        vc_model = ChatterboxVC.from_pretrained(device='cuda')
-        logger.info("✅ ChatterboxVC ready")
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"❌ Failed to initialize VC model: {error_msg}")
-        logger.warning("⚠️ VC model unavailable, but TTS will continue to work")
-        vc_model = None
+    vc_model = None
+    logger.info("TTS image does not load ChatterboxVC")
 else:
     logger.error("❌ Forked repository models not available")
     tts_model = None
@@ -1477,6 +1487,16 @@ def handler(event, responseFormat="base64"):
             )
         except Exception as callback_error:
             logger.error(f"❌ Failed to send error callback: {callback_error}")
+
+    try:
+        resolved_model_type = assert_payload_model_type(event["input"].get("model_type"))
+        logger.info("🎯 Worker family=%s accepted model_type=%s language=%s", MODEL_FAMILY, resolved_model_type, language)
+        if MODEL_FAMILY == "mtl":
+            logger.info("🌍 MTL language_id=%s", language)
+    except ValueError as mismatch:
+        logger.error("❌ %s", mismatch)
+        _send_job_error_to_app(str(mismatch), "model_type_mismatch")
+        return _return_with_cleanup({"status": "error", "error": str(mismatch)})
 
     # Check if TTS model is available
     if tts_model is None:

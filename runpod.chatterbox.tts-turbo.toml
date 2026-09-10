@@ -1,0 +1,55 @@
+name = "chatterbox-tts-turbo"
+description = "Chatterbox Turbo TTS (English)"
+repository = "https://github.com/chrijaque/runpod_chatterbox"
+docker_image_name = "chatterbox-tts-turbo"
+docker_image_tag = "prod"
+
+[env]
+RUNPOD_API_KEY = "{{ RUNPOD_API_KEY }}"
+CACHE_BUST = "prod-{{ timestamp }}"
+MINSTRALY_API_SHARED_SECRET = "{{ MINSTRALY_API_SHARED_SECRET }}"
+APP_BASE_URL = "{{ APP_BASE_URL }}"
+R2_ACCESS_KEY_ID = "{{ R2_ACCESS_KEY_ID }}"
+R2_SECRET_ACCESS_KEY = "{{ R2_SECRET_ACCESS_KEY }}"
+R2_ENDPOINT = "{{ R2_ENDPOINT }}"
+R2_BUCKET_NAME = "{{ R2_BUCKET_NAME }}"
+R2_ACCOUNT_ID = "{{ R2_ACCOUNT_ID }}"
+NEXT_PUBLIC_R2_PUBLIC_URL = "{{ NEXT_PUBLIC_R2_PUBLIC_URL }}"
+AWS_REQUEST_CHECKSUM_CALCULATION = "when_required"
+AWS_RESPONSE_CHECKSUM_VALIDATION = "when_required"
+MODELS_ROOT = "/runpod-volume/models"
+CHATTERBOX_ENABLE_QUALITY_ANALYSIS = "false"
+CHATTERBOX_PROD_MODE = "true"
+CHATTERBOX_MODEL_FAMILY = "turbo"
+
+[build]
+dockerfile = "dockerfiles/chatterbox/Dockerfile.tts-family"
+context = "."
+build_args = [
+    "RUNPOD_CACHE_BUST={{ timestamp }}",
+    "CHATTERBOX_MODEL_FAMILY=turbo",
+]
+
+[deploy]
+gpu_type = "RTX 4090"
+container_disk_in_gb = 50
+volume_in_gb = 100
+volume_mount_path = "/runpod-volume"
+ports = "8000/http"
+envs = [
+    "RUNPOD_API_KEY",
+    "MINSTRALY_API_SHARED_SECRET",
+    "APP_BASE_URL",
+    "R2_ACCESS_KEY_ID",
+    "R2_SECRET_ACCESS_KEY",
+    "R2_ENDPOINT",
+    "R2_BUCKET_NAME",
+    "R2_ACCOUNT_ID",
+    "NEXT_PUBLIC_R2_PUBLIC_URL",
+    "AWS_REQUEST_CHECKSUM_CALCULATION",
+    "AWS_RESPONSE_CHECKSUM_VALIDATION",
+    "MODELS_ROOT",
+    "CHATTERBOX_ENABLE_QUALITY_ANALYSIS",
+    "CHATTERBOX_PROD_MODE",
+    "CHATTERBOX_MODEL_FAMILY",
+]

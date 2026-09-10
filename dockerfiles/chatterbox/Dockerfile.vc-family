@@ -1,0 +1,116 @@
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+
+ARG CHATTERBOX_MODEL_FAMILY=turbo
+ENV CHATTERBOX_MODEL_FAMILY=${CHATTERBOX_MODEL_FAMILY}
+
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies including FFmpeg
+RUN apt-get update && \
+    apt-get install -y \
+    git \
+    wget \
+    curl \
+    ffmpeg \
+    libavcodec-extra \
+    libavformat-dev \
+    libavutil-dev \
+    libswscale-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set git global config to avoid warnings
+RUN git config --global --add safe.directory '*'
+
+# Copy requirements first for better caching
+COPY requirements/chatterbox.txt /requirements.txt
+COPY requirements/chatterbox-family.txt /requirements-family.txt
+
+# Cache-bust arg so we can force refresh clone layer during tests.
+ARG RUNPOD_CACHE_BUST=dev
+ARG CHATTERBOX_EMBED_REF=master
+RUN printf "RUNPOD_CACHE_BUST=%s\nCHATTERBOX_EMBED_REF=%s\nCHATTERBOX_MODEL_FAMILY=%s\n" "$RUNPOD_CACHE_BUST" "$CHATTERBOX_EMBED_REF" "$CHATTERBOX_MODEL_FAMILY" > /tmp/runpod_build_info.txt
+
+# Clone the repository
+RUN git clone https://github.com/chrijaque/chatterbox_embed.git /workspace/chatterbox_embed && \
+    cd /workspace/chatterbox_embed && \
+    git checkout "$CHATTERBOX_EMBED_REF" && \
+    RESOLVED_REF="$(git rev-parse HEAD)" && \
+    printf "RESOLVED_CHATTERBOX_EMBED_REF=%s\n" "$RESOLVED_REF" >> /tmp/runpod_build_info.txt && \
+    echo "✅ chatterbox_embed resolved ref: $RESOLVED_REF"
+
+# Install chatterbox_embed in editable mode without dependencies
+RUN cd /workspace/chatterbox_embed && pip install -e /workspace/chatterbox_embed --no-deps
+
+# Firestore for VC handler (chatterbox_embed r2_storage.init_firestore_client)
+RUN pip install google-cloud-firestore>=2.13.0
+
+# Install dependencies from requirements.txt, excluding torch and torchaudio (already in base image)
+RUN cd /workspace/chatterbox_embed && \
+    grep -v "^torch" requirements.txt | grep -v "^torchaudio" > /tmp/filtered_requirements.txt && \
+    pip install -r /tmp/filtered_requirements.txt || \
+    pip install numpy>=1.26.0 librosa==0.11.0 s3tokenizer transformers==4.46.3 diffusers==0.29.0 resemble-perth==1.0.1 conformer==0.3.2 safetensors==0.5.3 tqdm einops scipy soundfile audioread huggingface_hub tokenizers accelerate setuptools>=61.0 importlib-metadata typing_extensions packaging inflect
+
+# Extra Turbo / MTL deps. Do not install these on original backup images.
+RUN pip install -r /requirements-family.txt
+
+# Install torchvision compatible with PyTorch 2.8.0 (from base image, not downgraded)
+RUN pip install torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Verify versions
+RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
+
+ENV HF_HOME=/models/hf
+ENV HF_HUB_CACHE=/models/hf/hub
+ENV TRANSFORMERS_CACHE=/models/hf
+ENV AWS_REQUEST_CHECKSUM_CALCULATION=when_required
+ENV AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+RUN mkdir -p "$HF_HOME" "$HF_HUB_CACHE" "$TRANSFORMERS_CACHE"
+
+RUN python - <<'PY'
+import os
+import sys
+from huggingface_hub import snapshot_download
+
+family = os.getenv("CHATTERBOX_MODEL_FAMILY", "turbo").strip().lower()
+cache_dir = os.getenv("HF_HOME", "/models/hf")
+print(f"🔽 Pre-downloading Chatterbox {family} weights to {cache_dir}...")
+try:
+    if family == "turbo":
+        snapshot_download(
+            repo_id="ResembleAI/chatterbox-turbo",
+            revision="main",
+            cache_dir=cache_dir,
+            allow_patterns=["*.safetensors", "*.json", "*.txt", "*.pt", "*.model"],
+        )
+    elif family == "mtl":
+        snapshot_download(
+            repo_id="ResembleAI/chatterbox",
+            revision="main",
+            cache_dir=cache_dir,
+            allow_patterns=[
+                "ve.pt",
+                "t3_mtl23ls_v3.safetensors",
+                "s3gen.pt",
+                "grapheme_mtl_merged_expanded_v1.json",
+                "conds.pt",
+                "Cangjie5_TC.json",
+            ],
+        )
+    else:
+        raise SystemExit(f"Unsupported CHATTERBOX_MODEL_FAMILY for family image: {family}")
+    print("✅ Models pre-downloaded successfully to HuggingFace cache")
+except Exception as e:
+    print(f"❌ Pre-download failed: {e}")
+    sys.exit(1)
+PY
+
+RUN pip show chatterbox-tts || echo "Package check skipped"
+
+RUN pip install runpod>=1.5.0 boto3>=1.34.0
+
+COPY handlers/chatterbox/vc_handler.py /handler.py
+
+WORKDIR /
+
+CMD ["python3", "-u", "handler.py"]
