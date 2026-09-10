@@ -4,8 +4,15 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { AudioRecorder } from '@/components/AudioRecorder';
 import { FileUploader } from '@/components/FileUploader';
-
+import { ModelPicker } from '@/components/ModelPicker';
 import { API_ENDPOINT, FASTAPI_BASE_URL, VOICE_API } from '@/config/api';
+import {
+    isEnglishOnlyModel,
+    modelLabel,
+    readStoredModelType,
+    storeModelType,
+    type ChatterboxModelType,
+} from '@/config/models';
 
 interface FileMetadata {
     voice_id: string;
@@ -26,6 +33,7 @@ interface Voice {
     sample_file: string;
     embedding_file: string;
     created_date: number;
+    model_type?: string;
 }
 
 interface CloneResult {
@@ -48,7 +56,7 @@ export default function Home() {
     const [audioFormat, setAudioFormat] = useState<string>('wav');
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
-    const [modelType] = useState<'chatterbox'>('chatterbox');
+    const [modelType, setModelType] = useState<ChatterboxModelType>('chatterbox-turbo');
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<CloneResult | null>(null);
@@ -88,7 +96,7 @@ export default function Home() {
         setIsLoadingLibrary(true);
         try {
             // Use the new Firebase-based endpoint to list voices by language
-            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}`, {
+            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}&model_type=${modelType}`, {
                 method: 'GET',
             });
 
@@ -107,7 +115,8 @@ export default function Home() {
                     name: voice.name || voice.voice_id,
                     sample_file: voice.sample_file || '',
                     embedding_file: voice.embedding_file || '',
-                    created_date: voice.created_date || Date.now() / 1000
+                    created_date: voice.created_date || Date.now() / 1000,
+                    model_type: voice.model_type || 'chatterbox',
                 }));
                 setVoiceLibrary(voices);
             } else {
@@ -120,7 +129,11 @@ export default function Home() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    }, [language, isKidsVoice]);
+    }, [language, isKidsVoice, modelType]);
+
+    useEffect(() => {
+        setModelType(readStoredModelType());
+    }, []);
 
     useEffect(() => {
         loadVoiceLibrary();
@@ -413,7 +426,7 @@ export default function Home() {
                         Voice Cloning Studio
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
-                        Enter a name, record or upload audio, then create your personalized voice clone. Browse your voice library below.
+                        Enter a name, pick Turbo or Multilingual, then record or upload audio. Clones only work with the same model later.
                     </p>
                     <p className="mt-2 text-xs text-indigo-700">
                         Local Chatterbox API: {FASTAPI_BASE_URL}
@@ -441,14 +454,24 @@ export default function Home() {
                             />
                         </div>
 
-                        {/* Model Info */}
-                        <div className="mb-6">
-                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                <div className="text-sm text-blue-800">
-                                    <strong>ChatterboxTTS:</strong> Fast, efficient voice cloning optimized for real-time applications.
-                                </div>
-                            </div>
-                        </div>
+                        <ModelPicker
+                            modelType={modelType}
+                            language={language}
+                            onModelTypeChange={(next) => {
+                                setModelType(next);
+                                storeModelType(next);
+                                if (isEnglishOnlyModel(next)) {
+                                    setLanguage('en');
+                                }
+                            }}
+                            onLanguageChange={(next) => {
+                                setLanguage(next);
+                                if (next !== 'en' && modelType !== 'chatterbox-mtl') {
+                                    setModelType('chatterbox-mtl');
+                                    storeModelType('chatterbox-mtl');
+                                }
+                            }}
+                        />
 
                         <div>
                             <label className="form-label mb-2">
@@ -472,28 +495,6 @@ export default function Home() {
                         <div className="space-y-4">
                             <h3 className="text-sm font-medium text-gray-900">Storage Configuration</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Language
-                                    </label>
-                                    <select
-                                        id="language"
-                                        value={language}
-                                        onChange={(e) => setLanguage(e.target.value)}
-                                        className="form-input"
-                                    >
-                                        <option value="en">English</option>
-                                        <option value="da">Danish</option>
-                                        <option value="fr">French</option>
-                                        <option value="de">German</option>
-                                        <option value="es">Spanish</option>
-                                        <option value="tr">Turkish</option>
-                                        <option value="ar">Arabic</option>
-                                        <option value="zh">Chinese</option>
-                                        <option value="ja">Japanese</option>
-                                        <option value="ko">Korean</option>
-                                    </select>
-                                </div>
                                 <div>
                                     <label className="flex items-center space-x-2">
                                         <input
@@ -618,6 +619,9 @@ export default function Home() {
                                             <span className="text-xs text-gray-500">
                                                 {new Date(voice.created_date * 1000).toLocaleDateString()}
                                             </span>
+                                        </div>
+                                        <div className="mb-2 text-xs text-indigo-700">
+                                            {modelLabel((voice.model_type as ChatterboxModelType) || 'chatterbox')}
                                         </div>
                                         
                                         <div className="flex items-center space-x-2">

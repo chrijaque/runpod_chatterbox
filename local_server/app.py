@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from .engine import engine
+from .models import english_only_model, normalize_model_type
 from .paths import DATA_DIR, ensure_data_dirs
 from .storage import (
     get_voice,
@@ -109,34 +110,38 @@ def startup() -> None:
 @app.get("/api/health/health")
 def health():
     return {
-        "status": "healthy" if engine.model is not None else "loading",
+        "status": "healthy",
         "service": "local-chatterbox",
         "device": engine.device,
         "data_dir": str(DATA_DIR),
+        "loaded_families": sorted(engine.models.keys()),
     }
 
 
 @app.post("/api/voices/clone")
 def clone_voice(payload: VoiceCloneRequest, http_request: Request):
-    if engine.model is None:
-        raise HTTPException(status_code=503, detail="Model is still loading")
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Voice name is required")
 
+    try:
+        model_type = normalize_model_type(payload.model_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    language = "en" if english_only_model(model_type) else (payload.language or "en").strip().lower()
     voice_id = voice_id_for(payload.name)
     recorded = recorded_path(voice_id, payload.audio_format)
     profile = profile_path(voice_id)
     sample = sample_path(voice_id)
     decode_audio(payload.audio_data, recorded)
 
-    sample_text = (
-        f"Hello, this is the voice profile of {payload.name.strip()}. "
-        "I can be used to narrate stories."
-    )
+    from chatterbox.factory import sample_text_for_language
+
+    sample_text = sample_text_for_language(language, payload.name.strip())
     started = time.time()
     try:
-        engine.save_profile(recorded, profile)
-        wav, sample_rate = engine.synthesize(sample_text, profile)
+        engine.save_profile(recorded, profile, model_type)
+        wav, sample_rate = engine.synthesize(sample_text, profile, model_type, language)
         engine.save_wav(wav, sample_rate, sample)
     except Exception as exc:
         logger.exception("Voice clone failed")
@@ -145,10 +150,11 @@ def clone_voice(payload: VoiceCloneRequest, http_request: Request):
     meta = save_voice_meta(
         voice_id,
         name=payload.name.strip(),
-        language=payload.language,
+        language=language,
         is_kids_voice=payload.is_kids_voice,
         sample_rate=sample_rate,
         template_message=sample_text,
+        model_type=model_type,
     )
     audio_b64 = base64.b64encode(sample.read_bytes()).decode("ascii")
     sample_url = public_url(http_request, f"/api/voices/{voice_id}/sample")
@@ -171,6 +177,8 @@ def clone_voice(payload: VoiceCloneRequest, http_request: Request):
             "template_message": sample_text,
             "sample_rate": sample_rate,
             "audio_shape": list(wav.shape),
+            "model_type": model_type,
+            "language": language,
         },
         "created_date": meta["created_date"],
     }
@@ -182,9 +190,16 @@ def voices_by_language(
     request: Request,
     language: str = "en",
     is_kids_voice: bool = Query(False),
+    model_type: Optional[str] = Query(None),
 ):
+    resolved_model = None
+    if model_type:
+        try:
+            resolved_model = normalize_model_type(model_type)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     voices = []
-    for meta in list_voices(language, is_kids_voice):
+    for meta in list_voices(language, is_kids_voice, resolved_model):
         voice_id = meta["voice_id"]
         voices.append(
             {
@@ -195,6 +210,7 @@ def voices_by_language(
                 "created_date": meta.get("created_date", 0),
                 "language": meta.get("language", language),
                 "is_kids_voice": meta.get("is_kids_voice", False),
+                "model_type": meta.get("model_type") or "chatterbox",
             }
         )
     return {
@@ -229,12 +245,22 @@ def get_profile(voice_id: str, language: str = "en", is_kids_voice: bool = False
 
 @app.post("/api/tts/generate")
 def generate_tts(payload: TTSGenerateRequest, http_request: Request):
-    if engine.model is None:
-        raise HTTPException(status_code=503, detail="Model is still loading")
     if not payload.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
 
+    try:
+        model_type = normalize_model_type(payload.model_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    language = "en" if english_only_model(model_type) else (payload.language or "en").strip().lower()
     voice = get_voice(payload.voice_id)
+    stored_model = (voice or {}).get("model_type") or "chatterbox"
+    if voice and stored_model != model_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voice {payload.voice_id} was cloned as {stored_model} and cannot run on {model_type}. Re-clone it for this model.",
+        )
     profile = profile_path(payload.voice_id)
     if not profile.exists() and payload.profile_base64:
         profile.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +272,7 @@ def generate_tts(payload: TTSGenerateRequest, http_request: Request):
     dest = tts_audio_path(generation_id)
     started = time.time()
     try:
-        wav, sample_rate = engine.synthesize(payload.text.strip(), profile)
+        wav, sample_rate = engine.synthesize(payload.text.strip(), profile, model_type, language)
         engine.save_wav(wav, sample_rate, dest)
     except Exception as exc:
         logger.exception("TTS failed")
@@ -257,7 +283,7 @@ def generate_tts(payload: TTSGenerateRequest, http_request: Request):
         generation_id,
         voice_id=payload.voice_id,
         voice_name=(voice or {}).get("name", payload.voice_id),
-        language=payload.language,
+        language=language,
         story_type=payload.story_type,
         text=payload.text.strip(),
         file_size=dest.stat().st_size,

@@ -180,7 +180,7 @@ async def generate_tts(request: TTSGenerateRequest, http_req: Request, job_id: s
         )
 
         logger.info(f"📖 TTS generation request received for voice: {request.voice_id}")
-        logger.info(f"📊 Request details: language={request.language}, story_type={request.story_type}, kids_voice={request.is_kids_voice}")
+        logger.info(f"📊 Request details: language={request.language}, story_type={request.story_type}, kids_voice={request.is_kids_voice}, model_type={request.model_type}")
         try:
             b64_len = len(request.profile_base64 or "")
         except Exception:

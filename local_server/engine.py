@@ -7,6 +7,7 @@ from pathlib import Path
 import torch
 import torchaudio
 
+from .models import family_for_model_type, normalize_model_type
 from .paths import ensure_chatterbox_on_path
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,12 @@ def detect_device() -> str:
 class LocalChatterbox:
     def __init__(self) -> None:
         self.device = detect_device()
-        self.model = None
-        self.lock = threading.Lock()
+        self.models: dict[str, object] = {}
+        self.lock = threading.RLock()
+
+    @property
+    def model(self):
+        return next(iter(self.models.values()), None)
 
     def load(self) -> None:
         ensure_chatterbox_on_path()
@@ -32,34 +37,61 @@ class LocalChatterbox:
 
         os.environ.setdefault("CHATTERBOX_PROD_MODE", "true")
         os.environ.setdefault("CHATTERBOX_EXPERIMENT_MODE", "false")
+        logger.info("Local Chatterbox ready on %s (models load on first use)", self.device)
 
-        import perth
-        if getattr(perth, "PerthImplicitWatermarker", None) is None:
-            logger.warning("PerthImplicitWatermarker unavailable; using DummyWatermarker")
-            perth.PerthImplicitWatermarker = perth.DummyWatermarker
+    def get_model(self, model_type: str | None):
+        family = family_for_model_type(model_type)
+        with self.lock:
+            cached = self.models.get(family)
+            if cached is not None:
+                return cached
 
-        from chatterbox.tts import ChatterboxTTS
+            ensure_chatterbox_on_path()
+            import os
+            import perth
 
-        logger.info("Loading ChatterboxTTS on %s (first run downloads Hugging Face weights)", self.device)
-        self.model = ChatterboxTTS.from_pretrained(device=self.device)
-        logger.info("ChatterboxTTS ready on %s", self.device)
+            os.environ.setdefault("CHATTERBOX_PROD_MODE", "true")
+            os.environ.setdefault("CHATTERBOX_EXPERIMENT_MODE", "false")
+            if getattr(perth, "PerthImplicitWatermarker", None) is None:
+                logger.warning("PerthImplicitWatermarker unavailable; using DummyWatermarker")
+                perth.PerthImplicitWatermarker = perth.DummyWatermarker
 
-    def save_profile(self, audio_path: Path, profile_path: Path) -> None:
-        if self.model is None:
-            raise RuntimeError("Model is not loaded")
+            from chatterbox.factory import load_tts_model
+
+            logger.info("Loading Chatterbox family=%s on %s", family, self.device)
+            model = load_tts_model(self.device, family=family)
+            self.models[family] = model
+            logger.info("Chatterbox family=%s ready on %s", family, self.device)
+            return model
+
+    def save_profile(self, audio_path: Path, profile_path: Path, model_type: str | None) -> None:
+        model = self.get_model(model_type)
         profile_path.parent.mkdir(parents=True, exist_ok=True)
         with self.lock:
-            self.model.save_voice_profile(str(audio_path), str(profile_path))
+            model.save_voice_profile(str(audio_path), str(profile_path))
 
-    def synthesize(self, text: str, profile_path: Path) -> tuple["torch.Tensor", int]:
-        if self.model is None:
-            raise RuntimeError("Model is not loaded")
+    def synthesize(
+        self,
+        text: str,
+        profile_path: Path,
+        model_type: str | None,
+        language: str = "en",
+    ) -> tuple["torch.Tensor", int]:
+        resolved_type = normalize_model_type(model_type)
+        model = self.get_model(resolved_type)
         with self.lock:
-            self.model.conds = None
-            self.model._cached_conditionals = None
-            self.model._cached_voice_profile_path = None
-            wav = self.model.generate(text, voice_profile_path=str(profile_path))
-            return wav, int(self.model.sr)
+            if resolved_type == "chatterbox":
+                model.conds = None
+                model._cached_conditionals = None
+                model._cached_voice_profile_path = None
+                wav = model.generate(text, voice_profile_path=str(profile_path))
+            else:
+                model.load_voice_profile(str(profile_path))
+                generate_kwargs = {}
+                if resolved_type == "chatterbox-mtl":
+                    generate_kwargs["language_id"] = language
+                wav = model.generate(text, **generate_kwargs)
+            return wav, int(model.sr)
 
     def save_wav(self, wav: "torch.Tensor", sample_rate: int, dest: Path) -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)

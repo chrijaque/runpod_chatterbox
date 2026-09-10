@@ -9,7 +9,7 @@ class VoiceCloneRequest(BaseModel):
     audio_format: str = "wav"
     language: str = "en"
     is_kids_voice: bool = False
-    model_type: str = "chatterbox"  # Model selection (chatterbox only)
+    model_type: str = "chatterbox"  # chatterbox | chatterbox-turbo | chatterbox-mtl
     profile_id: Optional[str] = None
     # NEW: Pass-through identifiers and naming hints from the app
     voice_id: Optional[str] = None
@@ -42,7 +42,7 @@ class TTSGenerateRequest(BaseModel):
     language: str = "en"
     story_type: str = "user"
     is_kids_voice: bool = False
-    model_type: str = "chatterbox"  # Model selection (chatterbox only)
+    model_type: str = "chatterbox"  # chatterbox | chatterbox-turbo | chatterbox-mtl
     callback_url: Optional[str] = None
     # Naming hints (optional)
     story_name: Optional[str] = None

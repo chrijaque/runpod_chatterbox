@@ -2,15 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { MicrophoneIcon, StopIcon } from '@heroicons/react/24/solid';
-import dynamic from 'next/dynamic';
+import type WaveSurfer from 'wavesurfer.js';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
-
-// Dynamically import WaveSurfer with no SSR
-const WaveSurfer = dynamic(() => 
-    import('wavesurfer.js').then(mod => mod.default), { 
-    ssr: false,
-    loading: () => <div className="h-10 bg-gray-100 rounded animate-pulse" />
-});
 
 interface AudioRecorderProps {
     onAudioReady: (base64Audio: string) => void;
@@ -18,7 +11,7 @@ interface AudioRecorderProps {
 
 export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
     const waveformRef = useRef<HTMLDivElement>(null);
-    const wavesurferRef = useRef<any>(null);
+    const wavesurferRef = useRef<WaveSurfer | null>(null);
     const [waveformError, setWaveformError] = useState<string | null>(null);
     
     const {
@@ -43,9 +36,8 @@ export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
                     wavesurferRef.current = null;
                 }
 
-                // Create new instance
-                const WaveSurferModule = await WaveSurfer;
-                wavesurferRef.current = WaveSurferModule.create({
+                const { default: WaveSurferLib } = await import('wavesurfer.js');
+                wavesurferRef.current = WaveSurferLib.create({
                     container: waveformRef.current,
                     waveColor: '#6366F1',
                     progressColor: '#4F46E5',
@@ -54,7 +46,6 @@ export const AudioRecorder = ({ onAudioReady }: AudioRecorderProps) => {
                     barGap: 2,
                     height: 40,
                     normalize: true,
-                    responsive: true,
                 });
 
                 // Load audio

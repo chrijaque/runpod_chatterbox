@@ -84,9 +84,11 @@ class RunPodClient:
                     logger.error(f"   - Minimum expected: 1000")
                     raise Exception("Invalid audio data - audio file too small or empty")
             
-            # Route to correct endpoint based on model type
-            endpoint_id = self.vc_cb_endpoint_id
-            logger.info(f"🎯 Routing to ChatterboxTTS VC endpoint: {endpoint_id}")
+            from ..model_routing import normalize_model_type, vc_endpoint_id_for_model
+
+            model_type = normalize_model_type(model_type)
+            endpoint_id = vc_endpoint_id_for_model(model_type)
+            logger.info(f"🎯 Routing VC model_type={model_type} to endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
 
@@ -223,9 +225,11 @@ class RunPodClient:
         :return: RunPod response
         """
         try:
-            # Route to correct endpoint based on model type
-            endpoint_id = self.tts_cb_endpoint_id
-            logger.info(f"🎯 Routing to ChatterboxTTS TTS endpoint: {endpoint_id}")
+            from ..model_routing import normalize_model_type, tts_endpoint_id_for_model
+
+            model_type = normalize_model_type(model_type)
+            endpoint_id = tts_endpoint_id_for_model(model_type)
+            logger.info(f"🎯 Routing TTS model_type={model_type} to endpoint: {endpoint_id}")
             
             url = f"{self.base_url}/{endpoint_id}/run"
 

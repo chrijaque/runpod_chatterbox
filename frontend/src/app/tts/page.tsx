@@ -2,6 +2,14 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { TTS_API_ENDPOINT, VOICE_API, TTS_API, FASTAPI_BASE_URL } from '@/config/api';
+import { ModelPicker } from '@/components/ModelPicker';
+import {
+    isEnglishOnlyModel,
+    modelLabel,
+    readStoredModelType,
+    storeModelType,
+    type ChatterboxModelType,
+} from '@/config/models';
 
 import Link from 'next/link';
 
@@ -11,6 +19,7 @@ interface Voice {
     sample_file: string;
     profile_file: string;
     created_date: number;
+    model_type?: string;
 }
 
 interface TTSResult {
@@ -47,7 +56,7 @@ export default function TTSPage() {
     const [language, setLanguage] = useState<string>('en');
     const [isKidsVoice, setIsKidsVoice] = useState<boolean>(false);
     const [storyType, setStoryType] = useState<string>('user');
-    const [modelType] = useState<'chatterbox'>('chatterbox');
+    const [modelType, setModelType] = useState<ChatterboxModelType>('chatterbox-turbo');
     const [voiceLibrary, setVoiceLibrary] = useState<Voice[]>([]);
     const [ttsGenerations, setTtsGenerations] = useState<TTSGeneration[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -63,7 +72,7 @@ export default function TTSPage() {
         setIsLoadingLibrary(true);
         try {
             // Use the voice library endpoint with language and kids voice parameters
-            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}`, {
+            const response = await fetch(`${VOICE_API}/by-language/${language}?is_kids_voice=${isKidsVoice}&model_type=${modelType}`, {
                 method: 'GET',
             });
 
@@ -77,12 +86,19 @@ export default function TTSPage() {
                     name: voice.name || voice.voice_id,
                     sample_file: voice.sample_file || '',
                     profile_file: voice.embedding_file || '', // Map embedding_file to profile_file
-                    created_date: voice.created_date || Date.now() / 1000
+                    created_date: voice.created_date || Date.now() / 1000,
+                    model_type: voice.model_type || 'chatterbox',
                 }));
                 
                 setVoiceLibrary(voices);
                 if (voices.length > 0) {
-                    setSelectedVoice((current) => current || voices[0].voice_id);
+                    setSelectedVoice((current) =>
+                        voices.some((voice: Voice) => voice.voice_id === current)
+                            ? current
+                            : voices[0].voice_id
+                    );
+                } else {
+                    setSelectedVoice('');
                 }
             } else {
                 throw new Error(data.message || 'Failed to load voice library');
@@ -93,7 +109,7 @@ export default function TTSPage() {
         } finally {
             setIsLoadingLibrary(false);
         }
-    }, [language, isKidsVoice]);
+    }, [language, isKidsVoice, modelType]);
 
     const loadTTSGenerations = useCallback(async () => {
         setIsLoadingGenerations(true);
@@ -136,6 +152,10 @@ export default function TTSPage() {
             setIsLoadingGenerations(false);
         }
     }, [language, storyType]);
+
+    useEffect(() => {
+        setModelType(readStoredModelType());
+    }, []);
 
     useEffect(() => {
         loadVoiceLibrary();
@@ -338,7 +358,7 @@ export default function TTSPage() {
                         Text-to-Speech Generator
                     </h1>
                     <p className="mt-2 text-sm text-gray-600">
-                        Generate speech using your saved voice clones. Enter text and select a voice from your library.
+                        Generate speech using a Turbo, Multilingual, or original voice clone. The selected voice must match the model.
                     </p>
                     <p className="mt-2 text-xs text-indigo-700">
                         Local Chatterbox API: {FASTAPI_BASE_URL}
@@ -367,14 +387,26 @@ export default function TTSPage() {
                             </p>
                         </div>
 
-                        {/* Model Info */}
-                        <div className="mb-6">
-                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                                <div className="text-sm text-blue-800">
-                                    <strong>ChatterboxTTS:</strong> Fast, efficient TTS generation optimized for real-time applications.
-                                </div>
-                            </div>
-                        </div>
+                        <ModelPicker
+                            modelType={modelType}
+                            language={language}
+                            onModelTypeChange={(next) => {
+                                setModelType(next);
+                                storeModelType(next);
+                                setSelectedVoice('');
+                                if (isEnglishOnlyModel(next)) {
+                                    setLanguage('en');
+                                }
+                            }}
+                            onLanguageChange={(next) => {
+                                setLanguage(next);
+                                setSelectedVoice('');
+                                if (next !== 'en' && modelType !== 'chatterbox-mtl') {
+                                    setModelType('chatterbox-mtl');
+                                    storeModelType('chatterbox-mtl');
+                                }
+                            }}
+                        />
 
                         <div>
                             <label htmlFor="voice" className="form-label">
@@ -384,7 +416,7 @@ export default function TTSPage() {
                                 <div className="form-input bg-gray-100">Loading voices...</div>
                             ) : voiceLibrary.length === 0 ? (
                                 <div className="form-input bg-gray-100 text-gray-500">
-                                    No voices available. <Link href="/" className="text-blue-600 hover:text-blue-800">Create a voice first</Link>.
+                                    No {modelLabel(modelType)} voices for this language. <Link href="/" className="text-blue-600 hover:text-blue-800">Clone one first</Link>.
                                 </div>
                             ) : (
                                 <select
@@ -395,7 +427,7 @@ export default function TTSPage() {
                                 >
                                     {voiceLibrary.map((voice) => (
                                         <option key={voice.voice_id} value={voice.voice_id}>
-                                            {voice.name} (created {new Date(voice.created_date * 1000).toLocaleDateString()})
+                                            {voice.name} · {modelLabel((voice.model_type as ChatterboxModelType) || 'chatterbox')}
                                         </option>
                                     ))}
                                 </select>
@@ -405,29 +437,7 @@ export default function TTSPage() {
                         {/* Metadata Configuration for Organized Storage */}
                         <div className="space-y-4">
                             <h3 className="text-sm font-medium text-gray-900">Storage Configuration</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label htmlFor="tts-language" className="block text-sm font-medium text-gray-700 mb-1">
-                                        Language
-                                    </label>
-                                    <select
-                                        id="tts-language"
-                                        value={language}
-                                        onChange={(e) => setLanguage(e.target.value)}
-                                        className="form-input"
-                                    >
-                                        <option value="en">English</option>
-                                        <option value="da">Danish</option>
-                                        <option value="fr">French</option>
-                                        <option value="de">German</option>
-                                        <option value="es">Spanish</option>
-                                        <option value="tr">Turkish</option>
-                                        <option value="ar">Arabic</option>
-                                        <option value="zh">Chinese</option>
-                                        <option value="ja">Japanese</option>
-                                        <option value="ko">Korean</option>
-                                    </select>
-                                </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label htmlFor="story-type" className="block text-sm font-medium text-gray-700 mb-1">
                                         Story Type

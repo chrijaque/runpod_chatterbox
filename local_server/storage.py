@@ -60,6 +60,7 @@ def save_voice_meta(
     is_kids_voice: bool,
     sample_rate: int,
     template_message: str,
+    model_type: str = "chatterbox",
 ) -> dict[str, Any]:
     ensure_data_dirs()
     voice_dir(voice_id).mkdir(parents=True, exist_ok=True)
@@ -68,6 +69,7 @@ def save_voice_meta(
         "name": name,
         "language": language,
         "is_kids_voice": is_kids_voice,
+        "model_type": model_type,
         "created_date": time.time(),
         "sample_rate": sample_rate,
         "template_message": template_message,
@@ -76,7 +78,7 @@ def save_voice_meta(
     return meta
 
 
-def list_voices(language: str, is_kids_voice: bool) -> list[dict[str, Any]]:
+def list_voices(language: str, is_kids_voice: bool, model_type: Optional[str] = None) -> list[dict[str, Any]]:
     ensure_data_dirs()
     voices: list[dict[str, Any]] = []
     for directory in sorted(VOICES_DIR.iterdir()) if VOICES_DIR.exists() else []:
@@ -89,6 +91,9 @@ def list_voices(language: str, is_kids_voice: bool) -> list[dict[str, Any]]:
         if meta.get("language", "en") != language:
             continue
         if bool(meta.get("is_kids_voice", False)) != bool(is_kids_voice):
+            continue
+        stored_model = meta.get("model_type") or "chatterbox"
+        if model_type and stored_model != model_type:
             continue
         voices.append(meta)
     voices.sort(key=lambda item: item.get("created_date", 0), reverse=True)
