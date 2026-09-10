@@ -1837,6 +1837,13 @@ def handler(event, responseFormat="base64"):
                 )
                 if not audio_location:
                     raise RuntimeError("TTS succeeded without an audio location; refusing success callback")
+                duration = result.get("duration")
+                try:
+                    duration = float(duration) if duration is not None else None
+                except (TypeError, ValueError):
+                    duration = None
+                if duration is not None and duration <= 0:
+                    duration = None
                 payload = {
                     "story_id": story_id,
                     "user_id": user_id,
@@ -1846,6 +1853,7 @@ def handler(event, responseFormat="base64"):
                     "storage_path": storage_location or audio_location,
                     "r2_path": storage_location or audio_location,
                     "language": language,
+                    "duration": duration,
                     "metadata": {
                         **(
                             {k: v for k, v in api_metadata.items() if k not in ("upload_url", "uploadUrl")}
@@ -1853,6 +1861,7 @@ def handler(event, responseFormat="base64"):
                             else {}
                         ),
                         "generation_time": result.get("generation_time"),
+                        **({"duration": duration} if duration is not None else {}),
                     },
                 }
                 
