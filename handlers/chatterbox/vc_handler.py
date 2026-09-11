@@ -239,6 +239,34 @@ def ensure_disk_headroom(min_free_gb: float = None) -> None:
 # Initialize cache env as early as possible
 _ensure_cache_env_dirs()
 
+
+def _ensure_chatterbox_embed_on_path() -> None:
+    """Prefer the cloned chatterbox_embed package over any PyPI chatterbox install."""
+    candidates = [
+        Path("/workspace/chatterbox_embed/src"),
+        Path("/workspace/chatterbox_embed"),
+    ]
+    for src in candidates:
+        package = src / "chatterbox"
+        if not (package / "vc.py").is_file() and not (package / "factory.py").is_file():
+            continue
+        src_str = str(src)
+        if src_str not in sys.path:
+            sys.path.insert(0, src_str)
+        logger.warning(
+            "Using chatterbox_embed from %s (factory=%s)",
+            src_str,
+            (package / "factory.py").is_file(),
+        )
+        return
+    logger.warning(
+        "chatterbox_embed not found on disk; checked %s",
+        ", ".join(str(path) for path in candidates),
+    )
+
+
+_ensure_chatterbox_embed_on_path()
+
 # Early, pre-import disk headroom preflight (runs before any model downloads)
 try:
     if os.getenv("ENABLE_STORAGE_MAINTENANCE", "false").lower() == "true":
@@ -397,40 +425,40 @@ def _install_tts_experiment_compat_shim() -> None:
     except Exception as shim_e:
         logger.warning(f"Could not install VC TTS compatibility shim: {shim_e}")
 
+def _init_vc_model() -> None:
+    """Load ChatterboxVC. Factory is preferred, but original images must still boot."""
+    global vc_model, tts_model
+    if vc_model is not None:
+        return
+
+    if not _PROD_MODE:
+        _install_tts_experiment_compat_shim()
+
+    device = _select_device()
+    logger.warning("Loading VC model on %s (factory=%s, family=%s)", device, FORKED_HANDLER_AVAILABLE, MODEL_FAMILY)
+    try:
+        vc_model = load_vc_model(device=device)
+    except Exception as device_error:
+        logger.error("Init failed on %s: %s. Retrying on CPU…", device, device_error)
+        vc_model = load_vc_model(device="cpu")
+        device = "cpu"
+
+    tts_model = None
+    try:
+        import chatterbox.vc as vc_mod
+        logger.warning("Loaded chatterbox.vc from %s", getattr(vc_mod, "__file__", "<unknown>"))
+    except Exception:
+        pass
+    logger.warning("ChatterboxVC ready (family=%s, type=%s, device=%s)", MODEL_FAMILY, model_type_for_family(MODEL_FAMILY), device)
+
+
 # Initialize models
 ensure_disk_headroom()
 logger.info("Initializing models...")
 try:
-    if FORKED_HANDLER_AVAILABLE:
-        if not _PROD_MODE:
-            _install_tts_experiment_compat_shim()
-        _device = _select_device()
-        logger.info(f"Selected device: {_device}")
-        
-        # Use from_pretrained() which will use pre-downloaded models from HuggingFace cache
-        # Models are pre-downloaded during Docker build to /models/hf
-        try:
-            vc_model = load_vc_model(device=_device)
-            logger.info("ChatterboxVC ready (family=%s, type=%s)", MODEL_FAMILY, model_type_for_family(MODEL_FAMILY))
-            # TTS instrumentation issues must not block VC startup.
-            tts_model = None
-        except Exception as dev_e:
-            logger.error(f"Init failed on {_device}: {dev_e}. Retrying on CPU…")
-            try:
-                vc_model = load_vc_model(device='cpu')
-                logger.info("VC model initialized on CPU (family=%s)", MODEL_FAMILY)
-                tts_model = None
-            except Exception as cpu_e:
-                logger.error(f"CPU fallback init failed: {cpu_e}")
-                vc_model = None
-                tts_model = None
-    else:
-        logger.error("Forked repository models not available")
-        vc_model = None
-        tts_model = None
-        
+    _init_vc_model()
 except Exception as e:
-    logger.error(f"Failed to initialize models: {e}")
+    logger.error("Failed to initialize VC model: %s", e)
     vc_model = None
     tts_model = None
 
@@ -694,9 +722,21 @@ def handle_voice_clone_request(input_data: Dict[str, Any], response_format: str)
     if not name or (not audio_data and not audio_path):
         return {"status": "error", "error": "name and either audio_data or audio_path are required"}
     
-    # Check if VC model is available
+    # Load on demand if startup failed (or a previous worker never initialized).
     if vc_model is None:
-        logger.error("VC model not available")
+        try:
+            _init_vc_model()
+        except Exception as init_error:
+            logger.error("VC model not available: %s", init_error)
+            send_error_callback(
+                metadata['callback_url'], metadata['user_id'],
+                input_data.get('voice_id', 'unknown'), name or 'unknown',
+                input_data.get('language', 'en'), f"VC model not available: {init_error}"
+            )
+            return {"status": "error", "error": f"VC model not available: {init_error}"}
+
+    if vc_model is None:
+        logger.error("VC model not available after init")
         send_error_callback(
             metadata['callback_url'], metadata['user_id'],
             input_data.get('voice_id', 'unknown'), name or 'unknown',

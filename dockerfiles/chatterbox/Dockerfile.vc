@@ -56,6 +56,7 @@ RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
 # Pre-download models from HuggingFace to the default cache location
 # This allows from_pretrained() to find cached models without downloading
 # Set up HuggingFace cache directories
+ENV PYTHONPATH=/workspace/chatterbox_embed/src
 ENV HF_HOME=/models/hf
 ENV HF_HUB_CACHE=/models/hf/hub
 ENV TRANSFORMERS_CACHE=/models/hf

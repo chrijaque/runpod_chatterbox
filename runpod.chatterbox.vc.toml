@@ -19,6 +19,7 @@ AWS_REQUEST_CHECKSUM_CALCULATION = "when_required"
 AWS_RESPONSE_CHECKSUM_VALIDATION = "when_required"
 MODELS_ROOT = "/runpod-volume/models"  # Use network volume for model cache (persistent across cold starts)
 CHATTERBOX_PROD_MODE = "true"  # Fast path: disable experiment/debug overhead
+CHATTERBOX_MODEL_FAMILY = "original"
 
 [build]
 dockerfile = "dockerfiles/chatterbox/Dockerfile.vc"
@@ -47,5 +48,6 @@ envs = [
     "AWS_RESPONSE_CHECKSUM_VALIDATION",
     "MODELS_ROOT",  # Points to network volume for model cache
     "CHATTERBOX_PROD_MODE",
+    "CHATTERBOX_MODEL_FAMILY",
 ]
 

@@ -60,6 +60,7 @@ RUN pip install torchvision --index-url https://download.pytorch.org/whl/cu121
 # Verify versions
 RUN python -c "import torch; print(f'PyTorch: {torch.__version__}')"
 
+ENV PYTHONPATH=/workspace/chatterbox_embed/src
 ENV HF_HOME=/models/hf
 ENV HF_HUB_CACHE=/models/hf/hub
 ENV TRANSFORMERS_CACHE=/models/hf
